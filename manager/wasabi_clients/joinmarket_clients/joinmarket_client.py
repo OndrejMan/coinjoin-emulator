@@ -1,9 +1,11 @@
 import json
+from abc import abstractmethod
 
 import requests
 from time import sleep, time
 from urllib3.exceptions import InsecureRequestWarning
 import urllib3
+
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -20,7 +22,6 @@ class JoinmarketConflictException(Exception):
         self.response = response
 
 
-
 class JoinMarketClientServer:
     def __init__(
         self,
@@ -33,6 +34,9 @@ class JoinMarketClientServer:
         type="maker",
         delay=(0, 0),
         stop=(0, 0),
+        offers=None,
+        tumbler_options=None,
+        time_between_rounds=0,
     ):
         self.host = host
         self.port = port
@@ -44,10 +48,56 @@ class JoinMarketClientServer:
         self.maker_running = False
         self.coinjoin_in_process = False
         self.coinjoin_start = 0
-        self.delay = delay
+        self.next_coinjoin_allowed = delay[0]
+        self.time_between_rounds = time_between_rounds
         self.stop = stop
         self.token = ""
         self.refresh_token = ""
+        self.offers = offers if offers else []
+        self.tumbler_options = tumbler_options if tumbler_options else None
+
+    @classmethod
+    def from_wallet(cls, name: str, port: int, wallet):
+        joinmarket = getattr(wallet, "joinmarket", None)
+        type_ = joinmarket.role.value if joinmarket and joinmarket.role else "maker"
+        tumbler_options = (joinmarket.tumbler_options if joinmarket else None) or {}
+
+        # Select the appropriate subclass based on wallet config.
+        if type_ == "maker":
+            from manager.wasabi_clients.joinmarket_clients.maker_taker_clients import MakerClient
+            client_cls = MakerClient
+        elif type_ == "taker":
+            # Distinguish between a standard taker and a tumbler taker based on tumbler_options.
+            if tumbler_options:
+                from manager.wasabi_clients.joinmarket_clients.maker_taker_clients import TumblerTakerClient
+                client_cls = TumblerTakerClient
+            else:
+                from manager.wasabi_clients.joinmarket_clients.maker_taker_clients import TakerClient
+                client_cls = TakerClient
+        else:
+            client_cls = cls
+
+        # Instantiate the client using the selected subclass.
+        client = client_cls(
+            name=name,
+            port=port,
+            type=type_,
+            delay=(wallet.delay_blocks or 0, wallet.delay_rounds or 0),
+            stop=(wallet.stop_blocks or 0, wallet.stop_rounds or 0),
+            offers=(joinmarket.offers if joinmarket else None) or [],
+            tumbler_options=tumbler_options,
+            time_between_rounds=(joinmarket.time_between_rounds if joinmarket else 0) or 0,
+        )
+
+        start = time()
+        if not client.wait_wallet(timeout=60):
+            print(
+                f"- could not start {name} (application timeout {time() - start} seconds)"
+            )
+            return None
+
+        print(f"- started {client.name} (wait took {time() - start} seconds)")
+        return client
 
     def _rpc(self, method, endpoint, json_data=None, timeout=5, repeat=4) -> dict:
         headers = {}
@@ -93,12 +143,19 @@ class JoinMarketClientServer:
 
         raise Exception("timeout")
 
+    def is_paused(self, current_block):
+        # “delay[0]” means “don’t run until current_block >= delay[0]”
+        return current_block < self.next_coinjoin_allowed
+
+    @abstractmethod
     def get_status(self):
+        return self.session()
+
+
+    def session(self):
         method = "GET"
         endpoint = "/session"
         response = self._rpc(method, endpoint)
-        self.maker_running = response.get("maker_running", False)
-        self.coinjoin_in_process = response.get("coinjoin_in_process", False)
         return response
 
     def _create_wallet(self, walletname=None):
@@ -199,6 +256,7 @@ class JoinMarketClientServer:
         cjfee_r,
         ordertype,
         minsize,
+        maxsize
     ):
         """
         Start the yield generator service with the specified configuration.
@@ -215,7 +273,8 @@ class JoinMarketClientServer:
             "cjfee_a": str(cjfee_a),
             "cjfee_r": str(cjfee_r),
             "ordertype": ordertype,
-            "minsize": str(minsize)
+            "minsize": str(minsize),
+            "maxsize": str(maxsize)
         }
 
         try:
@@ -263,21 +322,33 @@ class JoinMarketClientServer:
         response = self._rpc(method, endpoint, json_data=json_data)
         return response
 
-    def run_schedule(self, destination_addresses, tumbler_options=None):
+    def run_schedule(self):
         """
         Create and run a schedule of transactions.
         - destination_addresses: list of str, addresses to send funds to
         - tumbler_options: optional, dict, additional tumbler configuration options
         """
+        if not self.tumbler_options:
+            raise Exception("No tumbler options provided")
+        address_count = self.tumbler_options.get("address_count", 3)
+        destination_addresses = [self.get_new_address() for _ in range(address_count)]
+
         method = "POST"
         endpoint = f"/wallet/{self.walletname}/taker/schedule"
         json_data = {
             "destination_addresses": destination_addresses,
+            "tumbler_options": self.tumbler_options
         }
-        if tumbler_options:
-            json_data["tumbler_options"] = tumbler_options
-        response = self._rpc(method, endpoint, json_data=json_data)
-        return response
+
+        start = time()
+        while time() - start < 60:  # Using a longer timeout for the more complex tumbler operation
+            try:
+                response = self._rpc(method, endpoint, json_data=json_data)
+                return response
+            except Exception as e:
+                if time() - start >= 60:
+                    print("Failed to run schedule, attempt timed out.")
+                sleep(1)  # Add a small delay between retries
 
     def get_schedule(self):
         """Get the schedule that is currently running."""
@@ -373,3 +444,6 @@ class JoinMarketClientServer:
         # endpoint = f"/wallet/{self.walletname}/keys"
         # response = self._rpc(method, endpoint)
         # return response
+
+    def get_offer(self, round=0):
+        return self.offers[round % len(self.offers)]

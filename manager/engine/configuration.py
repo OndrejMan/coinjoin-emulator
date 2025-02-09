@@ -31,6 +31,9 @@ class WasabiConfig:
 class JoinMarketConfig:
     """JoinMarket-specific wallet settings."""
     role: JoinMarketRole | None = None
+    offers: list[dict[str, Any]] | None = None
+    tumbler_options: dict[str, Any] | None = None
+    time_between_rounds: int | None = None
 
 
 @dataclass
@@ -122,7 +125,12 @@ class ScenarioConfig:
         if "type" in wallet_data:
             role_str = wallet_data["type"]
             role = JoinMarketRole.MAKER if role_str == "maker" else JoinMarketRole.TAKER
-            joinmarket_config = JoinMarketConfig(role=role)
+            joinmarket_config = JoinMarketConfig(
+                role=role,
+                offers=wallet_data.get("offers"),
+                tumbler_options=wallet_data.get("tumbler_options"),
+                time_between_rounds=wallet_data.get("time_between_rounds"),
+            )
         
         return WalletConfig(
             funds=funds,

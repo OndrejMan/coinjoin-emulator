@@ -1,6 +1,7 @@
 from manager.engine.engine_base import EngineBase
+from manager.engine.engine_base import EngineBase
 from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
-from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
+from manager.wasabi_clients.joinmarket_clients.joinmarket_client import JoinMarketClientServer
 from time import sleep, time
 import sys
 
@@ -13,57 +14,85 @@ class JoinmarketEngine(EngineBase):
         return ScenarioConfig(
             name="default",
             default_version="joinmarket",
-            rounds=5,  # the number of coinjoins after which the simulation stops (0 for no limit)
+            rounds=0,  # the number of coinjoins after which the simulation stops (0 for no limit)
             blocks=0,  # the number of mined blocks after which the simulation stops (0 for no limit)
             wallets=[
                 WalletConfig(
-                    funds=[200000, 50000],
-                    joinmarket=JoinMarketConfig(role=JoinMarketRole.TAKER)
-                ),
-                WalletConfig(
-                    funds=[3000000],
-                    delay_blocks=2,
-                    joinmarket=JoinMarketConfig(role=JoinMarketRole.TAKER)
+                    funds=[75000, 75000],
+                    joinmarket=JoinMarketConfig(
+                        role=JoinMarketRole.TAKER,
+                        tumbler_options={'addrcount': 3, 'minmakercount': 4, 'makercountrange': [5, 1], 'mixdepthcount': 3, 'mintxcount': 2, 'txcountparams': [3, 1], 'timelambda': 5, 'stage1_timelambda_increase': 1, 'liquiditywait': 60, 'waittime': 20, 'mixdepthsrc': 0, 'restart': True, 'mincjamount': 35000, 'amtmixdepths': 4, 'rounding_chance': 0, 'rounding_sigfig_weights': [55, 15, 25, 65, 45]},
+                    ),
                 ),
                 WalletConfig(
                     funds=[1000000, 500000],
-                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                    joinmarket=JoinMarketConfig(
+                        role=JoinMarketRole.MAKER,
+                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                    ),
                 ),
                 WalletConfig(
                     funds=[3000000, 15000],
-                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                    joinmarket=JoinMarketConfig(
+                        role=JoinMarketRole.MAKER,
+                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                    ),
                 ),
                 WalletConfig(
                     funds=[1000000, 500000],
-                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                    joinmarket=JoinMarketConfig(
+                        role=JoinMarketRole.MAKER,
+                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                    ),
                 ),
                 WalletConfig(
                     funds=[3000000, 600000],
-                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                    joinmarket=JoinMarketConfig(
+                        role=JoinMarketRole.MAKER,
+                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                    ),
                 ),
                 WalletConfig(
                     funds=[200000, 50000],
-                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                    joinmarket=JoinMarketConfig(
+                        role=JoinMarketRole.MAKER,
+                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                    ),
                 ),
                 WalletConfig(
                     funds=[3000000],
-                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                    joinmarket=JoinMarketConfig(
+                        role=JoinMarketRole.MAKER,
+                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                    ),
                 ),
                 WalletConfig(
                     funds=[1000000, 500000],
-                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                    joinmarket=JoinMarketConfig(
+                        role=JoinMarketRole.MAKER,
+                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                    ),
                 ),
                 WalletConfig(
                     funds=[3000000, 15000],
-                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                    joinmarket=JoinMarketConfig(
+                        role=JoinMarketRole.MAKER,
+                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                    ),
                 ),
                 WalletConfig(
                     funds=[1000000, 500000],
-                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                    joinmarket=JoinMarketConfig(
+                        role=JoinMarketRole.MAKER,
+                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                    ),
                 ),
                 WalletConfig(
                     funds=[3000000, 600000],
-                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                    joinmarket=JoinMarketConfig(
+                        role=JoinMarketRole.MAKER,
+                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                    ),
                 ),
             ],
         )
@@ -86,6 +115,7 @@ class JoinmarketEngine(EngineBase):
 
 
     def start_irc_server(self):
+        # TODO: When the container fails to start, the exception is not thrown and it is not recognized.
         name = "irc-server"
 
         try:
@@ -149,24 +179,7 @@ class JoinmarketEngine(EngineBase):
 
         print(f"driver starting {name}")
 
-        delay = (wallet.delay_blocks or 0, wallet.delay_rounds or 0)
-        stop = (wallet.stop_blocks or 0, wallet.stop_rounds or 0)
-        
-        # Get JoinMarket role
-        joinmarket_config = wallet.joinmarket
-        role_str = joinmarket_config.role.value if joinmarket_config and joinmarket_config.role else "maker"
-
-        client = JoinMarketClientServer(name=name, port=port, type=role_str, delay=delay, stop=stop)
-
-
-        start = time()
-        if not client.wait_wallet(timeout=60):
-            print(
-                f"- could not start {name} (application timeout {time() - start} seconds)"
-            )
-            return None
-
-        print(f"- started {client.name} (wait took {time() - start} seconds)")
+        client = JoinMarketClientServer.from_wallet(name, port, wallet)
         return client
 
     def stop_client(self, idx: int):
@@ -177,26 +190,12 @@ class JoinmarketEngine(EngineBase):
         # TODO: store irc logs.
         pass
 
+
     def update_coinjoins_joinmarket(self):
         for client in self.clients:
-            state = client.get_status()
-            # print(state)
-            if client.type == "maker" and not client.maker_running and not client.delay[0] > self.current_block:
-                client.start_maker(0, 5000, 0.00004, "sw0reloffer", 30000)
-                print(f"Starting maker {client.name}")
-
-            if client.type == "taker" and not client.coinjoin_in_process and not client.delay[0] > self.current_block:
-                self.current_round += 1
-                address = client.get_new_address()
-                client.start_coinjoin(0, 40000, 4, address)
-                client.coinjoin_start = self.current_block
-                print(f"Starting coinjoin {client.name}")
-
-            if client.type == "taker" and client.coinjoin_in_process and client.coinjoin_start + 4 < self.current_block:
-                self.current_round -= 1
-                client.stop_coinjoin()
-                client.coinjoin_in_process = False
-                print(f"Stopping coinjoin {client.name}")
+            delta = client.update(self.current_block, self.current_round)
+            # Apply any change in round count; alternatively, have the client trigger an event.
+            self.current_round += delta
 
 
     def run_engine(self):
@@ -208,6 +207,8 @@ class JoinmarketEngine(EngineBase):
         for i in range(5):
             # Takers need 3 confirmations of transactions for the sourcing commitments
             self.node.mine_block()
+
+        print(f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60))
 
         while (self.scenario.rounds == 0 or self.current_round < self.scenario.rounds) and (
                 self.scenario.blocks == 0 or self.current_block < self.scenario.blocks):
