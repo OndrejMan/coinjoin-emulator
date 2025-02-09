@@ -4,3 +4,5 @@ logs/
 
 .python-version
 pyrightconfig.json
+logs_selected
+*.idea/
