@@ -149,3 +149,26 @@ recommended to set the timelambda value in a way that restarts will occur as lit
   "rounding_sigfig_weights": [55, 15, 25, 65, 45]
 }
 ```
+
+## Logs
+
+- coins.json, keys.json and unspent_coins.json contain information in wasabi wallet format
+- `joinmarket/jmwalletd.log` contains all logs from joinmarket
+  - For maker:
+    - `obtained tx` in process of the coinjoin
+    - `Added utxos:` indicate successful coinjoin
+  - For taker:
+    - successful coinjoins are logged as `Coinjoin completed correctly`
+    - failed coinjoins are logged as `Coinjoin did not complete successfully`.
+    - Sources of failure:
+      - `Failed to source a commitment`
+      - `Makers who didnt respond: [`
+  - For tumbler additionaly:
+    - Retries: `Stall detected`
+    - `NotEnoughFundsException` Remaining funds are lower than the minimum coinjoin amount, the amount gets increased but the taker does not have the funds to cover the increase.
+    - `INFO:Failed to source a commitment` Transaction initiated too early, the utxos do not have 5 confirmations.
+- `joinmarket/.joinmarket/logs`
+  - `JXXXX.log` contains logs for each script run, content same as in `jmwalletd.log`
+  - `TUMBLE.log` contains concise information about the tumbler coinjoins
+  - `TUMBLE.schedule` contains the schedule for the tumbler, updated
+  - `yigen-statement.csv` should contains the yield generator info, does not seem to work properly
