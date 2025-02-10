@@ -1,106 +1,15 @@
 from manager.engine.engine_base import EngineBase
-from manager.wasabi_clients.joinmarket_clients.joinmarket_client import JoinMarketClientServer
+from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 from time import sleep, time
-import sys
-
 SCENARIO = {
     "name": "default",
     "default_version": "joinmarket",
     "rounds": 0,  # the number of coinjoins after which the simulation stops (0 for no limit)
     "blocks": 0,  # the number of mined blocks after which the simulation stops (0 for no limit)
-    "wallets": [
-        # {"funds": [200000, 50000], "type": "taker",
-        #  "offers": [{"mixdepth": 0, "amount_sats": 40000, "counterparties": 4}]},
-        # {"funds": [3000000], "type": "taker", "delay_blocks": 2, "time_between_rounds": 6,
-        #  "offers": [{"mixdepth": 0, "amount_sats": 40000, "counterparties": 4}]},
-        # {"funds": [200000, 50000], "type": "taker",
-        #  "offers": [{"mixdepth": 0, "amount_sats": 40000, "counterparties": 4}]},
-        # {"funds": [3000000], "type": "taker", "delay_blocks": 2,
-        #  "offers": [{"mixdepth": 0, "amount_sats": 40000, "counterparties": 4}]},
-        # Taker wallet that uses the schedule RPC call:
-        {"funds": [75000, 75000],
-         "type": "taker",
-         "tumbler_options": {
-             "addrcount": 3,
-             "minmakercount": 4,
-             "makercountrange": [5, 1],
-             "mixdepthcount": 3,
-             "mintxcount": 2,
-             "txcountparams": [3, 1],
-             "timelambda": 5,  # Average the number of minutes to wait between transactions. Following exponential distribution.
-             "stage1_timelambda_increase": 1,
-             "liquiditywait": 60, # amount of seconds to wait after failing to choose suitable orders before trying again, default 60
-             "waittime": 20, # wait time in seconds to allow orders to arrive, default=20'
-             "mixdepthsrc": 0,
-             "restart": True,
-             "mincjamount": 35000, # Align this with the maker minsize, otherwise the coinjoins will fail
-             "amtmixdepths": 4,
-             "rounding_chance": 0,
-             "rounding_sigfig_weights": [55, 15, 25, 65, 45]
-         }
-         },
-        {"funds": [1000000, 500000], "type": "maker",
-         "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-                   "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-        {"funds": [3000000, 15000], "type": "maker",
-         "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-                   "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-        {"funds": [1000000, 500000], "type": "maker",
-        "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-                   "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-        {"funds": [3000000, 600000], "type": "maker",
-        "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-                   "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-        {"funds": [200000, 50000], "type": "maker",
-        "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-                   "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-        {"funds": [3000000], "type": "maker",
-         "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-                   "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-        {"funds": [1000000, 500000], "type": "maker",
-         "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-                   "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-        {"funds": [3000000, 15000], "type": "maker",
-         "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-                   "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-        {"funds": [1000000, 500000], "type": "maker",
-         "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-                   "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-        {"funds": [3000000, 600000], "type": "maker",
-         "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-                   "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-    #     {"funds": [1000000, 500000], "type": "maker",
-    #      "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-    #                  "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-    #     {"funds": [3000000, 15000], "type": "maker",
-    #      "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-    #                  "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-    #     {"funds": [1000000, 500000], "type": "maker",
-    #      "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-    #                  "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-    #     {"funds": [3000000, 600000], "type": "maker",
-    #      "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-    #                  "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-    #     {"funds": [200000, 50000], "type": "maker",
-    #      "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-    #                  "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-    #     {"funds": [3000000], "type": "maker",
-    #      "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-    #                  "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-    #     {"funds": [1000000, 500000], "type": "maker",
-    #      "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-    #                  "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-    #     {"funds": [3000000, 15000], "type": "maker",
-    #      "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-    #                  "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-    #     {"funds": [1000000, 500000], "type": "maker",
-    #      "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-    #                  "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-    #     {"funds": [3000000, 600000], "type": "maker",
-    #      "offers": [{"txfee": 0, "cjfee_a": 5000, "cjfee_r": 0.00004,
-    #                  "ordertype": "sw0reloffer", "minsize": 30000, 'maxsize': 3000000}]},
-    ],
+    "wallets": [],
 }
+import sys
+
 
 
 class JoinmarketEngine(EngineBase):
@@ -163,7 +72,7 @@ class JoinmarketEngine(EngineBase):
         self.distributor = self.init_joinmarket_clientserver(name=name, port=port)
 
         start = time()
-        if not self.distributor.wait_wallet(timeout=60):
+        if not self.distributor.wait_wallet(timeout=15):
             print(f"- could not start {name} (application timeout)")
             raise Exception("Could not start distributor")
         print(f"- started distributor")
