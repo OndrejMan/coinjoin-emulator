@@ -23,6 +23,7 @@ def create_backend_config(args):
 
 
 def setup_parser(parser: argparse.ArgumentParser):
+    parser.add_argument("--engine", type=str, default="wasabi", help="engine type")
     parser.add_argument("--name", type=str, help="scenario name")
     parser.add_argument(
         "--client-count", type=int, default=10, help="number of wallets"
