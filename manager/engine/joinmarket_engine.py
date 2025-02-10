@@ -1,7 +1,7 @@
 from manager.engine.engine_base import EngineBase
 from manager.engine.engine_base import EngineBase
 from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
-from manager.wasabi_clients.joinmarket_clients.joinmarket_client import JoinMarketClientServer
+from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 from time import sleep, time
 import sys
 
@@ -151,7 +151,7 @@ class JoinmarketEngine(EngineBase):
         self.distributor = self.init_joinmarket_clientserver(name=name, port=port)
 
         start = time()
-        if not self.distributor.wait_wallet(timeout=60):
+        if not self.distributor.wait_wallet(timeout=15):
             print(f"- could not start {name} (application timeout)")
             raise Exception("Could not start distributor")
         print(f"- started distributor")
