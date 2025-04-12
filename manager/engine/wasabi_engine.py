@@ -38,6 +38,7 @@ class WasabiEngine(EngineBase):
         print("Preparing images")
         self.prepare_image("btc-node")
         self.prepare_client_images()
+        self.prepare_image("wasabi-backend")
 
     def prepare_client_images(self):
         for version in self.versions:
