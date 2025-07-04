@@ -244,156 +244,144 @@ def random_partition(total, n):
     # Partition 'total' into 'n' positive random integers (satoshis)
     # Returns a list of n integers summing to total
     import numpy as np
-    # Generate n-1 sorted random cut points between 0 and total
-    cuts = np.sort(np.random.randint(1, total, n - 1)) if n > 1 else []
-    parts = [cuts[0]] if cuts else [total]
+    if n == 1:
+        return [total]
+    cuts = np.sort(np.random.randint(1, total, n - 1))
+    cuts = cuts.tolist()  # convert numpy array to list for easier handling
+    parts = [cuts[0]]
     for i in range(1, len(cuts)):
         parts.append(cuts[i] - cuts[i - 1])
-    if cuts:
-        parts.append(total - cuts[-1])
+    parts.append(total - cuts[-1])
     return parts
 
 
-def prepare_distribution(distribution):
-    import numpy
-    dist_name = distribution.split("[")[0]
-    dist_params = None
-    if "[" in distribution:
-        dist_params = list(map(float, distribution.split("[")[1].split("]")[0].split(",")))
-    if dist_name == "uniform":
-        dist_params = dist_params or [0.0, 10_000_000.0]
-        return lambda x: list(map(round, numpy.random.uniform(*dist_params, x)))
-    elif dist_name == "pareto":
-        dist_params = dist_params or [1.16]
-        return lambda x: list(map(round, numpy.random.pareto(*dist_params, x) * 1_000_000))
-    elif dist_name == "lognorm":
-        dist_params = dist_params or [14.1, 2.29]
-        return lambda x: list(map(round, numpy.random.lognormal(*dist_params, x)))
-    else:
-        return None
+def parse_delays(delays_str, count):
+    if not delays_str:
+        return [0] * count
+    delays = [int(x) for x in delays_str.split(",")]
+    if len(delays) < count:
+        delays += [0] * (count - len(delays))
+    return delays[:count]
 
 
-def prepare_skip_rounds(args):
-    import numpy
-    if not args.skip_rounds:
-        return None
-    if args.skip_rounds.startswith("random"):
-        if args.stop_round == 0:
-            print("- cannot use random skip rounds with no stop round")
-            sys.exit(1)
-        fraction = 2 / 3
-        if args.skip_rounds != "random":
-            try:
-                fraction = float(args.skip_rounds.split("[")[1].split("]")[0])
-            except IndexError:
-                print("- random skip rounds fraction parsing failed")
-                sys.exit(1)
-        print(f"- skipping {fraction * 100:.2f}% of rounds")
-        return lambda _: sorted(
-            map(
-                int,
-                numpy.random.choice(
-                    range(0, args.stop_round),
-                    size=int(args.stop_round * fraction),
-                    replace=False,
-                ),
-            )
-        )
-    else:
-        try:
-            return lambda idx: (
-                sorted(map(int, args.skip_rounds.split(",")))
-                if idx < args.client_count // 2
-                else []
-            )
-        except ValueError:
-            print("- invalid skip rounds list")
-            sys.exit(1)
+def parse_list_int(s):
+    return [int(x) for x in s.split(",") if x]
+
+
+def parse_list_float(s):
+    return [float(x) for x in s.split(",") if x]
+
+
+def parse_bool(s):
+    return str(s).lower() in ("true", "1", "yes", "y")
 
 
 def setup_parser(parser: argparse.ArgumentParser):
-    parser.add_argument("--engine", type=str, default="joinmarket", help="engine type")
     parser.add_argument("--name", type=str, help="scenario name")
     parser.add_argument("--maker-count", type=int, default=30, help="number of makers")
+    parser.add_argument("--relative-makers", type=int, default=0, help="number of makers with relative offers (sw0reloffer)")
     parser.add_argument("--taker-count", type=int, default=2, help="number of takers")
     parser.add_argument("--tumbler-taker-count", type=int, default=1, help="number of tumbler takers")
-    parser.add_argument("--round-count", type=int, default=10, help="number of rounds")
+    parser.add_argument("--round-count", type=int, default=0, help="number of rounds")
     parser.add_argument("--block-count", type=int, default=0, help="number of blocks")
-    parser.add_argument("--type", type=str, default="static", help="scenario type")
-    parser.add_argument("--distribution", type=str, default="lognorm", help="fund distribution strategy")
-    parser.add_argument("--min-utxos", type=int, default=1, help="minimum UTXOs per wallet")
-    parser.add_argument("--max-utxos", type=int, default=3, help="maximum UTXOs per wallet")
-    parser.add_argument("--min-total-btc", type=float, default=0.01, help="minimum total BTC per wallet")
-    parser.add_argument("--max-total-btc", type=float, default=5.0, help="maximum total BTC per wallet")
-    parser.add_argument("--max-coinjoin", type=int, default=400, help="maximal number of inputs to a coinjoin")
-    parser.add_argument("--min-coinjoin", type=int, default=4, help="minimal number of inputs to a coinjoin")
-    parser.add_argument("--stop-round", type=int, default=0, help="terminate after N coinjoin rounds, 0 for no limit")
-    parser.add_argument("--stop-block", type=int, default=0, help="terminate after N blocks, 0 for no limit")
-    parser.add_argument("--skip-rounds", type=str, required=False, help="skip rounds ('random[fraction]' for randomly sampled fraction of rounds, or comma-separated list of rounds to skip)")
+    parser.add_argument("--taker-delays", type=str, required=False, help="comma-separated block delays for takers, e.g. 0,10,30")
     parser.add_argument("--force", action="store_true", help="overwrite existing files")
     parser.add_argument("--out-dir", type=str, default="scenarios/joinmarket", help="output directory")
-    parser.add_argument("--distributor-version", type=str, required=False, help="version of the distibutor wallet")
-    parser.add_argument("--client-version", type=str, required=False, help="version of the client wallet")
-    parser.add_argument("--anon-score-target", type=int, required=False, help="default anon score target used for wallets")
-    parser.add_argument("--redcoin-isolation", type=bool, required=False, help="default redcoin isolation setting used for wallets")
+    # FeeConfig
+    parser.add_argument("--maker-min-absolute-fee", type=int, default=1000, help="minimum absolute fee (satoshis)")
+    parser.add_argument("--maker-max-absolute-fee", type=int, default=5000, help="maximum absolute fee (satoshis)")
+    parser.add_argument("--maker-min-relative-fee", type=float, default=0.0001, help="minimum relative fee (fraction)")
+    parser.add_argument("--maker-max-relative-fee", type=float, default=0.004, help="maximum relative fee (fraction)")
+    # WalletConfig
+    parser.add_argument("--wallet-min-utxos", type=int, default=9, help="minimum UTXOs per wallet")
+    parser.add_argument("--wallet-max-utxos", type=int, default=11, help="maximum UTXOs per wallet")
+    parser.add_argument("--wallet-min-total-btc", type=float, default=1.0, help="minimum total BTC per wallet")
+    parser.add_argument("--wallet-max-total-btc", type=float, default=10.0, help="maximum total BTC per wallet")
+    parser.add_argument("--wallet-min-utxo-size", type=int, default=100000, help="minimum UTXO size (satoshis)")
+    # TumblerOptions
+    parser.add_argument("--tumbler-addrcount", type=int, default=3, help="tumbler option: addrcount")
+    parser.add_argument("--tumbler-minmakercount", type=int, default=4, help="tumbler option: minmakercount")
+    parser.add_argument("--tumbler-makercountrange", type=str, default="9,1", help="tumbler option: makercountrange, e.g. 9,1")
+    parser.add_argument("--tumbler-mixdepthcount", type=int, default=4, help="tumbler option: mixdepthcount")
+    parser.add_argument("--tumbler-mintxcount", type=int, default=2, help="tumbler option: mintxcount")
+    parser.add_argument("--tumbler-txcountparams", type=str, default="2,1", help="tumbler option: txcountparams, e.g. 2,1")
+    parser.add_argument("--tumbler-timelambda", type=int, default=60, help="tumbler option: timelambda")
+    parser.add_argument("--tumbler-stage1-timelambda-increase", type=int, default=3, help="tumbler option: stage1_timelambda_increase")
+    parser.add_argument("--tumbler-liquiditywait", type=int, default=60, help="tumbler option: liquiditywait")
+    parser.add_argument("--tumbler-waittime", type=int, default=20, help="tumbler option: waittime")
+    parser.add_argument("--tumbler-mixdepthsrc", type=int, default=0, help="tumbler option: mixdepthsrc")
+    parser.add_argument("--tumbler-restart", type=parse_bool, default=True, help="tumbler option: restart (bool)")
+    parser.add_argument("--tumbler-schedulefile", type=str, default="TUMBLE.schedule", help="tumbler option: schedulefile")
+    parser.add_argument("--tumbler-mincjamount", type=int, default=100000, help="tumbler option: mincjamount")
+    parser.add_argument("--tumbler-amtmixdepths", type=int, default=4, help="tumbler option: amtmixdepths")
+    parser.add_argument("--tumbler-rounding-chance", type=float, default=0.25, help="tumbler option: rounding_chance")
+    parser.add_argument("--tumbler-rounding-sigfig-weights", type=str, default="55,15,25,65,40", help="tumbler option: rounding_sigfig_weights, e.g. 55,15,25,65,40")
 
 
 def handler(args):
     print("Generating JoinMarket scenario...")
     scenario = {
-        "name": format_name(args),
+        "name": args.name or f"tumbler_{args.tumbler_taker_count}_maker_{args.maker_count}",
         "default_version": "joinmarket",
         "rounds": args.round_count,
         "blocks": args.block_count,
         "wallets": []
     }
-    scenario["backend"] = {
-        "MaxInputCountByRound": args.max_coinjoin,
-        "MinInputCountByRoundMultiplier": args.min_coinjoin / args.max_coinjoin if args.max_coinjoin else 0.01
-    }
-    if args.distributor_version:
-        scenario["distributor_version"] = args.distributor_version
-    if args.client_version:
-        scenario["default_version"] = args.client_version
-    if args.anon_score_target:
-        scenario["default_anon_score_target"] = args.anon_score_target
-    if args.redcoin_isolation:
-        scenario["default_redcoin_isolation"] = args.redcoin_isolation
-    distribution = prepare_distribution(args.distribution)
-    if not distribution:
-        print("- invalid distribution")
-        sys.exit(1)
-    skip_rounds = prepare_skip_rounds(args)
-    # Generate wallets
     import random
     SATOSHI = 100_000_000
+    def default_tumbler_options():
+        return {
+            "addrcount": args.tumbler_addrcount,
+            "minmakercount": args.tumbler_minmakercount,
+            "makercountrange": parse_list_int(args.tumbler_makercountrange),
+            "mixdepthcount": args.tumbler_mixdepthcount,
+            "mintxcount": args.tumbler_mintxcount,
+            "txcountparams": parse_list_int(args.tumbler_txcountparams),
+            "timelambda": args.tumbler_timelambda,
+            "stage1_timelambda_increase": args.tumbler_stage1_timelambda_increase,
+            "liquiditywait": args.tumbler_liquiditywait,
+            "waittime": args.tumbler_waittime,
+            "mixdepthsrc": args.tumbler_mixdepthsrc,
+            "restart": args.tumbler_restart,
+            "schedulefile": args.tumbler_schedulefile,
+            "mincjamount": args.tumbler_mincjamount,
+            "amtmixdepths": args.tumbler_amtmixdepths,
+            "rounding_chance": args.tumbler_rounding_chance,
+            "rounding_sigfig_weights": parse_list_int(args.tumbler_rounding_sigfig_weights)
+        }
+    # TAKERS
+    taker_delays = parse_delays(args.taker_delays, args.taker_count)
     for idx in range(args.taker_count):
-        n_utxos = random.randint(args.min_utxos, args.max_utxos)
-        total_btc = random.uniform(args.min_total_btc, args.max_total_btc)
+        n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
+        total_btc = random.uniform(args.wallet_min_total_btc, args.wallet_max_total_btc)
         total_sats = int(total_btc * SATOSHI)
         funds = random_partition(total_sats, n_utxos)
         wallet = {
             "funds": funds,
-            "type": "taker"
+            "type": "taker",
+            "tumbler_options": default_tumbler_options()
         }
-        if skip_rounds:
-            wallet["skip_rounds"] = skip_rounds(idx)
+        delay = taker_delays[idx] if idx < len(taker_delays) else 0
+        if delay:
+            wallet["delay_blocks"] = delay
         scenario["wallets"].append(wallet)
+    # TUMBLER TAKERS
     for idx in range(args.tumbler_taker_count):
-        n_utxos = random.randint(args.min_utxos, args.max_utxos)
-        total_btc = random.uniform(args.min_total_btc, args.max_total_btc)
+        n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
+        total_btc = random.uniform(args.wallet_min_total_btc, args.wallet_max_total_btc)
         total_sats = int(total_btc * SATOSHI)
         funds = random_partition(total_sats, n_utxos)
         wallet = {
             "funds": funds,
-            "type": "tumbler_taker"
+            "type": "taker",
+            "tumbler_options": default_tumbler_options()
         }
-        if skip_rounds:
-            wallet["skip_rounds"] = skip_rounds(idx)
         scenario["wallets"].append(wallet)
-    for idx in range(args.maker_count):
-        n_utxos = random.randint(args.min_utxos, args.max_utxos)
-        total_btc = random.uniform(args.min_total_btc, args.max_total_btc)
+    # MAKERS
+    abs_makers = args.maker_count - args.relative_makers
+    for idx in range(abs_makers):
+        n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
+        total_btc = random.uniform(args.wallet_min_total_btc, args.wallet_max_total_btc)
         total_sats = int(total_btc * SATOSHI)
         funds = random_partition(total_sats, n_utxos)
         wallet = {
@@ -402,25 +390,46 @@ def handler(args):
             "offers": [
                 {
                     "txfee": 0,
+                    "cjfee_a": random.randint(args.maker_min_absolute_fee, args.maker_max_absolute_fee),
+                    "cjfee_r": 0,
                     "ordertype": "sw0absoffer",
-                    "minsize": 100000,
-                    "maxsize": int(sum(funds) * 0.9),
-                    "cjfee_a": random.randint(1000, 5000),
-                    "cjfee_r": 0
+                    "minsize": args.wallet_min_utxo_size,
+                    "maxsize": int(sum(funds) * 0.9)
                 }
             ]
         }
-        if skip_rounds:
-            wallet["skip_rounds"] = skip_rounds(idx)
+        scenario["wallets"].append(wallet)
+    for idx in range(args.relative_makers):
+        n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
+        total_btc = random.uniform(args.wallet_min_total_btc, args.wallet_max_total_btc)
+        total_sats = int(total_btc * SATOSHI)
+        funds = random_partition(total_sats, n_utxos)
+        wallet = {
+            "funds": funds,
+            "type": "maker",
+            "offers": [
+                {
+                    "txfee": 0,
+                    "cjfee_a": 0,
+                    "cjfee_r": round(random.uniform(args.maker_min_relative_fee, args.maker_max_relative_fee), 6),
+                    "ordertype": "sw0reloffer",
+                    "minsize": args.wallet_min_utxo_size,
+                    "maxsize": int(sum(funds) * 0.9)
+                }
+            ]
+        }
         scenario["wallets"].append(wallet)
     print(f"- requires {(sum(map(lambda x: sum(x['funds']), scenario['wallets'])) / 100_000_000):0.8f} BTC")
+    import os
     os.makedirs(args.out_dir, exist_ok=True)
     out_path = os.path.join(args.out_dir, scenario["name"])
     if not out_path.endswith(".json"):
         out_path += ".json"
     if os.path.exists(out_path) and not args.force:
         print(f"- file {out_path} already exists")
+        import sys
         sys.exit(1)
+    import json
     with open(out_path, "w") as f:
         json.dump(scenario, f, indent=2)
     print(f"- saved to {out_path}")
