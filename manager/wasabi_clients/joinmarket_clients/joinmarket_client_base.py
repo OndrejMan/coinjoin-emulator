@@ -5,6 +5,7 @@ from time import sleep, time
 from urllib3.exceptions import InsecureRequestWarning
 import urllib3
 from bip_utils import Bip39SeedGenerator, Bip32Slip10Secp256k1
+import backoff
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -58,7 +59,7 @@ class JoinMarketClientServer:
         self.seedphrase = ""
 
     @classmethod
-    def from_wallet(cls, name: str, port: int, wallet):
+    def from_wallet(cls, name: str, port: int, wallet, host: str, proxy=""):
         joinmarket = getattr(wallet, "joinmarket", None)
         type_ = joinmarket.role.value if joinmarket and joinmarket.role else "maker"
         tumbler_options = (joinmarket.tumbler_options if joinmarket else None) or {}
@@ -88,10 +89,12 @@ class JoinMarketClientServer:
             offers=(joinmarket.offers if joinmarket else None) or [],
             tumbler_options=tumbler_options,
             time_between_rounds=(joinmarket.time_between_rounds if joinmarket else 0) or 0,
+            host=host,
+            proxy=proxy
         )
 
         start = time()
-        if not client.wait_wallet(timeout=60):
+        if not client.wait_wallet(timeout=120):
             print(
                 f"- could not start {name} (application timeout {time() - start} seconds)"
             )
@@ -104,46 +107,51 @@ class JoinMarketClientServer:
         self.update_coin_history()
         return self.session()
 
-
-    def _rpc(self, method, endpoint, json_data=None, timeout=5, repeat=4) -> dict:
+    def _rpc(self, method, endpoint, json_data=None, timeout=60, repeat=4) -> dict:
+        url = f"https://{self.host}:{self.port}/api/v1{endpoint}"
         headers = {}
         if self.token:
             headers['Authorization'] = f'Bearer {self.token}'
         response = None
-        for _ in range(repeat):
+        for attempt in range(repeat):
             try:
+                print(f"[RPC] {method} {url} (attempt {attempt+1}/{repeat}) data={json_data} using proxy={self.proxy}")
                 response = requests.request(
                     method=method,
-                    url=f"https://{self.host}:{self.port}/api/v1{endpoint}",
+                    url=url,
                     json=json_data or {},
                     headers=headers,
-                    proxies=dict(http=self.proxy),
+                    proxies=dict(https=self.proxy) if self.proxy else None,
                     timeout=timeout,
                     verify=False,
                 )
-            except requests.exceptions.Timeout:
-                continue
-            except InsecureRequestWarning:
-                continue
+                print(f"[RPC] Response {response.status_code}: {response.text}")
 
-            if response.status_code == 401:
-                self.unlock_wallet()
-                headers['Authorization'] = f'Bearer {self.token}'
-                continue
+                if response.status_code == 401:
+                    print("[RPC] 401 Unauthorized: Attempting to unlock wallet and retry...")
+                    self.unlock_wallet()
+                    headers['Authorization'] = f'Bearer {self.token}'
+                    continue
 
-            if response.status_code == 409:
-                raise JoinmarketConflictException(f"Error {response.status_code}: {response.text}", response)
+                if response.status_code == 409:
+                    print(f"[RPC] 409 Conflict: {response.text}")
+                    raise JoinmarketConflictException(f"Error {response.status_code}: {response.text}", response)
 
-            if response.status_code >= 400:
-                try:
-                    print(response.json())
-                    error_message = response.json().get("message", "Unknown error")
-                except json.JSONDecodeError:
-                    error_message = response.text
-                raise Exception(f"Error {response.status_code}: {error_message}")
+                if response.status_code >= 400:
+                    try:
+                        print(response.json())
+                        error_message = response.json().get("message", "Unknown error")
+                    except json.JSONDecodeError:
+                        error_message = response.text
+                    print(f"[RPC] Error {response.status_code}: {error_message}")
+                    raise Exception(f"Error {response.status_code}: {error_message}")
 
-            return response.json()
-
+                return response.json()
+            except Exception as e:
+                print(f"[RPC ERROR] {method} {url}: {e}")
+                if attempt == repeat - 1:
+                    raise
+                sleep(1)
         if response is not None:
             return response.json()
 
@@ -165,13 +173,14 @@ class JoinMarketClientServer:
         """Create a new wallet and store its name."""
         method = "POST"
         endpoint = "/wallet/create"
-        self.walletname = walletname or self.walletname or WALLET_NAME
+        walletname = walletname or self.walletname
         data = {
-            "walletname": self.walletname,
+            "walletname": walletname,
             "password": PASSWORD,
             "wallettype": WALLET_TYPE
         }
-        response = self._rpc(method, endpoint, json_data=data)
+        # Use a longer timeout for wallet creation (slow clients)
+        response = self._rpc(method, endpoint, json_data=data, timeout=300)
         self.token = response.get("token", "")
         self.refresh_token = response.get("refresh_token", "")
         self.seedphrase = response.get("seedphrase", "")
@@ -188,23 +197,49 @@ class JoinMarketClientServer:
         return response
 
 
+    @backoff.on_exception(
+        backoff.expo,
+        Exception,
+        max_time=60,
+        max_tries=None,
+        jitter=None,
+    )
+    def _wait_wallet_create(self, timeout=None):
+        elapsed = int(time() - self._wait_wallet_start)
+        print(f"- trying wallet creation for {self.walletname} on {self.host}:{self.port} (elapsed {elapsed}s)")
+        self._create_wallet()
+
+    @backoff.on_exception(
+        backoff.expo,
+        Exception,
+        max_time=60,
+        max_tries=None,
+        jitter=None,
+    )
+    def _wait_wallet_display(self, timeout=None):
+        elapsed = int(time() - self._wait_wallet_start)
+        print(f"- checking wallet display for {self.walletname} on {self.host}:{self.port} (elapsed {elapsed}s)")
+        self.get_balance()
+        print(f"- wallet {self.walletname} ready on {self.host}:{self.port}")
+        return True
+
     def wait_wallet(self, timeout=None):
-        start = time()
-        while timeout is None or time() - start < timeout:
+        """
+        Wait for the wallet to become available, using separate exponential backoff for creation and display.
+        """
+        from time import time
+        self._wait_wallet_start = time()
+        try:
             try:
-                self._create_wallet()
+                self._wait_wallet_create(timeout=timeout)
             except Exception as e:
-                pass
-
-            try:
-                self.get_balance()
-                return True
-            except Exception as e:
-                pass
-
-            sleep(1)
-        return False
-
+                print(f"- wallet {self.walletname} creation failed: {e}")
+                raise
+            self._wait_wallet_display(timeout=timeout)
+            return True
+        except Exception:
+            print(f"[TIMEOUT] Wallet {self.walletname} not ready after {int(time() - self._wait_wallet_start)}s on {self.host}:{self.port}")
+            return False
 
     def display_wallet(self):
         """Get detailed breakdown of wallet contents by account."""
@@ -363,13 +398,17 @@ class JoinMarketClientServer:
 
     def stop_coinjoin(self):
         """Stop a running coinjoin attempt."""
-        if self.type == "taker" and self.coinjoin_in_process:
-            return self.stop_taker()
-        elif self.type == "maker" and self.maker_running:
-            return self.stop_maker()
-        else:
-            print("No coinjoin in process")
-            return True
+        try:
+            if self.type == "taker" and self.coinjoin_in_process:
+                return self.stop_taker()
+            elif self.type == "maker" and self.maker_running:
+                return self.stop_maker()
+            else:
+                print("No coinjoin in process")
+                return True
+        except Exception as e:
+            print(f"Failed to stop coinjoin: {e}")
+            return False
 
     def stop_taker(self):
         method = "GET"

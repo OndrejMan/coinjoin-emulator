@@ -36,11 +36,11 @@ class DockerDriver(Driver):
         image,
         env=None,
         ports=None,
-        skip_ip=False,
-        cpu=0.1,
-        memory=768,
+        cpu=None,
+        memory=None,
+        **kwargs
     ):
-        self.client.containers.run(
+        container = self.client.containers.run(
             image,
             detach=True,
             auto_remove=True,
@@ -50,7 +50,9 @@ class DockerDriver(Driver):
             ports=ports or {},
             environment=env or {},
         )
-        return "", ports
+        container_ip = container.attrs['NetworkSettings']['IPAddress']
+        port_mapping = container.attrs['NetworkSettings']['Ports']
+        return container_ip, port_mapping, None
 
     def stop(self, name):
         try:

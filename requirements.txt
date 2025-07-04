@@ -6,3 +6,4 @@ podman==4.7
 kubernetes==28.1.0
 numpy==1.26.4
 bip-utils
+backoff

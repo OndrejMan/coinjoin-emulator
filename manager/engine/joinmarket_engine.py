@@ -8,7 +8,8 @@ import sys
 class JoinmarketEngine(EngineBase):
 
     def __init__(self, args, driver):
-        super().__init__(args, driver, "/home/joinmarket")
+        super().__init__(args, driver,
+                         log_src_path="/home/joinmarket/.joinmarket/logs")
 
     def default_scenario(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -119,13 +120,15 @@ class JoinmarketEngine(EngineBase):
         name = "irc-server"
 
         try:
-            ip, manager_ports = self.driver.run(
+            ip, manager_ports, _ = self.driver.run(
                 name,
                 f"{self.args.image_prefix}irc-server",
                 env={},  # Add any necessary environment variables
                 ports={6667: 6667},
-                cpu=1.0,
-                memory=2048,
+                cpu=0.25,
+                memory=256,
+                service_account="irc-server",
+                run_as_user=10000,
             )
         except Exception as e:
             print(f"- could not start {name} ({e})")
@@ -136,55 +139,90 @@ class JoinmarketEngine(EngineBase):
         name = "joinmarket-distributor"
         port = 28183  # Use a specific port for the distributor
         try:
-            ip, manager_ports = self.driver.run(
+            ip, distributor_node_ports, route = self.driver.run(
                 name,
-                "joinmarket-client-server:latest",
+                f"{self.args.image_prefix}joinmarket-client-server",
                 env={},  # Add any necessary environment variables
                 ports={28183: port},
-                cpu=1.0,
-                memory=2048,
+                cpu=1,
+                memory=1024,
+                service_account="joinmarket"
             )
         except Exception as e:
             print(f"- could not start {name} ({e})")
             raise Exception("Could not start distributor")
 
-        self.distributor = self.init_joinmarket_clientserver(name=name, port=port)
+        actual_port = port if self.args.proxy else (443 if route else distributor_node_ports[port])
+        actual_ip = ip if self.args.proxy else (route if route else self.args.control_ip)
 
-        start = time()
-        if not self.distributor.wait_wallet(timeout=15):
-            print(f"- could not start {name} (application timeout)")
-            raise Exception("Could not start distributor")
+        print(f"- started {name} at {actual_ip}:{actual_port}")
+        self.distributor = self.init_joinmarket_clientserver(
+            name=name,
+            port=actual_port,
+            host=actual_ip,
+            proxy=self.args.proxy
+        )
+
         print(f"- started distributor")
 
+    @staticmethod
+    def init_joinmarket_clientserver(name, port, host="localhost", proxy=None):
+        client = JoinMarketClientServer(name=name, port=port, host=host, proxy=proxy)
 
-    def init_joinmarket_clientserver(self, name, port, host="localhost", type="maker"):
-        return JoinMarketClientServer(name=name, port=port, type=type)
+        if not client.session():
+            print(f"- could not start {name} (session timeout)")
+            raise Exception("Could not start distributor")
+
+        if not client.wait_wallet(timeout=30000):
+            print(f"- could not start {name} (application timeout)")
+            raise Exception("Could not start distributor")
+        return client
 
 
     def start_client(self, idx: int, wallet: WalletConfig):
         name = f"jcs-{idx:03}"
         port = 28184 + idx
         try:
-            ip, manager_ports = self.driver.run(
+            ip, client_node_ports, route = self.driver.run(
                 name,
-                "joinmarket-client-server:latest",
+                f"{self.args.image_prefix}joinmarket-client-server",
                 env={},
                 ports={28183: port},
-                cpu=(0.1),
-                memory=(768),
+                cpu=(0.05),
+                memory=(64),
+                service_account="joinmarket",
+                run_as_user=1000,
+                run_as_group=1000,
+                proxy=self.args.proxy
             )
         except Exception as e:
-            print(f"- could not start {name} ({e})")
+            print(f"- error starting {name}: {e}")
             return None
 
-        print(f"driver starting {name}")
+        # In kubernetes, the pod is addressed using the ip unique for that service and all pods have the port
+        # 28183 in use. The port rotation is needed for the local docker run, where the ports are mapped to the local
+        actual_port = 28183 if self.args.proxy else (443 if route else client_node_ports[port])
+        actual_ip = ip if self.args.proxy else (route if route else self.args.control_ip)
 
-        client = JoinMarketClientServer.from_wallet(name, port, wallet)
+        print(f"- started {name} at {route}:{actual_port}")
+
+        sleep(10)
+        client = JoinMarketClientServer.from_wallet(
+            name=name,
+            port=actual_port,
+            host=actual_ip,
+            wallet=wallet,
+            proxy=self.args.proxy)
+
+        print(f"driver starting {name}")
         return client
 
     def stop_client(self, idx: int):
         name = f"jcs-{idx:03}"
-        self.driver.stop(name)
+        try:
+            self.driver.stop(name)
+        except Exception as e:
+            print(f"- could not stop client {name}: {e}")
 
     def store_engine_logs(self, data_path):
         # TODO: store irc logs.
@@ -193,17 +231,27 @@ class JoinmarketEngine(EngineBase):
 
     def update_coinjoins_joinmarket(self):
         for client in self.clients:
-            delta = client.update(self.current_block, self.current_round)
-            # Apply any change in round count; alternatively, have the client trigger an event.
-            self.current_round += delta
+            try:
+                delta = client.update(self.current_block, self.current_round)
+                # Apply any change in round count; alternatively, have the client trigger an event.
+                self.current_round += delta
+            except Exception as e:
+                print(f"- could not update {client.name} ({e})")
 
 
     def run_engine(self):
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
-            
-        self.update_invoice_payments()
-        initial_block = self.node.get_block_count()
+
+        try:
+            self.update_invoice_payments()
+        except Exception as e:
+            print(f"- invoice payment update failed: {e}")
+        try:
+            initial_block = self.node.get_block_count()
+        except Exception as e:
+            print(f"- could not get initial block count: {e}")
+            initial_block = 0
         for i in range(5):
             # Takers need 3 confirmations of transactions for the sourcing commitments
             self.node.mine_block()
@@ -212,6 +260,7 @@ class JoinmarketEngine(EngineBase):
 
         while (self.scenario.rounds == 0 or self.current_round < self.scenario.rounds) and (
                 self.scenario.blocks == 0 or self.current_block < self.scenario.blocks):
+            # refresh block count
             for _ in range(3):
                 try:
                     self.current_block = self.node.get_block_count() - initial_block  # type: ignore
@@ -219,10 +268,15 @@ class JoinmarketEngine(EngineBase):
                 except Exception as e:
                     print(f"- could not get blocks".ljust(60), end="\r")
                     print(f"Block exception: {e}", file=sys.stderr)
-
-            self.update_invoice_payments()
-            self.update_coinjoins_joinmarket()
-
+            # safe updates
+            try:
+                self.update_invoice_payments()
+            except Exception as e:
+                print(f"- invoice update failed: {e}")
+            try:
+                self.update_coinjoins_joinmarket()
+            except Exception as e:
+                print(f"- coinjoin update failed: {e}")
             print(
                 f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60),
                 end="\r",

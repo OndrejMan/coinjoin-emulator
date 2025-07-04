@@ -22,9 +22,9 @@ class Driver(ABC):
         image,
         env=None,
         ports=None,
-        skip_ip=False,
-        cpu=0.1,
-        memory=768,
+        cpu=None,
+        memory=None,
+        **kwargs
     ):
         pass
 

@@ -86,7 +86,7 @@ class WasabiEngine(EngineBase):
 
         version = get_backend_version(self.backend_architecture)
 
-        wasabi_backend_ip, wasabi_backend_ports = self.driver.run(
+        wasabi_backend_ip, wasabi_backend_ports, _ = self.driver.run(
             "wasabi-backend",
             f"{self.args.image_prefix}wasabi-backend:{version}",
             ports={37127: 37127},
@@ -135,7 +135,7 @@ class WasabiEngine(EngineBase):
         if self.backend_architecture is None:
             self.backend_architecture = self.determine_backend_architecture()
         version = get_backend_version(self.backend_architecture)
-        wasabi_coordinator_ip, wasabi_coordinator_ports = self.driver.run(
+        wasabi_coordinator_ip, wasabi_coordinator_ports, _ = self.driver.run(
             "wasabi-coordinator",
             f"{self.args.image_prefix}wasabi-coordinator:{version}",
             ports={37128: 37128},
@@ -166,7 +166,7 @@ class WasabiEngine(EngineBase):
         backend_address = self.backend.internal_ip
 
         distributor_version = self.scenario.distributor_version or self.scenario.default_version
-        wasabi_client_distributor_ip, wasabi_client_distributor_ports = self.driver.run(
+        wasabi_client_distributor_ip, wasabi_client_distributor_ports, _ = self.driver.run(
             "wasabi-client-distributor",
             f"{self.args.image_prefix}wasabi-client:{distributor_version}",
             env={
@@ -247,7 +247,7 @@ class WasabiEngine(EngineBase):
             client_env["ADDR_WASABI_COORDINATOR"] = self.coordinator.internal_ip
 
         try:
-            ip, manager_ports = self.driver.run(
+            ip, manager_ports, _ = self.driver.run(
                 name,
                 f"{self.args.image_prefix}wasabi-client:{version}",
                 env=client_env,
