@@ -3,3 +3,8 @@ mounts/
 logs/
 logs_selected
 *.idea/
+shadowsocks
+.secrets/
+scenarios/joinmarket/experiments/
+scenarios/joinmarket/test
+scenarios/joinmarket/basic
