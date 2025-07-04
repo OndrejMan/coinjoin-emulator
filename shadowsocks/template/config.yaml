@@ -1,0 +1,105 @@
+# Source: shadowsocks-rust/templates/config.yaml
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: shadowsocks-rust
+  labels:
+    app.kubernetes.io/name: shadowsocks-rust
+    app.kubernetes.io/instance: shadowsocks-rust
+data:
+  config.json: |
+    {
+      "servers":
+        [
+          {
+            "fast_open": true,
+            "method": "aes-256-gcm",
+            "mode": "tcp_and_udp",
+            "password": "i4W@JosK593pd*",
+            "server": "::",
+            "server_port": 8388,
+            "service_port": 80
+          }
+        ]
+    }
+---
+# Source: shadowsocks-rust/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: shadowsocks-rust
+  labels:
+    app.kubernetes.io/name: shadowsocks-rust
+    app.kubernetes.io/instance: shadowsocks-rust
+spec:
+  type: LoadBalancer
+    #type: NodePort
+  ports:
+  - name: ss-8388
+    targetPort: 8388
+      #nodePort: 31234
+    port: 8388
+  selector:
+    app.kubernetes.io/name: shadowsocks-rust
+    app.kubernetes.io/instance: shadowsocks-rust
+---
+# Source: shadowsocks-rust/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shadowsocks-rust
+  labels:
+    app.kubernetes.io/name: shadowsocks-rust
+    app.kubernetes.io/instance: shadowsocks-rust
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: shadowsocks-rust
+      app.kubernetes.io/instance: shadowsocks-rust
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: shadowsocks-rust
+        app.kubernetes.io/instance: shadowsocks-rust
+    spec:
+      securityContext:
+        {}
+      volumes:
+      - name: config
+        configMap:
+          name: shadowsocks-rust
+      - name: plugins
+        emptyDir: {}
+      containers:
+      - name: shadowsocks-rust
+        securityContext:
+          {
+            allowPrivilegeEscalation: false,
+            runAsNonRoot: true,
+            capabilities: {
+              drop: ["ALL"],
+            },
+            seccompProfile: {
+              type: "RuntimeDefault"
+            },
+          }
+        image: "dufkan/proxy:latest"
+        imagePullPolicy: Always
+        volumeMounts:
+        - name: config
+          mountPath: /etc/shadowsocks-rust
+          readOnly: true
+        - name: plugins
+          mountPath: /usr/local/bin
+        ports:
+        - name: ss-8388
+          containerPort: 8388
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+          requests:
+            cpu: 20m
+            memory: 32Mi
