@@ -53,7 +53,7 @@ class WasabiEngine(EngineBase):
 
 
     def start_wasabi_backend(self):
-        wasabi_backend_ip, wasabi_backend_ports = self.driver.run(
+        wasabi_backend_ip, wasabi_backend_ports, _ = self.driver.run(
             "wasabi-backend",
             f"{self.args.image_prefix}wasabi-backend",
             ports={37127: 37127},
@@ -93,7 +93,7 @@ class WasabiEngine(EngineBase):
         distributor_version = self.scenario.get(
             "distributor_version", self.scenario["default_version"]
         )
-        wasabi_client_distributor_ip, wasabi_client_distributor_ports = self.driver.run(
+        wasabi_client_distributor_ip, wasabi_client_distributor_ports, _ = self.driver.run(
             "wasabi-client-distributor",
             f"{self.args.image_prefix}wasabi-client:{distributor_version}",
             env={
@@ -157,7 +157,7 @@ class WasabiEngine(EngineBase):
         sleep(random.random() * 3)
         name = f"wasabi-client-{idx:03}"
         try:
-            ip, manager_ports = self.driver.run(
+            ip, manager_ports, _ = self.driver.run(
                 name,
                 f"{self.args.image_prefix}wasabi-client:{version}",
                 env={

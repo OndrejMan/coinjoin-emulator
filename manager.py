@@ -1,8 +1,12 @@
+import time
+
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
 import manager.commands.genscen
+import manager.commands.genscen_joinmarket
 import sys
 import argparse
+import os
 
 
 args = None
@@ -21,6 +25,7 @@ def run():
         engine.stop_coinjoins()
         if not args.no_logs:
             engine.store_logs()
+            # time.sleep(10)
         driver.cleanup(args.image_prefix)
 
 if __name__ == "__main__":
@@ -36,7 +41,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--driver",
         type=str,
-        choices=["docker", "podman", "kubernetes"],
+        choices=["docker", "podman", "kubernetes", "openshift"],
         default="docker",
     )
     parser.add_argument("--no-logs", action="store_true", default=False)
@@ -75,6 +80,7 @@ if __name__ == "__main__":
     run_subparser.add_argument("--proxy", type=str, default="")
     run_subparser.add_argument("--namespace", type=str, default="coinjoin")
     run_subparser.add_argument("--reuse-namespace", action="store_true", default=False)
+    run_subparser.add_argument("--k8s-pull-secret", type=str, default=None, help="Path to Docker config.json for k8s imagePullSecret (or set K8S_PULL_SECRET env var)")
 
     clean_subparser = subparsers.add_parser("clean", help="clean up")
     clean_subparser.add_argument("--namespace", type=str, default="coinjoin")
@@ -85,21 +91,27 @@ if __name__ == "__main__":
     clean_subparser.add_argument(
         "--image-prefix", type=str, default="", help="image prefix"
     )
+    clean_subparser.add_argument("--k8s-pull-secret", type=str, default=None, help="Path to Docker config.json for k8s imagePullSecret (or set K8S_PULL_SECRET env var)")
 
     genscen_subparser = subparsers.add_parser("genscen", help="generate scenario file")
     manager.commands.genscen.setup_parser(genscen_subparser)
+
+    genscen_jm_subparser = subparsers.add_parser("genscen-joinmarket", help="generate JoinMarket scenario file")
+    manager.commands.genscen_joinmarket.setup_parser(genscen_jm_subparser)
 
     args = parser.parse_args()
 
     if args.command == "genscen":
         manager.commands.genscen.handler(args)
         exit(0)
+    if args.command == "genscen-joinmarket":
+        manager.commands.genscen_joinmarket.handler(args)
+        exit(0)
 
     match args.driver:
         case "docker":
             from manager.driver.docker import DockerDriver
 
-            driver = DockerDriver("coinjoin")
             driver = DockerDriver(args.namespace)
         case "podman":
             from manager.driver.podman import PodmanDriver
@@ -108,7 +120,13 @@ if __name__ == "__main__":
         case "kubernetes":
             from manager.driver.kubernetes import KubernetesDriver
 
-            driver = KubernetesDriver(args.namespace, args.reuse_namespace)
+            # Support for k8s image pull secret
+            k8s_pull_secret = args.k8s_pull_secret or os.environ.get("K8S_PULL_SECRET")
+            driver = KubernetesDriver(args.namespace, args.reuse_namespace, k8s_pull_secret)
+        case "openshift":
+            from manager.driver.openshift import OpenshiftDriver
+            k8s_pull_secret = args.k8s_pull_secret or os.environ.get("K8S_PULL_SECRET")
+            driver = OpenshiftDriver(args.namespace, args.reuse_namespace, k8s_pull_secret)
         case _:
             print(f"Unknown driver '{args.driver}'")
             exit(1)

@@ -1,3 +1,5 @@
+import time
+
 from manager.btc_node import BtcNode
 from manager import utils
 from time import sleep
@@ -74,12 +76,13 @@ class EngineBase:
         self.start_distributor()
 
     def start_btc_node(self):
-        btc_node_ip, btc_node_ports = self.driver.run(
+        btc_node_ip, btc_node_ports, _ = self.driver.run(
             "btc-node",
             f"{self.args.image_prefix}btc-node",
             ports={18443: 18443, 18444: 18444},
-            cpu=4.0,
-            memory=8192,
+            cpu=1.0,
+            memory=512,
+            service_account="btc-node",
         )
 
         self.node = BtcNode(
@@ -171,8 +174,7 @@ class EngineBase:
             print(f"- stored {client.name} keys")
         try:
             self.driver.download(client.name, self.log_src_path, client_path)
-
-            print(f"- stored {client.name} logs")
+            print(f"- stored {client.name} logs, {self.log_src_path}, {client_path}")
         except:
             print(f"- could not store {client.name} logs")
 
@@ -190,20 +192,23 @@ class EngineBase:
         stored_blocks = 0
         node_path = os.path.join(data_path, "btc-node")
         os.mkdir(node_path)
-        while stored_blocks < self.node.get_block_count():
-            block_hash = self.node.get_block_hash(stored_blocks)
-            block = self.node.get_block_info(block_hash)
-            with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
-                json.dump(block, f, indent=2)
-            stored_blocks += 1
+        try:
+            while stored_blocks < self.node.get_block_count():
+                block_hash = self.node.get_block_hash(stored_blocks)
+                block = self.node.get_block_info(block_hash)
+                with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
+                    json.dump(block, f, indent=2)
+                stored_blocks += 1
+        except TypeError:
+            print("Failed to get block count")
+
         print(f"- stored {stored_blocks} blocks")
 
         self.store_engine_logs(data_path)
 
-
-        # TODO parallelize (driver cannot be simply passed to new threads)
-        for client in self.clients:
-            self.store_client_logs(client, data_path)
+        print(f"- storing logs for {len(self.clients)} clients in parallel")
+        with multiprocessing.pool.ThreadPool() as pool:
+            pool.starmap(self.store_client_logs, [(client, data_path) for client in self.clients])
 
         shutil.make_archive(experiment_path, "zip", *os.path.split(experiment_path))
         print("- zip archive created")
@@ -213,9 +218,23 @@ class EngineBase:
 
     def stop_coinjoins(self):
         print("Stopping coinjoins")
-        for client in self.clients:
-            client.stop_coinjoin()
-            print(f"- stopped mixing {client.name}")
+        
+        # Helper function to stop a single client's coinjoin
+        def stop_single_client(client):
+            try:
+                client.stop_coinjoin()
+                print(f"- stopped mixing {client.name}")
+                return True
+            except Exception as e:
+                print(f"- could not stop mixing {client.name}: {e}")
+                return False
+        
+        # Use ThreadPool to parallelize stopping coinjoins
+        with multiprocessing.pool.ThreadPool() as pool:
+            results = pool.map(stop_single_client, self.clients)
+            
+        success_count = sum(1 for r in results if r)
+        print(f"- stopped mixing for {success_count}/{len(self.clients)} clients")
 
     def update_invoice_payments(self):
         due = list(
