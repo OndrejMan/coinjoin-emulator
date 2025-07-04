@@ -12,10 +12,14 @@ class BtcNode:
         self.internal_ip = internal_ip
         self.proxy = proxy
 
+        print(f"Started btc-node with ip: {self.host} and ports: {self.port}")
+
     def _rpc(self, request, wallet=None):
         request["jsonrpc"] = "2.0"
         request["id"] = "1"
         try:
+            print(f"Request: {json.dumps(request)}")
+            print(f"http://{self.host}:{self.port}")
             response = requests.post(
                 f"http://{self.host}:{self.port}"
                 + ("/wallet/" + WALLET if wallet else ""),
@@ -24,7 +28,9 @@ class BtcNode:
                 proxies=dict(http=self.proxy),
                 timeout=5,
             )
-        except requests.exceptions.Timeout:
+        except requests.exceptions.Timeout as e:
+            print("Request timeout")
+            print(e)
             return "timeout"
         if response.json()["error"] is not None:
             raise Exception(response.json()["error"])
@@ -79,11 +85,16 @@ class BtcNode:
         while True:
             try:
                 block_count = self.get_block_count()
+                print(f"Block count: {block_count}")
+                if block_count == 'timeout':
+                    print("Btc node not ready, timeout")
+                    continue
                 if block_count > 100:
                     break
-            except Exception:
+            except Exception as e:
+                print(f"Btc node not ready: {e}")
                 pass
-            sleep(0.1)
+            sleep(10)
 
     def create_wallet(self, wallet):
         request = {
