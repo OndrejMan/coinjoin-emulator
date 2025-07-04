@@ -6,7 +6,6 @@ import numpy.random
 import copy
 import random
 
-from manager.commands.genscen_jonimarket import generate_scenario
 
 SCENARIO_TEMPLATE = {
     "name": "template",
@@ -232,9 +231,6 @@ def handler(args):
     print("Generating scenario...")
     scenario = copy.deepcopy(SCENARIO_TEMPLATE)
     scenario["name"] = format_name(args)
-
-    if scenario["engine"] != "wasabi":
-        generate_scenario()
 
     scenario["backend"]["MaxInputCountByRound"] = args.max_coinjoin
     scenario["backend"]["MinInputCountByRoundMultiplier"] = (
