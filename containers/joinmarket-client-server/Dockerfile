@@ -6,6 +6,11 @@ FROM joinmarket-latest
 # Starts the RPC server
 # RUN python3 /jm/clientserver/scripts/jmwalletd.py
 
+RUN apt-get update -qq && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        socat ca-certificates iproute2 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 RUN useradd -ms /bin/sh joinmarket
 USER 1000:1000
 
