@@ -10,3 +10,5 @@ logs_selected
 scenarios/joinmarket/experiments/
 scenarios/joinmarket/test
 scenarios/joinmarket/basic
+logs_download
+.simulation*
