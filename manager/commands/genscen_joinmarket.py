@@ -10,9 +10,6 @@ from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 import argparse
-import os
-import sys
-import numpy
 
 class OfferType(Enum):
     ABSOLUTE = "sw0absoffer"
@@ -180,7 +177,7 @@ class JoinMarketConfigGenerator:
         """Generate complete configuration"""
 
         if taker_delays is None:
-            taker_delays = [0, 10, 30, 50, 70][:num_takers]
+            taker_delays = [0, 30, 60, 90, 120][:num_takers]
 
         config = {
             "name": name,
@@ -329,6 +326,29 @@ def handler(args):
     }
     import random
     SATOSHI = 100_000_000
+
+    # --- Underpopulation check (Option 2) ---
+    makercountrange = parse_list_int(args.tumbler_makercountrange)
+    # Use the first value as the main range (as in default_tumbler_options)
+    if makercountrange:
+        min_makers_required = makercountrange[0] * (args.taker_count + args.tumbler_taker_count)
+        if args.maker_count < min_makers_required:
+            print(f"ERROR: Not enough makers for the scenario. Requested {args.maker_count}, but at least {min_makers_required} are required for taker_count={args.taker_count}, tumbler_taker_count={args.tumbler_taker_count}, makercountrange={makercountrange[0]}.")
+            import sys
+            sys.exit(1)
+
+    # AUTOMATIC LIQUIDITY BALANCING:
+    # Scale down taker parameters to ensure they have less liquidity than makers
+    taker_utxo_divisor = 3
+    taker_btc_divisor = 3
+
+    # Taker wallet parameters (automatically scaled down)
+    taker_min_utxos = max(1, args.wallet_min_utxos // taker_utxo_divisor)
+    taker_max_utxos = max(taker_min_utxos + 1, args.wallet_max_utxos // taker_utxo_divisor)
+    taker_min_total_btc = args.wallet_min_total_btc / taker_btc_divisor
+    taker_max_total_btc = args.wallet_max_total_btc / taker_btc_divisor
+
+
     def default_tumbler_options():
         return {
             "addrcount": args.tumbler_addrcount,
@@ -352,8 +372,8 @@ def handler(args):
     # TAKERS
     taker_delays = parse_delays(args.taker_delays, args.taker_count)
     for idx in range(args.taker_count):
-        n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
-        total_btc = random.uniform(args.wallet_min_total_btc, args.wallet_max_total_btc)
+        n_utxos = random.randint(taker_min_utxos, taker_max_utxos)
+        total_btc = random.uniform(taker_min_total_btc, taker_max_total_btc)
         total_sats = int(total_btc * SATOSHI)
         funds = random_partition(total_sats, n_utxos)
         wallet = {
@@ -367,8 +387,8 @@ def handler(args):
         scenario["wallets"].append(wallet)
     # TUMBLER TAKERS
     for idx in range(args.tumbler_taker_count):
-        n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
-        total_btc = random.uniform(args.wallet_min_total_btc, args.wallet_max_total_btc)
+        n_utxos = random.randint(taker_min_utxos, taker_max_utxos)
+        total_btc = random.uniform(taker_min_total_btc, taker_max_total_btc)
         total_sats = int(total_btc * SATOSHI)
         funds = random_partition(total_sats, n_utxos)
         wallet = {
