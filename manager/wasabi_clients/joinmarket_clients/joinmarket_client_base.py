@@ -2,6 +2,8 @@ import json
 from typing import List
 import requests
 from time import sleep, time
+
+from urllib3 import HTTPSConnectionPool
 from urllib3.exceptions import InsecureRequestWarning
 import urllib3
 from bip_utils import Bip39SeedGenerator, Bip32Slip10Secp256k1
@@ -163,10 +165,14 @@ class JoinMarketClientServer:
 
 
     def session(self):
-        method = "GET"
-        endpoint = "/session"
-        response = self._rpc(method, endpoint)
-        return response
+        try:
+            method = "GET"
+            endpoint = "/session"
+            response = self._rpc(method, endpoint)
+            return response
+        except Exception as e:
+            print(e)
+            return None
 
     def _create_wallet(self, walletname=None):
         """Create a new wallet and store its name."""

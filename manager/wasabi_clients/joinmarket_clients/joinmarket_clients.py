@@ -1,3 +1,5 @@
+import uuid
+
 from .joinmarket_client_base import JoinMarketClientServer
 
 class MakerClient(JoinMarketClientServer):
@@ -80,6 +82,8 @@ class TumblerTakerClient(JoinMarketClientServer):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.tumbler_options = kwargs.get("tumbler_options", None)
+        if self.tumbler_options:
+            self.tumbler_options['schedulefile'] = self.tumbler_options['schedulefile'] + "_" + uuid.uuid4().hex
         self.last_schedule = None
         self.coinjoin_completed = True
 
