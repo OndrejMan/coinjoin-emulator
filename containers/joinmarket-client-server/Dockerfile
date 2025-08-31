@@ -1,4 +1,4 @@
-FROM joinmarket-latest
+FROM joinmarket-latest:taker-logs
 
 
 # Copy the config file to the right place
