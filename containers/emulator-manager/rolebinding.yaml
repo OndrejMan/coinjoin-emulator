@@ -1,0 +1,5 @@
+# containers/emulator-manager/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: emulation-manager

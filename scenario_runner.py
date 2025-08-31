@@ -5,15 +5,12 @@ Runs all scenarios in a given folder with proper cleanup and error handling
 """
 
 import os
-import sys
 import subprocess
 import time
-import signal
 import json
 import argparse
 from datetime import datetime
 from typing import List, Tuple, Optional
-import psutil
 
 
 class ScenarioRunner:
@@ -23,7 +20,8 @@ class ScenarioRunner:
                  image_prefix: str = "drajnoha/",
                  proxy: str = "socks5://127.0.0.1:8123",
                  shadowsocks_config: str = "/home/drajnoha/Code/PycharmProjects/coinjoin-simulator/shadowsocks/config_local.yaml",
-                 cleanup_wait: int = 150):
+                 cleanup_wait: int = 150,
+                 in_cluster: bool = False):
 
         self.scenario_dir = scenario_dir
         self.namespace = namespace
@@ -33,7 +31,22 @@ class ScenarioRunner:
         self.cleanup_wait = cleanup_wait
         self.sslocal_process = None
         self.results = []
+        self.in_cluster = in_cluster
+        self.current_scenario_file = None
 
+
+    def _write_current_status(self):
+        """Write current status to a file for external monitoring"""
+        if self.in_cluster:
+            status = {
+                "current_scenario": self.current_scenario_file,
+                "timestamp": self.get_timestamp(),
+                "completed": len([r for r in self.results if r.get("success", False)]),
+                "total": len(self.results)
+            }
+            # Write to a known location in the container
+            with open("/tmp/scenario-runner-status.json", "w") as f:
+                json.dump(status, f)
 
     def cleanup_kubernetes(self) -> bool:
         """Clean up kubernetes resources"""
@@ -48,6 +61,9 @@ class ScenarioRunner:
             "--namespace", self.namespace,
             "--image-prefix", self.image_prefix
         ]
+
+        if self.in_cluster:
+            cmd.insert(4, "--in-cluster")
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -72,6 +88,9 @@ class ScenarioRunner:
     def run_scenario(self, scenario_file: str) -> Tuple[bool, float]:
         """Run a single scenario"""
         print(f"\n[{self.get_timestamp()}] Running scenario: {scenario_file}")
+        self.current_scenario_file = scenario_file
+        self._write_current_status()
+
 
         cmd = [
             "python", "manager.py",
@@ -81,9 +100,14 @@ class ScenarioRunner:
             "--namespace", self.namespace,
             "--reuse-namespace",
             "--image-prefix", self.image_prefix,
-            "--proxy", self.proxy,
             "--scenario", scenario_file
         ]
+
+        if self.in_cluster:
+            cmd.insert(4, "--in-cluster")
+
+        if not self.in_cluster and self.proxy:
+            cmd.extend(["--proxy", self.proxy])
 
         start_time = time.time()
 
@@ -131,7 +155,7 @@ class ScenarioRunner:
 
     def save_results(self):
         """Save run results to file"""
-        results_file = os.path.join(self.scenario_dir, f"run_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+        results_file = os.path.join('logs', f"run_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
 
         with open(results_file, 'w') as f:
             json.dump(self.results, f, indent=2)
@@ -236,6 +260,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run JoinMarket scenarios")
     parser.add_argument("--scenario_dir", help="Directory containing scenario JSON files")
     parser.add_argument("--namespace", default="rajnoha-ns", help="Kubernetes namespace")
+    parser.add_argument("--in-cluster", action="store_true", default="False", help="When scenario runner is running in cluster")
     parser.add_argument("--image-prefix", default="drajnoha/", help="Docker image prefix")
     parser.add_argument("--proxy", default="socks5://127.0.0.1:8123", help="Proxy URL")
     parser.add_argument("--shadowsocks-config",
@@ -253,7 +278,8 @@ def main():
         image_prefix=args.image_prefix,
         proxy=args.proxy,
         shadowsocks_config=args.shadowsocks_config,
-        cleanup_wait=args.cleanup_wait
+        cleanup_wait=args.cleanup_wait,
+        in_cluster=args.in_cluster
     )
 
     runner.run_all(start_from=args.start_from)
