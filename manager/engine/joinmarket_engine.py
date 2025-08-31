@@ -1,3 +1,5 @@
+import backoff
+
 from manager.engine.engine_base import EngineBase
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 from time import sleep, time
@@ -74,7 +76,7 @@ class JoinmarketEngine(EngineBase):
             raise Exception("Could not start distributor")
 
         actual_port = port if self.args.proxy else (443 if route else distributor_node_ports[port])
-        actual_ip = ip if self.args.proxy else (route if route else self.args.control_ip)
+        actual_ip = ip if self.args.proxy or self.args.in_cluster else (route if route else self.args.control_ip)
 
         print(f"- started {name} at {actual_ip}:{actual_port}")
         self.distributor = self.init_joinmarket_clientserver(
@@ -86,13 +88,13 @@ class JoinmarketEngine(EngineBase):
 
         print(f"- started distributor")
 
+
     @staticmethod
     def init_joinmarket_clientserver(name, port, host="localhost", proxy=None):
+        print(f"Starting joinmarket-client-server: {name}")
         client = JoinMarketClientServer(name=name, port=port, host=host, proxy=proxy)
 
-        if not client.session():
-            print(f"- could not start {name} (session timeout)")
-            raise Exception("Could not start distributor")
+        ensure_client_session(client, name)
 
         if not client.wait_wallet(timeout=30000):
             print(f"- could not start {name} (application timeout)")
@@ -104,6 +106,7 @@ class JoinmarketEngine(EngineBase):
         name = f"jcs-{idx:03}"
         port = 28184 + idx
         try:
+            print(f"Starting joinmarket-client-server: {name}")
             ip, client_node_ports, route = self.driver.run(
                 name,
                 f"{self.args.image_prefix}joinmarket-client-server",
@@ -116,16 +119,17 @@ class JoinmarketEngine(EngineBase):
                 run_as_group=1000,
                 proxy=self.args.proxy
             )
+            print(f"Started joinmarket-client-server: {name}")
         except Exception as e:
             print(f"- error starting {name}: {e}")
             return None
 
         # In kubernetes, the pod is addressed using the ip unique for that service and all pods have the port
         # 28183 in use. The port rotation is needed for the local docker run, where the ports are mapped to the local
-        actual_port = 28183 if self.args.proxy else (443 if route else client_node_ports[port])
-        actual_ip = ip if self.args.proxy else (route if route else self.args.control_ip)
+        actual_port = 28183 if self.args.proxy else (443 if route else port)
+        actual_ip = ip if self.args.proxy or self.args.in_cluster else (route if route else self.args.control_ip)
 
-        print(f"- started {name} at {route}:{actual_port}")
+        print(f"- started {name} at {actual_ip}:{actual_port}")
 
         sleep(10)
         client = JoinMarketClientServer.from_wallet(
@@ -205,3 +209,9 @@ class JoinmarketEngine(EngineBase):
         print(f"- limit reached")
         sleep(60)
         self.node.mine_block()
+
+@backoff.on_exception(backoff.expo, Exception, max_tries=5)
+def ensure_client_session(client, name):
+    if not client.session():
+        print(f"- could not start {name} (session timeout)")
+        raise Exception("Could not start distributor")

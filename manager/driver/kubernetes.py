@@ -1,4 +1,5 @@
 import base64
+import traceback
 from functools import cached_property
 from io import BytesIO
 import os
@@ -12,12 +13,21 @@ import backoff
 
 
 class KubernetesDriver(Driver):
-    def __init__(self, namespace="coinjoin", reuse_namespace=False, pull_secret_path=None):
-        config.load_kube_config()
+    def __init__(self, namespace="coinjoin", reuse_namespace=False, pull_secret_path=None, in_cluster=False):
+
+        if in_cluster:
+            try:
+                config.load_incluster_config()
+            except Exception as e:
+                config.load_kube_config()
+        else:
+            config.load_kube_config()
+
         self.client = client.CoreV1Api()
         self._namespace = namespace
         self.reuse_namespace = reuse_namespace
         self.pull_secret_path = pull_secret_path
+        self.in_cluster = in_cluster
 
     def _create_image_pull_secret(self):
         secret_name = "regcred"
@@ -148,11 +158,15 @@ class KubernetesDriver(Driver):
         resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
 
         pod_ip = None
-        while pod_ip is None:
-            pod_ip = self.client.read_namespaced_pod_status(
-                name=name, namespace=self.namespace
-            ).status.pod_ip
-            sleep(1)
+        try:
+            while pod_ip is None:
+                pod_ip = self.client.read_namespaced_pod_status(
+                    name=name, namespace=self.namespace
+                ).status.pod_ip
+                sleep(1)
+        except Exception as e:
+            print(f"Failed to get pod IP: {e}")
+            raise
 
         service_manifest = {
             "apiVersion": "v1",
@@ -172,13 +186,25 @@ class KubernetesDriver(Driver):
                 ],
             },
         }
-        resp = self.client.create_namespaced_service(
-            body=service_manifest, namespace=self.namespace
-        )
-        port_mapping = dict(
-            map(lambda x: (x.target_port, x.node_port), resp.spec.ports)
-        )
-        return pod_ip or "", port_mapping, None
+        try:
+            resp = self.client.create_namespaced_service(
+                body=service_manifest, namespace=self.namespace
+            )
+        except Exception as e:
+            print(f"Failed to create service: {e}")
+            raise
+
+        if self.in_cluster:
+            # For in-cluster: return service DNS name, original port mapping, no route
+            port_mapping = {target_port: container_port for target_port, container_port in ports.items()}
+            service_dns_name = f"{name}.{self.namespace}.svc.cluster.local"
+            return service_dns_name, port_mapping, None
+        else:
+            # For external: return pod IP, node port mapping, no route (existing behavior)
+            port_mapping = dict(
+                map(lambda x: (x.target_port, x.node_port), resp.spec.ports)
+            )
+            return pod_ip or "", port_mapping, None
 
     def stop(self, name):
         try:
@@ -213,16 +239,61 @@ class KubernetesDriver(Driver):
             tty=False,
             _preload_content=False,
         )
+        print("Opening connection")
 
         fo = BytesIO()
         while resp.is_open():
+            print("Updating stream")
             resp.update(timeout=10)
             if resp.peek_stdout():
                 fo.write(resp.read_stdout().encode())
+        print("")
         fo.seek(0)
-        with tarfile.open(fileobj=fo) as tar:
-            tar.extractall(dst_path)
+        print("Closing connection")
         resp.close()
+
+        with tarfile.open(fileobj=fo) as tar:
+            print("Extracting")
+            tar.extractall(dst_path)
+
+        # Wait for required files to appear in dst_path
+        import glob
+        import time
+        start_time = time.time()
+        timeout = 120  # 2 minutes
+        found = False
+        waited = False
+        while True:
+            tumble_log = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.log"))
+            tumble_schedule = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.schedule*"))
+            j_logs = glob.glob(os.path.join(dst_path, "logs/J*.log"))
+            yifen = os.path.exists(os.path.join(dst_path, "logs/yigen-statement.csv"))
+
+            cond1 = tumble_log and tumble_schedule and len(j_logs) > 0
+            cond2 = len(j_logs) > 0 and yifen
+
+            print(f"Debug: tumble_log={tumble_log}, tumble_schedule={tumble_schedule}, j_logs={j_logs}, yigen={yifen}")
+
+            if cond1 or cond2:
+                print(f"All required log files found in {dst_path} after {time.time() - start_time} seconds")
+                print(f"Waiting for file transfer to complete...")
+                time.sleep(10)
+                if found:
+                    print("All required log files still found in {} after {} seconds".format(dst_path, time.time() - start_time))
+                    time.sleep(1)
+                    break
+                found = True
+
+            if time.time() - start_time > timeout:
+                print("Timeout waiting for required log files in {}".format(dst_path))
+                break
+
+            if not waited:
+                print("Waiting for required log files to appear in {}...".format(dst_path))
+                waited = True
+            time.sleep(2)
+
+        # sleep(60)
 
     def peek(self, name, path):
         exec_command = ["cat", path]
@@ -278,8 +349,23 @@ class KubernetesDriver(Driver):
                 break
         resp.close()
 
+
     def cleanup(self, image_prefix=""):
-        pods = self.client.list_namespaced_pod(namespace=self._namespace)
+        # without this, the cleaunup fails because of open websocket channel from log gathering
+        # but when the fresh client is created, the log gathering fails...
+        # "Working" config is letting the cleanup fail and restarting it after run...
+        # fresh_client = client.CoreV1Api()
+        # self.client = fresh_client
+        # return
+
+        try:
+            pods = self.client.list_namespaced_pod(namespace=self._namespace)
+        except ApiException as e:
+            print("Error listing pods:", e)
+            traceback.print_exc()
+            print("Cleanup failed")
+            return
+
         for pod in pods.items:
             if any(
                     x in pod.metadata.name
@@ -287,9 +373,11 @@ class KubernetesDriver(Driver):
                               "joinmarket-distributor", "jcs")
             ):
                 try:
+                    print(f"Deleting pod {pod.metadata.name}")
                     self.client.delete_namespaced_pod(
                         name=pod.metadata.name, namespace=self._namespace
                     )
+                    print(f"Deleted pod {pod.metadata.name}")
                 except ApiException:
                     pass
         services = self.client.list_namespaced_service(namespace=self._namespace)
@@ -300,13 +388,19 @@ class KubernetesDriver(Driver):
                               "joinmarket-distributor", "jcs")
             ):
                 try:
+                    print("Deleting service", service.metadata.name)
                     self.client.delete_namespaced_service(
                         name=service.metadata.name, namespace=self._namespace
                     )
+                    print("Deleted service", service.metadata.name)
                 except ApiException:
                     pass
 
         if not self.reuse_namespace:
-            self.client.delete_namespace(
-                name=self._namespace, body=client.V1DeleteOptions()
-            )
+            try:
+                print(f"Deleting namespace {self._namespace}")
+                self.client.delete_namespace(
+                    name=self._namespace, body=client.V1DeleteOptions()
+                )
+            except ApiException:
+                pass
