@@ -79,13 +79,13 @@ class EngineBase:
             "btc-node",
             f"{self.args.image_prefix}btc-node",
             ports={18443: 18443, 18444: 18444},
-            cpu=1.0,
-            memory=512,
+            cpu=2.0,
+            memory=2048,
             service_account="btc-node",
         )
 
         self.node = BtcNode(
-            host=btc_node_ip if self.args.proxy else self.args.control_ip,
+            host=btc_node_ip if self.args.proxy or self.args.in_cluster else self.args.control_ip,
             port=18443 if self.args.proxy else btc_node_ports[18443],
             internal_ip=btc_node_ip,
             proxy=self.args.proxy,

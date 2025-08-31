@@ -54,6 +54,13 @@ if __name__ == "__main__":
     )
     parser.add_argument("--no-logs", action="store_true", default=False)
 
+    parser.add_argument(
+        "--in-cluster",
+        action="store_true",
+        default=False,
+        help="Running inside Kubernetes cluster (uses service account)"
+    )
+
     build_subparser = subparsers.add_parser("build", help="build images")
     build_subparser.add_argument(
         "--force-rebuild", action="store_true", help="force rebuild of images"
@@ -130,7 +137,10 @@ if __name__ == "__main__":
 
             # Support for k8s image pull secret
             k8s_pull_secret = args.k8s_pull_secret or os.environ.get("K8S_PULL_SECRET")
-            driver = KubernetesDriver(args.namespace, args.reuse_namespace, k8s_pull_secret)
+            driver = KubernetesDriver(args.namespace,
+                                      args.reuse_namespace,
+                                      k8s_pull_secret,
+                                      in_cluster=args.in_cluster)
         case "openshift":
             from manager.driver.openshift import OpenshiftDriver
             k8s_pull_secret = args.k8s_pull_secret or os.environ.get("K8S_PULL_SECRET")
