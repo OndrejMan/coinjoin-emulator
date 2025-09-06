@@ -435,40 +435,11 @@ class KubernetesLocalProxy:
         """
         print("Preparing to download logs from orchestrator...")
 
-        # First, let's check what logs are available in the container
-        check_logs_script = """
-        echo "Available logs in /app/logs:"
-        if [ -d /app/logs ]; then
-            find /app/logs -maxdepth 2 -type d | head -20
-            TOTAL=$(find /app/logs -type f | wc -l)
-            echo "Total log files: $TOTAL"
-        else
-            echo "No /app/logs directory found"
-            exit 1
-        fi
-        """
-
-        check_cmd = self._kubectl_base_cmd + [
-            "exec", "-n", self.namespace,
-            self.orchestrator_pod, "--",
-            "sh", "-c", check_logs_script
-        ]
-
-        # Show what's available
-        result = subprocess.run(check_cmd, capture_output=True, text=True)
-        print(result.stdout)
-
-        if result.returncode != 0:
-            print("Error: Could not find logs directory")
-            return False
-
         if all_logs:
-            # Download the entire /app/logs directory
             logs_dir = "/app/logs"
             tar_name = "/tmp/logs-all.tar.gz"
             print("Downloading the entire /app/logs directory...")
         else:
-            # Find the most recent top-level simulation directory (date-based)
             find_sim_logs_script = '''
             LOGS_DIR=$(find /app/logs -mindepth 1 -maxdepth 1 -type d | grep -E "[0-9]{4}-[0-9]{2}-[0-9]{2}" | sort -r | head -1)
             if [ -z "$LOGS_DIR" ]; then
@@ -502,10 +473,12 @@ class KubernetesLocalProxy:
             print(f"Found logs directory: {logs_dir}")
             tar_name = "/tmp/logs-latest.tar.gz"
 
-        # Create a tarball of the logs inside the container
         tar_script = f'''
         TAR_FILE="{tar_name}"
-        tar -czf "$TAR_FILE" -C "/" "{logs_dir.lstrip('/')}"
+        # Create archive while being tolerant to files changing during read
+        # --warning=no-file-changed avoids non-zero exit when files are updated during archiving
+        # --ignore-failed-read skips files that disappear mid-archive
+        tar --warning=no-file-changed --ignore-failed-read -czf "$TAR_FILE" -C "/" "{logs_dir.lstrip('/')}"
         if [ -f "$TAR_FILE" ]; then
             SIZE=$(ls -lh "$TAR_FILE" | awk '{{print $5}}')
             echo "Created archive: $TAR_FILE ($SIZE)"
@@ -529,23 +502,23 @@ class KubernetesLocalProxy:
             print("Failed to create logs archive")
             return False
 
-        # Now copy the tarball to local machine
         local_tar = tar_name.replace("/tmp/", "/tmp/local-")
+        print("Downloading archive via kubectl exec (streaming)...")
 
-        copy_cmd = self._kubectl_base_cmd + [
-            "cp",
-            f"{self.namespace}/{self._get_orchestrator_pod_name()}:{tar_name}",
-            local_tar
+        exec_cat_cmd = self._kubectl_base_cmd + [
+            "exec", "-n", self.namespace,
+            self.orchestrator_pod, "--",
+            "sh", "-c", f"cat {tar_name}"
         ]
 
-        print("Downloading archive...")
-        result = subprocess.run(copy_cmd, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            print(f"Failed to download archive: {result.stderr}")
+        try:
+            with open(local_tar, "wb") as f_out:
+                subprocess.run(exec_cat_cmd, stdout=f_out, stderr=subprocess.PIPE, check=True)
+        except subprocess.CalledProcessError as e:
+            err = e.stderr.decode(errors="ignore") if e.stderr else str(e)
+            print(f"Failed to download archive: {err}")
             return False
 
-        # Extract the archive locally
         os.makedirs(local_destination, exist_ok=True)
 
         extract_cmd = ["tar", "-xzf", local_tar, "-C", local_destination]
@@ -554,7 +527,6 @@ class KubernetesLocalProxy:
         if result.returncode == 0:
             print(f"✓ Logs extracted to {local_destination}")
             os.remove(local_tar)
-            # Clean up the remote tar file
             cleanup_cmd = self._kubectl_base_cmd + [
                 "exec", "-n", self.namespace,
                 self.orchestrator_pod, "--",
