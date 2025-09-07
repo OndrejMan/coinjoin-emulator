@@ -49,7 +49,18 @@ class DockerDriver(Driver):
             environment=env or {},
         )
         container_ip = container.attrs['NetworkSettings']['IPAddress']
-        port_mapping = container.attrs['NetworkSettings']['Ports']
+        
+        # Normalize port mapping to match Kubernetes format
+        # Docker format: {'8080/tcp': [{'HostIp': '', 'HostPort': '8080'}]}
+        # Kubernetes format: {8080: 8080}
+        raw_port_mapping = container.attrs['NetworkSettings']['Ports']
+        port_mapping = {}
+        
+        if ports:
+            for internal_port in ports.keys():
+                # For Docker networking, internal container port maps to itself
+                port_mapping[internal_port] = internal_port
+        
         return container_ip, port_mapping, None
 
     def stop(self, name):
