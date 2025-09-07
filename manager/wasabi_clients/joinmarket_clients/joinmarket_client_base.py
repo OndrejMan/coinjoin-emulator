@@ -2,12 +2,12 @@ import json
 from typing import List
 import requests
 from time import sleep, time
+import asyncio
 
-from urllib3 import HTTPSConnectionPool
-from urllib3.exceptions import InsecureRequestWarning
 import urllib3
 from bip_utils import Bip39SeedGenerator, Bip32Slip10Secp256k1
 import backoff
+import httpx
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -59,6 +59,34 @@ class JoinMarketClientServer:
         self.tumbler_options = tumbler_options if tumbler_options else None
         self.coin_history = {}
         self.seedphrase = ""
+        
+        # Async HTTP client setup
+        self._async_client = None
+        self._unlock_lock = None  # Will be created when needed
+        self._client_initialized = False
+
+    def _ensure_async_client(self):
+        """Initialize the async HTTP client if not already done."""
+        if self._async_client is None or self._async_client.is_closed:
+            # Configure proxy for httpx (correct syntax)
+            proxy_config = self.proxy if self.proxy else None
+            
+            self._async_client = httpx.AsyncClient(
+                base_url=f"https://{self.host}:{self.port}/api/v1",
+                verify=False,
+                proxy=proxy_config,  # httpx uses 'proxy', not 'proxies'
+                timeout=httpx.Timeout(60.0),
+                http2=True
+            )
+            self._client_initialized = True
+        return self._async_client
+
+    async def aclose(self):
+        """Close the async HTTP client."""
+        if self._async_client and not self._async_client.is_closed:
+            await self._async_client.aclose()
+            self._async_client = None
+            self._client_initialized = False
 
     @classmethod
     def from_wallet(cls, name: str, port: int, wallet: dict, host: str, proxy=""):
@@ -158,6 +186,59 @@ class JoinMarketClientServer:
 
         raise Exception("timeout")
 
+    async def _rpc_async(self, method, endpoint, json_data=None, timeout=60, repeat=4) -> dict:
+        """Async version of _rpc using httpx.AsyncClient."""
+        client = self._ensure_async_client()
+        headers = {}
+        if self.token:
+            headers['Authorization'] = f'Bearer {self.token}'
+        
+        for attempt in range(repeat):
+            try:
+                print(f"[RPC-ASYNC] {method} {endpoint} (attempt {attempt+1}/{repeat}) data={json_data} using proxy={self.proxy}")
+                
+                response = await client.request(
+                    method=method,
+                    url=endpoint,
+                    json=json_data or {},
+                    headers=headers,
+                    timeout=timeout
+                )
+                print(f"[RPC-ASYNC] Response {response.status_code}: {response.text}")
+
+                if response.status_code == 401:
+                    print("[RPC-ASYNC] 401 Unauthorized: Attempting to unlock wallet and retry...")
+                    await self.unlock_wallet_async()
+                    headers['Authorization'] = f'Bearer {self.token}'
+                    continue
+
+                if response.status_code == 409:
+                    print(f"[RPC-ASYNC] 409 Conflict: {response.text}")
+                    raise JoinmarketConflictException(f"Error {response.status_code}: {response.text}", response)
+
+                if response.status_code >= 400:
+                    try:
+                        error_data = response.json()
+                        error_message = error_data.get("message", "Unknown error")
+                    except:
+                        error_message = response.text
+                    print(f"[RPC-ASYNC] Error {response.status_code}: {error_message}")
+                    response.raise_for_status()
+
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                print(f"[RPC-ASYNC ERROR] {method} {endpoint}: HTTP {e.response.status_code}")
+                if attempt == repeat - 1:
+                    raise Exception(f"HTTP Error {e.response.status_code}: {e.response.text}")
+                await asyncio.sleep(1)
+            except Exception as e:
+                print(f"[RPC-ASYNC ERROR] {method} {endpoint}: {e}")
+                if attempt == repeat - 1:
+                    raise
+                await asyncio.sleep(1)
+
+        raise Exception("timeout")
+
     def is_paused(self, current_block):
         # “delay[0]” means “don’t run until current_block >= delay[0]”
         return current_block < self.next_coinjoin_allowed
@@ -201,6 +282,90 @@ class JoinMarketClientServer:
         self.refresh_token = response.get("refresh_token", "")
         return response
 
+    async def update_status_async(self) -> dict:
+        """Async version of update_status"""
+        await self.update_coin_history_async()
+        session_response = await self.session_async()
+        return session_response if session_response is not None else {}
+
+    async def session_async(self):
+        """Async version of session"""
+        try:
+            method = "GET"
+            endpoint = "/session"
+            response = await self._rpc_async(method, endpoint)
+            return response if response is not None else {}
+        except Exception as e:
+            print(f"Session async error: {e}")
+            return {}
+
+    async def run_schedule_async(self):
+        """Async version of run_schedule"""
+        if not self.tumbler_options:
+            raise Exception("No tumbler options provided")
+        address_count = self.tumbler_options.get("address_count", 3)
+        destination_addresses = [self.get_new_address() for _ in range(address_count)]
+
+        method = "POST"
+        endpoint = f"/wallet/{self.walletname}/taker/schedule"
+        json_data = {
+            "destination_addresses": destination_addresses,
+            "tumbler_options": self.tumbler_options
+        }
+
+        start = time()
+        while time() - start < 60:  # Using a longer timeout for the more complex tumbler operation
+            try:
+                response = await self._rpc_async(method, endpoint, json_data=json_data)
+                return response
+            except Exception as e:
+                if time() - start >= 60:
+                    print("Failed to run schedule, attempt timed out.")
+                await asyncio.sleep(1)  # Add a small delay between retries
+
+    async def get_schedule_async(self):
+        """Async version of get_schedule"""
+        method = "GET"
+        endpoint = f"/wallet/{self.walletname}/taker/schedule"
+        response = await self._rpc_async(method, endpoint)
+        return response
+
+    async def update_coin_history_async(self):
+        """
+        Async version: Poll the current unspent coins (UTXOs) from the API and update the internal
+        coin history. Expects the API to return a dict with a key "utxos" that is a list
+        of coin dicts.
+        """
+        try:
+            response = await self.list_utxos_async()
+            if response is None:
+                print("Error: list_utxos_async returned None")
+                return
+            # Extract the list of coins from the JSON structure.
+            coins = response.get("utxos", [])
+        except Exception as e:
+            print(f"Error fetching UTXOs: {e}")
+            return
+
+        for coin in coins:
+            key = coin.get("utxo")
+            if key:
+                # setdefault ensures we record a coin only once
+                self.coin_history.setdefault(key, coin)
+
+    async def unlock_wallet_async(self, password=None):
+        """Async unlock of an existing wallet using the stored walletname."""
+        # Lazy creation of async lock when needed
+        if self._unlock_lock is None:
+            self._unlock_lock = asyncio.Lock()
+        async with self._unlock_lock:
+            method = "POST"
+            endpoint = f"/wallet/{self.walletname}/unlock"
+            json_data = {"password": password or PASSWORD}
+            response = await self._rpc_async(method, endpoint, json_data=json_data)
+            self.token = response.get("token", "")
+            self.refresh_token = response.get("refresh_token", "")
+            return response
 
     @backoff.on_exception(
         backoff.expo,
@@ -253,12 +418,31 @@ class JoinMarketClientServer:
         response = self._rpc(method, endpoint)
         return response
 
+    async def display_wallet_async(self):
+        """Async get detailed breakdown of wallet contents by account."""
+        method = "GET"
+        endpoint = f"/wallet/{self.walletname}/display"
+        response = await self._rpc_async(method, endpoint)
+        return response
+
     def get_balance(self):
         """Retrieve the available balance of the wallet.
         Returns: str: The available balance as a string in BTC (e.g., '0.00000000').
         Raises: Exception: If the balance information cannot be retrieved.
         """
         response = self.display_wallet()
+        try:
+            available_balance = response['walletinfo']['available_balance']
+            return int(float(available_balance) * BTC)
+        except KeyError as e:
+            raise Exception(f"Could not retrieve available balance: {e}")
+
+    async def get_balance_async(self):
+        """Async retrieve the available balance of the wallet.
+        Returns: str: The available balance as a string in BTC (e.g., '0.00000000').
+        Raises: Exception: If the balance information cannot be retrieved.
+        """
+        response = await self.display_wallet_async()
         try:
             available_balance = response['walletinfo']['available_balance']
             return int(float(available_balance) * BTC)
@@ -291,6 +475,13 @@ class JoinMarketClientServer:
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/utxos"
         response = self._rpc(method, endpoint)
+        return response
+
+    async def list_utxos_async(self):
+        """Async list details of all UTXOs currently in the wallet."""
+        method = "GET"
+        endpoint = f"/wallet/{self.walletname}/utxos"
+        response = await self._rpc_async(method, endpoint)
         return response
 
     def start_maker(
@@ -329,12 +520,56 @@ class JoinMarketClientServer:
 
         return response
 
+    async def start_maker_async(
+        self,
+        txfee,
+        cjfee_a,
+        cjfee_r,
+        ordertype,
+        minsize,
+        maxsize
+    ):
+        """
+        Async start the yield generator service with the specified configuration.
+        - txfee: str or int, e.g., "0" (absolute fee in satoshis)
+        - cjfee_a: str or int, e.g., "5000" (absolute coinjoin fee in satoshis)
+        - cjfee_r: str or float, e.g., "0.00004" (relative coinjoin fee as a fraction)
+        - ordertype: str, e.g., "reloffer" or "absoffer"
+        - minsize: str or int, minimum coinjoin size in satoshis. Should be higher then 27300sats
+        """
+        method = "POST"
+        endpoint = f"/wallet/{self.walletname}/maker/start"
+        json_data = {
+            "txfee": str(txfee),
+            "cjfee_a": str(cjfee_a),
+            "cjfee_r": str(cjfee_r),
+            "ordertype": ordertype,
+            "minsize": str(minsize),
+            "maxsize": str(maxsize)
+        }
+
+        try:
+            response = await self._rpc_async(method, endpoint, json_data=json_data)
+        except JoinmarketConflictException as e:
+            print("Could not start maker without confirmed balance")
+            response = e.response
+
+        return response
+
     def stop_maker(self):
         """Stop the yield generator service."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/maker/stop"
         # When stopping not running maker, returns 401 response
         response = self._rpc(method, endpoint)
+        return response
+
+    async def stop_maker_async(self):
+        """Async stop the yield generator service."""
+        method = "GET"
+        endpoint = f"/wallet/{self.walletname}/maker/stop"
+        # When stopping not running maker, returns 401 response
+        response = await self._rpc_async(method, endpoint)
         return response
 
     def start_coinjoin(
@@ -364,6 +599,35 @@ class JoinMarketClientServer:
         if txfee is not None:
             json_data["txfee"] = txfee
         response = self._rpc(method, endpoint, json_data=json_data)
+        return response
+
+    async def start_coinjoin_async(
+        self,
+        mixdepth,
+        amount_sats,
+        counterparties,
+        destination,
+        txfee=None
+    ):
+        """
+        Async initiate a coinjoin as taker.
+        - mixdepth: int, the mixdepth to spend from
+        - amount_sats: int, amount in satoshis to coinjoin
+        - counterparties: int, number of counterparties to coinjoin with
+        - destination: str, address to send the coinjoined funds to
+        - txfee: optional, int, Bitcoin miner fee to use for transaction
+        """
+        method = "POST"
+        endpoint = f"/wallet/{self.walletname}/taker/coinjoin"
+        json_data = {
+            "mixdepth": mixdepth,
+            "amount_sats": amount_sats,
+            "counterparties": counterparties,
+            "destination": destination
+        }
+        if txfee is not None:
+            json_data["txfee"] = txfee
+        response = await self._rpc_async(method, endpoint, json_data=json_data)
         return response
 
     def run_schedule(self):

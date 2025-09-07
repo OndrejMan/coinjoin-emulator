@@ -4,6 +4,7 @@ import json
 import time
 from datetime import datetime
 import requests
+import httpx
 
 from .joinmarket_client_base import JoinMarketClientServer
 
@@ -39,6 +40,23 @@ class MakerClient(JoinMarketClientServer):
             self.maker_running = True
         return 0
 
+    async def update_async(self, current_block, current_round) -> int:
+        """
+        Async version: Start the maker if it is not running.
+        """
+        response = await self.update_status_async()
+        self.maker_running = response.get("maker_running", False)
+
+        if self.is_paused(current_block):
+            return 0
+
+        if not self.maker_running:
+            offer = self.get_offer(current_round)
+            await self.start_maker_async(**offer)
+            print(f"Starting maker {self.name}")
+            self.maker_running = True
+        return 0
+
 class TakerClient(JoinMarketClientServer):
     """
     This class implements the logic for a taker that does *not* have tumbler options.
@@ -64,6 +82,35 @@ class TakerClient(JoinMarketClientServer):
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
             self.start_coinjoin(**offer)
+            self.coinjoin_start = current_block
+            self.coinjoin_in_process = True
+            delta = +1
+            print(f"Starting coinjoin {self.name}")
+            print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
+
+        # TODO: The 8 block limit could be a parameter.
+        elif self.coinjoin_in_process and self.coinjoin_start + 8 < current_block:
+            self.stop_coinjoin()
+            self.coinjoin_in_process = False
+            self.next_coinjoin_allowed = current_block + self.time_between_rounds
+            delta = -1
+            print(f"Stopping coinjoin {self.name}")
+            print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
+        return delta
+
+    async def update_async(self, current_block, current_round):
+        """
+        Async version: Start a coinjoin if none is running and the client is not paused.
+        Stop the coinjoin if it has been running for 8 blocks.
+        """
+        response = await self.update_status_async()
+        self.coinjoin_in_process = response.get("coinjoin_in_process", False)
+
+        delta = 0
+        if not self.coinjoin_in_process and not self.is_paused(current_block):
+            offer = self.get_offer(current_round)
+            offer["destination"] = self.get_new_address()
+            await self.start_coinjoin_async(**offer)
             self.coinjoin_start = current_block
             self.coinjoin_in_process = True
             delta = +1
@@ -140,6 +187,37 @@ class OrderbookWatchClient(JoinMarketClientServer):
 
         return 0
 
+    async def _fetch_orderbook_async(self):
+        """Async version of _fetch_orderbook using httpx"""
+        url = f"http://{self.ob_host}:{self.ob_port}/orderbook.json"
+        proxy_config = self.proxy if self.proxy else None
+        
+        async with httpx.AsyncClient(proxy=proxy_config, timeout=10.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+
+    async def update_async(self, current_block, current_round) -> int:
+        """
+        Async version: Periodically poll the orderbook and store a snapshot to disk.
+        Returns 0 to avoid altering round counts.
+        """
+        now = time.time()
+        if now - self._last_poll_ts < self.poll_interval_sec:
+            print(f"Skipping {self.name} since last poll")
+            return 0
+
+        try:
+            data = await self._fetch_orderbook_async()
+            path = self._store_snapshot(data)
+            print(f"[Orderbook] Stored snapshot for {self.name} at {path}")
+        except Exception as e:
+            print(f"[Orderbook] Failed to fetch/store snapshot for {self.name}: {e}")
+        finally:
+            self._last_poll_ts = now
+
+        return 0
+
 class TumblerTakerClient(JoinMarketClientServer):
     """
     This subclass is for a taker with tumbler options.
@@ -188,6 +266,37 @@ class TumblerTakerClient(JoinMarketClientServer):
             self.coinjoin_completed = False
             print("Coinjoin for {self.name} completed.")
             print(self.get_schedule())
+            print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
+
+        return delta
+
+    async def update_async(self, current_block, current_round):
+        """
+        Async version: Start a coinjoin if none is running and the client is not paused.
+        Increment the round count if a coinjoin has completed.
+        """
+        response = await self.update_status_async()
+        self.coinjoin_in_process = response.get("coinjoin_in_process", False)
+        schedule = response.get("schedule", None)
+        if schedule != self.last_schedule:
+            self.coinjoin_completed = True
+            self.last_schedule = schedule
+
+        if not self.coinjoin_in_process and not self.is_paused(current_block):
+            print(f"Starting scheduled coinjoin for {self.name}")
+            response = await self.run_schedule_async()
+            self.last_schedule = response["schedule"]
+            print(response)
+            self.coinjoin_in_process = True
+            self.coinjoin_start = current_block
+            return 0
+
+        delta = 0
+        if self.coinjoin_completed:
+            delta = +1
+            self.coinjoin_completed = False
+            print("Coinjoin for {self.name} completed.")
+            print(await self.get_schedule_async())
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
 
         return delta
