@@ -1,4 +1,9 @@
 import uuid
+import os
+import json
+import time
+from datetime import datetime
+import requests
 
 from .joinmarket_client_base import JoinMarketClientServer
 
@@ -74,6 +79,66 @@ class TakerClient(JoinMarketClientServer):
             print(f"Stopping coinjoin {self.name}")
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
         return delta
+
+
+class OrderbookWatchClient(JoinMarketClientServer):
+    """
+    A lightweight client that periodically queries the JoinMarket ob-watcher HTTP endpoint
+    and stores snapshots to disk under /tmp to avoid large memory usage.
+    """
+    def __init__(self, **kwargs):
+        # Default port for ob-watcher is 62601 and it is plain HTTP (not HTTPS)
+        super().__init__(**kwargs)
+        self.ob_host = kwargs.get("host", self.host)
+        self.ob_port = int(kwargs.get("port", 62601))
+        self.snapshot_dir = kwargs.get("snapshot_dir", f"/tmp/jm-orderbook/{self.name}")
+        # Default minimum polling interval is 1 minute
+        self.poll_interval_sec = int(kwargs.get("poll_interval_sec", 60))
+        self._last_poll_ts = 0
+
+        os.makedirs(self.snapshot_dir, exist_ok=True)
+
+    def _fetch_orderbook(self):
+        url = f"http://{self.ob_host}:{self.ob_port}/orderbook.json"
+        resp = requests.get(
+            url, 
+            timeout=10,
+            proxies=dict(http=self.proxy) if self.proxy else None
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def _store_snapshot(self, data: dict):
+        # Group by date directory and name files orderbook_HH-MM.json
+        date_dir = datetime.now().strftime("%Y-%m-%d")
+        time_part = datetime.now().strftime("%H-%M")
+        target_dir = os.path.join(self.snapshot_dir, date_dir)
+        os.makedirs(target_dir, exist_ok=True)
+        path = os.path.join(target_dir, f"orderbook_{time_part}.json")
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+        return path
+
+    def update(self, current_block, current_round) -> int:
+        """
+        Periodically poll the orderbook and store a snapshot to disk.
+        Returns 0 to avoid altering round counts.
+        """
+        now = time.time()
+        if now - self._last_poll_ts < self.poll_interval_sec:
+            print(f"Skipping {self.name} since last poll")
+            return 0
+
+        try:
+            data = self._fetch_orderbook()
+            path = self._store_snapshot(data)
+            print(f"[Orderbook] Stored snapshot for {self.name} at {path}")
+        except Exception as e:
+            print(f"[Orderbook] Failed to fetch/store snapshot for {self.name}: {e}")
+        finally:
+            self._last_poll_ts = now
+
+        return 0
 
 class TumblerTakerClient(JoinMarketClientServer):
     """
