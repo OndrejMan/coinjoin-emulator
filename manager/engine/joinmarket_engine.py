@@ -2,7 +2,10 @@ import backoff
 
 from manager.engine.engine_base import EngineBase
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
+from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
 from time import sleep, time
+import os
+import shutil
 SCENARIO = {
     "name": "default",
     "default_version": "joinmarket",
@@ -19,6 +22,7 @@ class JoinmarketEngine(EngineBase):
     def __init__(self, args, driver):
         super().__init__(args, driver,
                          log_src_path="/home/joinmarket/.joinmarket/logs")
+        self.obwatch_client = None
 
     def default_scenario(self):
         return SCENARIO
@@ -36,6 +40,13 @@ class JoinmarketEngine(EngineBase):
 
         self.start_irc_server()
         print("- started irc-server")
+
+        # Start the JoinMarket orderbook watcher service and attach a client to poll it
+        try:
+            self.start_orderbook_watch()
+            print("- started orderbook watcher")
+        except Exception as e:
+            print(f"- could not start orderbook watcher ({e})")
 
 
     def start_irc_server(self):
@@ -87,6 +98,69 @@ class JoinmarketEngine(EngineBase):
         )
 
         print(f"- started distributor")
+
+    def start_orderbook_watch(self):
+        name = "joinmarket-obwatch"
+        port = 62601
+        try:
+            ip, obwatch_ports, route = self.driver.run(
+                name,
+                f"{self.args.image_prefix}joinmarket-client-server",
+                env={"MODE": "obwatch"},
+                ports={62601: port},
+                cpu=0.25,
+                memory=256,
+                service_account="joinmarket",
+                run_as_user=1000,
+                run_as_group=1000,
+                proxy=self.args.proxy
+            )
+        except Exception as e:
+            print(f"- could not start {name} ({e})")
+            raise Exception("Could not start orderbook watcher")
+
+        # Determine how to reach the service from the controller
+        actual_port = 62601 if self.args.proxy else (443 if route else obwatch_ports[port])
+        actual_ip = ip if self.args.proxy or self.args.in_cluster else (route if route else self.args.control_ip)
+
+        print(f"- started {name} at {actual_ip}:{actual_port}")
+
+        # Attach a lightweight client that periodically polls and stores snapshots under /tmp
+        ob_client = OrderbookWatchClient(
+            name=name,
+            host=actual_ip,
+            port=actual_port,
+            type="orderbook",
+        )
+        self.obwatch_client = ob_client
+
+    def store_engine_logs(self, data_path):
+        # Store orderbook snapshots, grouped under data_path/orderbook/<client.name>
+        print("- storing engine-logs")
+        print(f"- storing {data_path}")
+        ob_root = os.path.join(data_path, "orderbook")
+        os.makedirs(ob_root, exist_ok=True)
+        client = self.obwatch_client
+        src = getattr(client, "snapshot_dir", None)
+        if not src or not os.path.isdir(src):
+            print(f"- no snapshots to store for {client.name}")
+            return
+        dst = os.path.join(ob_root, client.name)
+        os.makedirs(dst, exist_ok=True)
+        try:
+            # Prefer copytree with dirs_exist_ok when possible to preserve structure
+            # Copy content of src into dst (merge)
+            for root, dirs, files in os.walk(src):
+                print(f"- found {root}")
+                rel = os.path.relpath(root, src)
+                target_dir = os.path.join(dst, rel) if rel != "." else dst
+                os.makedirs(target_dir, exist_ok=True)
+                for f in files:
+                    print(f"- found {f}")
+                    shutil.copy2(os.path.join(root, f), os.path.join(target_dir, f))
+            print(f"- stored orderbook snapshots for {client.name}")
+        except Exception as e:
+            print(f"- could not store orderbook snapshots for {client.name}: {e}")
 
 
     @staticmethod
@@ -149,11 +223,6 @@ class JoinmarketEngine(EngineBase):
         except Exception as e:
             print(f"- could not stop client {name}: {e}")
 
-    def store_engine_logs(self, data_path):
-        # TODO: store irc logs.
-        pass
-
-
     def update_coinjoins_joinmarket(self):
         for client in self.clients:
             try:
@@ -162,6 +231,11 @@ class JoinmarketEngine(EngineBase):
                 self.current_round += delta
             except Exception as e:
                 print(f"- could not update {client.name} ({e})")
+
+        try:
+            self.obwatch_client.update(self.current_block, self.current_round)
+        except Exception as e:
+            print(f"- could not update obwatch client ({e})")
 
 
     def run_engine(self):

@@ -27,5 +27,6 @@ COPY --chown=joinmarket:joinmarket joinmarket.cfg /home/joinmarket/.joinmarket/
 RUN chmod +x /home/joinmarket/run.sh
 WORKDIR /home/joinmarket
 
-CMD ["./run.sh"]
+ENV MODE=walletd
 
+CMD ["./run.sh"]

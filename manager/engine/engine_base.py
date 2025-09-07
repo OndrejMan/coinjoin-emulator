@@ -85,12 +85,14 @@ class EngineBase:
             service_account="btc-node",
         )
 
+        print(btc_node_ip, btc_node_ports)
         self.node = BtcNode(
             host=btc_node_ip if self.args.proxy or self.args.in_cluster else self.args.control_ip,
             port=18443 if self.args.proxy else btc_node_ports[18443],
             internal_ip=btc_node_ip,
             proxy=self.args.proxy,
         )
+        print("BTC node startup in progress")
         self.node.wait_ready()
         print("- started btc-node")
 
@@ -204,7 +206,10 @@ class EngineBase:
 
         print(f"- stored {stored_blocks} blocks")
 
+        print("- storing engine logs")
+        print(f"{self.store_engine_logs}")
         self.store_engine_logs(data_path)
+        print("- finished storing engine logs")
 
         print(f"- storing logs for {len(self.clients)} clients in parallel")
         with multiprocessing.pool.ThreadPool() as pool:
@@ -214,6 +219,7 @@ class EngineBase:
         print("- zip archive created")
 
     def store_engine_logs(self, data_path):
+        print("Storing engine logs / NOT IMPLEMENTED")
         raise NotImplementedError
 
     def stop_coinjoins(self):
