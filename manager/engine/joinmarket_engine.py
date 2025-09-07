@@ -1,4 +1,5 @@
 import backoff
+import asyncio
 
 from manager.engine.engine_base import EngineBase
 from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
@@ -15,6 +16,8 @@ class JoinmarketEngine(EngineBase):
         super().__init__(args, driver,
                          log_src_path="/home/joinmarket/.joinmarket/logs")
         self.obwatch_client = None
+        # Feature flag to enable async client updates (default: enabled for better performance)
+        self.async_updates = getattr(args, 'async_updates', True)
 
     def default_scenario(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -315,12 +318,84 @@ class JoinmarketEngine(EngineBase):
         except Exception as e:
             print(f"- could not update obwatch client ({e})")
 
+    async def update_coinjoins_joinmarket_async(self):
+        """
+        Async version: Update all clients in parallel using asyncio.gather()
+        """
+        # Create tasks for all client updates
+        client_tasks = []
+        for client in self.clients:
+            task = self._update_client_async(client)
+            client_tasks.append(task)
+        
+        # Add orderbook watcher client task if it exists
+        if self.obwatch_client:
+            obwatch_task = self._update_obwatch_async(self.obwatch_client)
+            client_tasks.append(obwatch_task)
+        
+        # Run all updates concurrently
+        results = await asyncio.gather(*client_tasks, return_exceptions=True)
+        
+        # Process results and update round count
+        for i, result in enumerate(results[:-1] if self.obwatch_client else results):
+            if isinstance(result, Exception):
+                client_name = self.clients[i].name if i < len(self.clients) else "unknown"
+                print(f"- could not update {client_name} ({result})")
+            else:
+                # Apply any change in round count
+                self.current_round += result
+
+    async def _update_client_async(self, client):
+        """Helper to update a single client asynchronously"""
+        try:
+            delta = await client.update_async(self.current_block, self.current_round)
+            return delta
+        except Exception as e:
+            print(f"- could not update {client.name} ({e})")
+            return 0
+
+    async def _update_obwatch_async(self, obwatch_client):
+        """Helper to update orderbook watcher client asynchronously"""
+        try:
+            return await obwatch_client.update_async(self.current_block, self.current_round)
+        except Exception as e:
+            print(f"- could not update obwatch client ({e})")
+            return 0
+
+    async def cleanup_async_clients(self):
+        """
+        Cleanup async HTTP clients to prevent resource leaks.
+        Should be called when shutting down the engine.
+        """
+        cleanup_tasks = []
+        
+        for client in self.clients:
+            if hasattr(client, 'aclose'):
+                cleanup_tasks.append(client.aclose())
+        
+        if self.obwatch_client and hasattr(self.obwatch_client, 'aclose'):
+            cleanup_tasks.append(self.obwatch_client.aclose())
+        
+        if cleanup_tasks:
+            await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+            print("- closed all async HTTP clients")
+
+    def shutdown_engine(self):
+        """
+        Shutdown the engine and cleanup resources.
+        """
+        if self.async_updates:
+            try:
+                asyncio.run(self.cleanup_async_clients())
+            except Exception as e:
+                print(f"- error during async client cleanup: {e}")
 
     def run_engine(self):
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
 
         try:
+            # Use synchronous invoice payments (reliable, simple)
             self.update_invoice_payments()
         except Exception as e:
             print(f"- invoice payment update failed: {e}")
@@ -351,14 +426,19 @@ class JoinmarketEngine(EngineBase):
             except Exception as e:
                 print(f"- invoice update failed: {e}")
             try:
-                self.update_coinjoins_joinmarket()
+                if self.async_updates:
+                    # Use async path for parallel client updates
+                    asyncio.run(self.update_coinjoins_joinmarket_async())
+                else:
+                    # Use synchronous path (legacy)
+                    self.update_coinjoins_joinmarket()
             except Exception as e:
                 print(f"- coinjoin update failed: {e}")
             print(
                 f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60),
                 end="\r",
             )
-            sleep(1)
+            sleep(30)
 
         print()
         print(f"- limit reached")
