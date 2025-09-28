@@ -35,8 +35,16 @@ class MakerClient(JoinMarketClientServer):
 
         if not self.maker_running:
             offer = self.get_offer(current_round)
+
+            # Log fidelity bond status for debugging
+            if hasattr(self, 'fidelity_bonds') and self.fidelity_bonds:
+                bond_count = len(self.fidelity_bonds)
+                funded_bonds = sum(1 for bond in self.fidelity_bonds.values() if bond.get('funded', False))
+                print(f"Starting maker {self.name} with {funded_bonds}/{bond_count} funded fidelity bonds")
+            else:
+                print(f"Starting maker {self.name} (no fidelity bonds)")
+
             self.start_maker(**offer)
-            print(f"Starting maker {self.name}")
             self.maker_running = True
         return 0
 
@@ -52,8 +60,16 @@ class MakerClient(JoinMarketClientServer):
 
         if not self.maker_running:
             offer = self.get_offer(current_round)
+
+            # Log fidelity bond status for debugging
+            if hasattr(self, 'fidelity_bonds') and self.fidelity_bonds:
+                bond_count = len(self.fidelity_bonds)
+                funded_bonds = sum(1 for bond in self.fidelity_bonds.values() if bond.get('funded', False))
+                print(f"Starting maker {self.name} with {funded_bonds}/{bond_count} funded fidelity bonds")
+            else:
+                print(f"Starting maker {self.name} (no fidelity bonds)")
+
             await self.start_maker_async(**offer)
-            print(f"Starting maker {self.name}")
             self.maker_running = True
         return 0
 
@@ -148,12 +164,27 @@ class OrderbookWatchClient(JoinMarketClientServer):
     def _fetch_orderbook(self):
         url = f"http://{self.ob_host}:{self.ob_port}/orderbook.json"
         resp = requests.get(
-            url, 
+            url,
             timeout=10,
             proxies=dict(http=self.proxy) if self.proxy else None
         )
         resp.raise_for_status()
         return resp.json()
+
+    def _fetch_fidelity_bonds(self):
+        """Fetch fidelity bonds data for debugging"""
+        url = f"http://{self.ob_host}:{self.ob_port}/fidelitybonds"
+        try:
+            resp = requests.get(
+                url,
+                timeout=10,
+                proxies=dict(http=self.proxy) if self.proxy else None
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            print(f"[FidelityBonds] Failed to fetch bonds data: {e}")
+            return None
 
     def _store_snapshot(self, data: dict):
         # Group by date directory and name files orderbook_HH-MM.json
@@ -169,6 +200,7 @@ class OrderbookWatchClient(JoinMarketClientServer):
     def update(self, current_block, current_round) -> int:
         """
         Periodically poll the orderbook and store a snapshot to disk.
+        Also periodically check fidelity bonds endpoint for debugging.
         Returns 0 to avoid altering round counts.
         """
         now = time.time()
@@ -177,9 +209,30 @@ class OrderbookWatchClient(JoinMarketClientServer):
             return 0
 
         try:
+            # Fetch and store orderbook data
             data = self._fetch_orderbook()
             path = self._store_snapshot(data)
             print(f"[Orderbook] Stored snapshot for {self.name} at {path}")
+
+            # Debug: Check fidelity bonds endpoint and log the data
+            bonds_data = self._fetch_fidelity_bonds()
+            if bonds_data is not None:
+                # Log summary of fidelity bonds found
+                if isinstance(bonds_data, list):
+                    print(f"[FidelityBonds] Found {len(bonds_data)} fidelity bonds in database")
+                    # Log details of first few bonds for debugging
+                    for i, bond in enumerate(bonds_data[:3]):  # Show first 3 bonds
+                        if isinstance(bond, dict):
+                            bond_value = bond.get('value', 0)
+                            utxo = bond.get('utxo', 'unknown')
+                            print(f"[FidelityBonds] Bond {i+1}: value={bond_value}, utxo={utxo}")
+                elif isinstance(bonds_data, dict):
+                    print(f"[FidelityBonds] Bonds data: {bonds_data}")
+                else:
+                    print(f"[FidelityBonds] Unexpected bonds data format: {type(bonds_data)}")
+            else:
+                print("[FidelityBonds] No bonds data retrieved from endpoint")
+
         except Exception as e:
             print(f"[Orderbook] Failed to fetch/store snapshot for {self.name}: {e}")
         finally:
@@ -191,15 +244,30 @@ class OrderbookWatchClient(JoinMarketClientServer):
         """Async version of _fetch_orderbook using httpx"""
         url = f"http://{self.ob_host}:{self.ob_port}/orderbook.json"
         proxy_config = self.proxy if self.proxy else None
-        
+
         async with httpx.AsyncClient(proxy=proxy_config, timeout=10.0) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             return resp.json()
 
+    async def _fetch_fidelity_bonds_async(self):
+        """Async version of _fetch_fidelity_bonds using httpx"""
+        url = f"http://{self.ob_host}:{self.ob_port}/fidelitybonds"
+        proxy_config = self.proxy if self.proxy else None
+
+        try:
+            async with httpx.AsyncClient(proxy=proxy_config, timeout=10.0) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            print(f"[FidelityBonds] Failed to fetch bonds data: {e}")
+            return None
+
     async def update_async(self, current_block, current_round) -> int:
         """
         Async version: Periodically poll the orderbook and store a snapshot to disk.
+        Also periodically check fidelity bonds endpoint for debugging.
         Returns 0 to avoid altering round counts.
         """
         now = time.time()
@@ -208,9 +276,30 @@ class OrderbookWatchClient(JoinMarketClientServer):
             return 0
 
         try:
+            # Fetch and store orderbook data
             data = await self._fetch_orderbook_async()
             path = self._store_snapshot(data)
             print(f"[Orderbook] Stored snapshot for {self.name} at {path}")
+
+            # Debug: Check fidelity bonds endpoint and log the data
+            bonds_data = await self._fetch_fidelity_bonds_async()
+            if bonds_data is not None:
+                # Log summary of fidelity bonds found
+                if isinstance(bonds_data, list):
+                    print(f"[FidelityBonds] Found {len(bonds_data)} fidelity bonds in database")
+                    # Log details of first few bonds for debugging
+                    for i, bond in enumerate(bonds_data[:3]):  # Show first 3 bonds
+                        if isinstance(bond, dict):
+                            bond_value = bond.get('value', 0)
+                            utxo = bond.get('utxo', 'unknown')
+                            print(f"[FidelityBonds] Bond {i+1}: value={bond_value}, utxo={utxo}")
+                elif isinstance(bonds_data, dict):
+                    print(f"[FidelityBonds] Bonds data: {bonds_data}")
+                else:
+                    print(f"[FidelityBonds] Unexpected bonds data format: {type(bonds_data)}")
+            else:
+                print("[FidelityBonds] No bonds data retrieved from endpoint")
+
         except Exception as e:
             print(f"[Orderbook] Failed to fetch/store snapshot for {self.name}: {e}")
         finally:

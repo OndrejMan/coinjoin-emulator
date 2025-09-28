@@ -273,6 +273,39 @@ def parse_bool(s):
     return str(s).lower() in ("true", "1", "yes", "y")
 
 
+def generate_fidelity_bond_config(args):
+    """Generate fidelity bond configuration for a maker wallet"""
+    if not args.enable_fidelity_bonds:
+        return None
+
+    import datetime
+
+    # Calculate locktime in YYYY-MM format (JoinMarket API format)
+    # Current date + random months
+    months = random.randint(args.bond_min_locktime_months, args.bond_max_locktime_months)
+    current_date = datetime.datetime.now()
+
+    # Add months to current date
+    future_year = current_date.year
+    future_month = current_date.month + months
+
+    # Handle year overflow
+    while future_month > 12:
+        future_month -= 12
+        future_year += 1
+
+    locktime = f"{future_year}-{future_month:02d}"
+
+    # Random bond amount
+    amount = random.randint(args.bond_min_amount, args.bond_max_amount)
+
+    return {
+        "enabled": True,
+        "amount": amount,
+        "locktime": locktime
+    }
+
+
 def setup_parser(parser: argparse.ArgumentParser):
     parser.add_argument("--name", type=str, help="scenario name")
     parser.add_argument("--maker-count", type=int, default=30, help="number of makers")
@@ -313,6 +346,13 @@ def setup_parser(parser: argparse.ArgumentParser):
     parser.add_argument("--tumbler-amtmixdepths", type=int, default=4, help="tumbler option: amtmixdepths")
     parser.add_argument("--tumbler-rounding-chance", type=float, default=0.25, help="tumbler option: rounding_chance")
     parser.add_argument("--tumbler-rounding-sigfig-weights", type=str, default="55,15,25,65,40", help="tumbler option: rounding_sigfig_weights, e.g. 55,15,25,65,40")
+    # Fidelity Bond options
+    parser.add_argument("--enable-fidelity-bonds", action="store_true", help="enable fidelity bonds for maker wallets")
+    parser.add_argument("--bond-percentage-makers", type=float, default=0.5, help="percentage of makers with fidelity bonds (0.0-1.0)")
+    parser.add_argument("--bond-min-amount", type=int, default=10000, help="minimum fidelity bond amount (satoshis)")
+    parser.add_argument("--bond-max-amount", type=int, default=100000, help="maximum fidelity bond amount (satoshis)")
+    parser.add_argument("--bond-min-locktime-months", type=int, default=3, help="minimum bond locktime (months)")
+    parser.add_argument("--bond-max-locktime-months", type=int, default=12, help="maximum bond locktime (months)")
 
 
 def handler(args):
@@ -399,6 +439,12 @@ def handler(args):
         scenario["wallets"].append(wallet)
     # MAKERS
     abs_makers = args.maker_count - args.relative_makers
+
+    # Determine which makers get fidelity bonds
+    total_makers = args.maker_count
+    makers_with_bonds = int(total_makers * args.bond_percentage_makers) if args.enable_fidelity_bonds else 0
+    bond_indices = set(random.sample(range(total_makers), makers_with_bonds)) if makers_with_bonds > 0 else set()
+
     for idx in range(abs_makers):
         n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
         total_btc = random.uniform(args.wallet_min_total_btc, args.wallet_max_total_btc)
@@ -418,8 +464,16 @@ def handler(args):
                 }
             ]
         }
+
+        # Add fidelity bond configuration if this maker is selected for bonds
+        if idx in bond_indices:
+            bond_config = generate_fidelity_bond_config(args)
+            if bond_config:
+                wallet["fidelity_bond"] = bond_config
+
         scenario["wallets"].append(wallet)
     for idx in range(args.relative_makers):
+        maker_idx = abs_makers + idx  # Adjust index for relative makers
         n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
         total_btc = random.uniform(args.wallet_min_total_btc, args.wallet_max_total_btc)
         total_sats = int(total_btc * SATOSHI)
@@ -438,8 +492,25 @@ def handler(args):
                 }
             ]
         }
+
+        # Add fidelity bond configuration if this maker is selected for bonds
+        if maker_idx in bond_indices:
+            bond_config = generate_fidelity_bond_config(args)
+            if bond_config:
+                wallet["fidelity_bond"] = bond_config
+
         scenario["wallets"].append(wallet)
-    print(f"- requires {(sum(map(lambda x: sum(x['funds']), scenario['wallets'])) / 100_000_000):0.8f} BTC")
+
+    # Calculate and display bond statistics
+    wallets_with_bonds = [w for w in scenario["wallets"] if w.get("fidelity_bond", {}).get("enabled", False)]
+    total_bond_amount = sum(w["fidelity_bond"]["amount"] for w in wallets_with_bonds)
+    total_wallet_funds = sum(sum(w["funds"]) for w in scenario["wallets"])
+
+    print(f"- requires {(total_wallet_funds / 100_000_000):0.8f} BTC for wallet funds")
+    if wallets_with_bonds:
+        print(f"- created {len(wallets_with_bonds)} fidelity bonds ({len(wallets_with_bonds)/len([w for w in scenario['wallets'] if w['type'] == 'maker'])*100:.1f}% of makers)")
+        print(f"- requires {(total_bond_amount / 100_000_000):0.8f} BTC for fidelity bonds")
+        print(f"- total funding requirement: {((total_wallet_funds + total_bond_amount) / 100_000_000):0.8f} BTC")
     import os
     os.makedirs(args.out_dir, exist_ok=True)
     out_path = os.path.join(args.out_dir, scenario["name"])

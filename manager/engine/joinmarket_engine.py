@@ -102,6 +102,76 @@ class JoinmarketEngine(EngineBase):
 
         print(f"- started distributor")
 
+    def prepare_additional_funding(self, wallets):
+        """
+        JoinMarket-specific additional funding setup.
+        Creates and funds fidelity bonds for wallets that have bond configuration.
+        """
+        bond_clients = []
+        bond_invoices = []
+
+        print("Preparing fidelity bonds")
+
+        for client, wallet in zip(self.clients, wallets):
+            fidelity_bond_config = wallet.get("fidelity_bond", {})
+
+            if not fidelity_bond_config.get("enabled", False):
+                continue
+
+            try:
+                # Extract bond configuration
+                amount = fidelity_bond_config.get("amount", 50000)  # Default 50k sats
+                locktime = fidelity_bond_config.get("locktime")
+
+                if not locktime:
+                    print(f"Warning: No locktime specified for fidelity bond on {client.name}, skipping")
+                    continue
+
+                # Create the bond
+                bond_info = client.create_fidelity_bond(
+                    amount=amount,
+                    locktime=locktime,
+                    current_block=self.current_block
+                )
+
+                # Prepare funding invoice
+                bond_address = bond_info['address']
+                bond_invoice = (bond_address, amount)
+                bond_invoices.append(bond_invoice)
+                bond_clients.append((client, bond_address))
+
+                print(f"- prepared fidelity bond for {client.name}: {amount} sats to {bond_address}")
+
+            except Exception as e:
+                print(f"Error creating fidelity bond for {client.name}: {e}")
+                raise Exception(f"Failed to create fidelity bond for {client.name}: {e}")
+
+        if bond_invoices:
+            print(f"Funding {len(bond_invoices)} fidelity bonds")
+
+            try:
+                # Fund all bonds in a single batch
+                self.pay_invoices(bond_invoices)
+
+                # Mark bonds as funded
+                for client, bond_address in bond_clients:
+                    client.mark_bond_funded(bond_address)
+
+                print(f"- funded {len(bond_invoices)} fidelity bonds")
+
+                # Mine additional blocks to ensure fidelity bond transactions are confirmed
+                # JoinMarket needs confirmed UTXOs to calculate bond values for maker offers
+                print("Mining blocks to confirm fidelity bond transactions")
+                for i in range(15):  # Mine 6 blocks for solid confirmation
+                    self.node.mine_block()
+                print("- fidelity bond confirmations completed")
+
+            except Exception as e:
+                print(f"Failed to fund fidelity bonds: {e}")
+                raise Exception(f"Failed to fund fidelity bonds: {e}")
+        else:
+            print("- no fidelity bonds to fund")
+
     def start_orderbook_watch(self):
         name = "joinmarket-obwatch"
         port = 62601
@@ -313,11 +383,7 @@ class JoinmarketEngine(EngineBase):
                 print(f"- error during async client cleanup: {e}")
 
     def run_engine(self):
-        try:
-            # Use synchronous invoice payments (reliable, simple)
-            self.update_invoice_payments()
-        except Exception as e:
-            print(f"- invoice payment update failed: {e}")
+        # Note: Initial invoice payments now happen before this method is called
         try:
             initial_block = self.node.get_block_count()
         except Exception as e:

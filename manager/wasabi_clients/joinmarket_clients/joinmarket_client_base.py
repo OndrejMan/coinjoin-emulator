@@ -39,6 +39,7 @@ class JoinMarketClientServer:
         offers=None,
         tumbler_options=None,
         time_between_rounds=0,
+        has_fidelity_bonds=False,
     ):
         self.host = host
         self.port = port
@@ -59,7 +60,11 @@ class JoinMarketClientServer:
         self.tumbler_options = tumbler_options if tumbler_options else None
         self.coin_history = {}
         self.seedphrase = ""
-        
+        self.has_fidelity_bonds = has_fidelity_bonds
+
+        # Fidelity bond tracking
+        self.fidelity_bonds = {}  # Track created bonds: {address: {amount, locktime, creation_block}}
+
         # Async HTTP client setup
         self._async_client = None
         self._unlock_lock = None  # Will be created when needed
@@ -93,6 +98,9 @@ class JoinMarketClientServer:
         type_ = wallet.get("type", "maker")
         tumbler_options = wallet.get("tumbler_options", {})
 
+        # Check if wallet has fidelity bonds configured
+        has_fidelity_bonds = wallet.get("fidelity_bond", {}).get("enabled", False)
+
         # Select the appropriate subclass based on wallet config.
         if type_ == "maker":
             from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import MakerClient
@@ -118,6 +126,7 @@ class JoinMarketClientServer:
             offers=wallet.get("offers", []),
             tumbler_options=tumbler_options,
             time_between_rounds=wallet.get("time_between_rounds", 0),
+            has_fidelity_bonds=has_fidelity_bonds,
             host=host,
             proxy=proxy
         )
@@ -255,15 +264,16 @@ class JoinMarketClientServer:
             print(e)
             return None
 
-    def _create_wallet(self, walletname=None):
+    def _create_wallet(self, walletname=None, wallettype=None):
         """Create a new wallet and store its name."""
         method = "POST"
         endpoint = "/wallet/create"
         walletname = walletname or self.walletname
+        wallet_type = wallettype or WALLET_TYPE
         data = {
             "walletname": walletname,
             "password": PASSWORD,
-            "wallettype": WALLET_TYPE
+            "wallettype": wallet_type
         }
         # Use a longer timeout for wallet creation (slow clients)
         response = self._rpc(method, endpoint, json_data=data, timeout=300)
@@ -376,8 +386,9 @@ class JoinMarketClientServer:
     )
     def _wait_wallet_create(self, timeout=None):
         elapsed = int(time() - self._wait_wallet_start)
-        print(f"- trying wallet creation for {self.walletname} on {self.host}:{self.port} (elapsed {elapsed}s)")
-        self._create_wallet()
+        wallet_type = "sw-fb" if self.has_fidelity_bonds else WALLET_TYPE
+        print(f"- trying wallet creation for {self.walletname} on {self.host}:{self.port} (elapsed {elapsed}s, type: {wallet_type})")
+        self._create_wallet(wallettype=wallet_type)
 
     @backoff.on_exception(
         backoff.expo,
@@ -469,6 +480,131 @@ class JoinMarketClientServer:
         endpoint = f"/wallet/{self.walletname}/address/timelock/new/{lockdate}"
         response = self._rpc(method, endpoint)
         return response
+
+    def create_fidelity_bond(self, amount, locktime, current_block=0):
+        """
+        Create a fidelity bond by generating a timelock address and tracking it.
+
+        Args:
+            amount: Amount in satoshis to bond
+            locktime: Unix timestamp when bond unlocks
+            current_block: Current block height (for tracking)
+
+        Returns:
+            dict: Bond information including address
+        """
+        try:
+            response = self.get_new_timelock_address(locktime)
+            address = response.get('address')
+
+            if not address:
+                raise Exception(f"Failed to create fidelity bond address: {response}")
+
+            # Track the bond
+            self.fidelity_bonds[address] = {
+                'amount': amount,
+                'locktime': locktime,
+                'creation_block': current_block,
+                'funded': False
+            }
+
+            print(f"Created fidelity bond address {address} for {amount} sats until {locktime}")
+            return {
+                'address': address,
+                'amount': amount,
+                'locktime': locktime,
+                'creation_block': current_block
+            }
+
+        except Exception as e:
+            raise Exception(f"Failed to create fidelity bond: {e}")
+
+    def get_fidelity_bonds(self):
+        """
+        Get list of all created fidelity bonds.
+
+        Returns:
+            dict: Dictionary of bond addresses to bond info
+        """
+        return self.fidelity_bonds.copy()
+
+    def mark_bond_funded(self, address):
+        """
+        Mark a fidelity bond as funded.
+
+        Args:
+            address: Bond address that was funded
+        """
+        if address in self.fidelity_bonds:
+            self.fidelity_bonds[address]['funded'] = True
+            print(f"Marked fidelity bond {address} as funded")
+        else:
+            print(f"Warning: Attempted to mark unknown bond address {address} as funded")
+
+    def get_bond_value(self, address, current_block=0):
+        """
+        Calculate bond value for reputation (simplified calculation).
+
+        Args:
+            address: Bond address
+            current_block: Current block height
+
+        Returns:
+            float: Bond value for reputation calculation
+        """
+        if address not in self.fidelity_bonds:
+            return 0.0
+
+        bond = self.fidelity_bonds[address]
+        if not bond['funded']:
+            return 0.0
+
+        # Simplified bond value calculation
+        # In real JoinMarket, this involves complex age/amount calculations
+        amount_btc = bond['amount'] / BTC
+        blocks_held = max(0, current_block - bond['creation_block'])
+
+        # Basic age-weighted value (simplified)
+        age_factor = min(1.0, blocks_held / 144)  # Blocks per day
+        return amount_btc * age_factor
+
+    def export_fidelity_bonds_data(self, current_block=0):
+        """
+        Export fidelity bond data for logging/analysis.
+
+        Args:
+            current_block: Current block height for value calculations
+
+        Returns:
+            dict: Complete fidelity bond information with calculated values
+        """
+        bonds_data = {
+            "client_name": self.name,
+            "wallet_name": self.walletname,
+            "wallet_type": "sw-fb" if self.has_fidelity_bonds else "sw",
+            "current_block": current_block,
+            "bonds": []
+        }
+
+        for address, bond_info in self.fidelity_bonds.items():
+            bond_data = {
+                "address": address,
+                "amount_satoshis": bond_info["amount"],
+                "amount_btc": bond_info["amount"] / BTC,
+                "locktime": bond_info["locktime"],
+                "creation_block": bond_info["creation_block"],
+                "funded": bond_info["funded"],
+                "bond_value": self.get_bond_value(address, current_block),
+                "blocks_held": max(0, current_block - bond_info["creation_block"]) if bond_info["funded"] else 0
+            }
+            bonds_data["bonds"].append(bond_data)
+
+        bonds_data["total_bonds"] = len(bonds_data["bonds"])
+        bonds_data["total_amount_satoshis"] = sum(b["amount_satoshis"] for b in bonds_data["bonds"])
+        bonds_data["total_amount_btc"] = bonds_data["total_amount_satoshis"] / BTC
+        bonds_data["total_bond_value"] = sum(b["bond_value"] for b in bonds_data["bonds"])
+
+        return bonds_data
 
     def list_utxos(self):
         """List details of all UTXOs currently in the wallet."""
@@ -755,12 +891,28 @@ class JoinMarketClientServer:
         coins = self.list_coins()
         keys = []
         for coin in coins:
-            key = {"full_key_path": coin.get("keyPath", "")}
-            bip32_ctx = Bip32Slip10Secp256k1.FromSeedAndPath(seed_bytes, key["full_key_path"])
-            key["pubKey"] = bip32_ctx.PublicKey().RawUncompressed().ToHex()
-            key["internal"] = key["full_key_path"].split("/")[-2] == "1"
-            key["address"] = coin.get("address", "")
-            keys.append(key)
+            key_path = coin.get("keyPath", "")
+
+            # Skip fidelity bond coins that have colons in their paths (e.g., "79:1785542400")
+            # These are not valid BIP32 paths and are handled differently in JoinMarket
+            if ":" in key_path:
+                print(f"Skipping fidelity bond coin with path: {key_path}")
+                continue
+
+            # Skip empty paths
+            if not key_path:
+                continue
+
+            key = {"full_key_path": key_path}
+            try:
+                bip32_ctx = Bip32Slip10Secp256k1.FromSeedAndPath(seed_bytes, str(key_path))
+                key["pubKey"] = bip32_ctx.PublicKey().RawUncompressed().ToHex()
+                key["internal"] = str(key_path).split("/")[-2] == "1"
+                key["address"] = coin.get("address", "")
+                keys.append(key)
+            except Exception as e:
+                print(f"Error processing key path '{key_path}': {e}")
+                continue
 
         return keys
 
