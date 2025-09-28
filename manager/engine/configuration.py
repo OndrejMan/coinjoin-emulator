@@ -34,6 +34,7 @@ class JoinMarketConfig:
     offers: list[dict[str, Any]] | None = None
     tumbler_options: dict[str, Any] | None = None
     time_between_rounds: int | None = None
+    fidelity_bond: dict[str, Any] | None = None
 
 
 @dataclass
@@ -130,6 +131,7 @@ class ScenarioConfig:
                 offers=wallet_data.get("offers"),
                 tumbler_options=wallet_data.get("tumbler_options"),
                 time_between_rounds=wallet_data.get("time_between_rounds"),
+                fidelity_bond=wallet_data.get("fidelity_bond"),
             )
         
         return WalletConfig(

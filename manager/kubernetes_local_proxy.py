@@ -503,21 +503,119 @@ class KubernetesLocalProxy:
             return False
 
         local_tar = tar_name.replace("/tmp/", "/tmp/local-")
-        print("Downloading archive via kubectl exec (streaming)...")
 
-        exec_cat_cmd = self._kubectl_base_cmd + [
+        # Check archive size and split if necessary
+        size_check_cmd = self._kubectl_base_cmd + [
             "exec", "-n", self.namespace,
             self.orchestrator_pod, "--",
-            "sh", "-c", f"cat {tar_name}"
+            "sh", "-c", f"stat -c%s {tar_name} 2>/dev/null || echo 0"
         ]
 
         try:
+            result = subprocess.run(size_check_cmd, capture_output=True, text=True, check=True)
+            archive_size = int(result.stdout.strip())
+            size_mb = archive_size / (1024 * 1024)
+            print(f"Archive size: {size_mb:.1f}MB")
+        except:
+            archive_size = 0
+            print("Could not determine archive size, proceeding with splitting")
+
+        # If archive is larger than 50MB, split it
+        if archive_size > 50 * 1024 * 1024:  # 50MB threshold
+            print("Large archive detected, splitting into chunks...")
+
+            # Split the archive into 40MB chunks
+            split_script = f'''
+            cd /tmp
+            split -b 40M {tar_name} {tar_name}.part
+            echo "SPLIT_FILES:"
+            ls -1 {tar_name}.part* | while read f; do
+                size=$(stat -c%s "$f")
+                echo "$f:$size"
+            done
+            '''
+
+            split_cmd = self._kubectl_base_cmd + [
+                "exec", "-n", self.namespace,
+                self.orchestrator_pod, "--",
+                "sh", "-c", split_script
+            ]
+
+            result = subprocess.run(split_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print("Failed to split archive")
+                return False
+
+            # Parse the split files list
+            split_files = []
+            for line in result.stdout.split('\n'):
+                if line.startswith(f"{tar_name}.part"):
+                    parts = line.split(':')
+                    if len(parts) == 2:
+                        filename = parts[0]
+                        size = int(parts[1])
+                        split_files.append((filename, size))
+
+            print(f"Archive split into {len(split_files)} chunks")
+
+            # Download each chunk
+            local_parts = []
+            for i, (remote_part, size) in enumerate(split_files):
+                local_part = f"{local_tar}.part{chr(97+i)}"  # .partaa, .partab, etc.
+                local_parts.append(local_part)
+
+                print(f"Downloading chunk {i+1}/{len(split_files)} ({size/(1024*1024):.1f}MB)...")
+
+                exec_cat_cmd = self._kubectl_base_cmd + [
+                    "exec", "-n", self.namespace,
+                    self.orchestrator_pod, "--",
+                    "cat", remote_part
+                ]
+
+                try:
+                    with open(local_part, "wb") as f_out:
+                        subprocess.run(exec_cat_cmd, stdout=f_out, stderr=subprocess.PIPE, check=True)
+                except subprocess.CalledProcessError as e:
+                    err = e.stderr.decode(errors="ignore") if e.stderr else str(e)
+                    print(f"Failed to download chunk {i+1}: {err}")
+                    # Cleanup partial downloads
+                    for cleanup_part in local_parts:
+                        if os.path.exists(cleanup_part):
+                            os.remove(cleanup_part)
+                    return False
+
+            # Reassemble the archive
+            print("Reassembling archive...")
             with open(local_tar, "wb") as f_out:
-                subprocess.run(exec_cat_cmd, stdout=f_out, stderr=subprocess.PIPE, check=True)
-        except subprocess.CalledProcessError as e:
-            err = e.stderr.decode(errors="ignore") if e.stderr else str(e)
-            print(f"Failed to download archive: {err}")
-            return False
+                for local_part in local_parts:
+                    with open(local_part, "rb") as f_in:
+                        f_out.write(f_in.read())
+                    os.remove(local_part)  # Clean up part files
+
+            # Clean up remote split files
+            cleanup_split_cmd = self._kubectl_base_cmd + [
+                "exec", "-n", self.namespace,
+                self.orchestrator_pod, "--",
+                "sh", "-c", f"rm -f {tar_name}.part*"
+            ]
+            subprocess.run(cleanup_split_cmd, capture_output=True)
+
+        else:
+            # Small file, download directly
+            print("Downloading archive via kubectl exec (streaming)...")
+            exec_cat_cmd = self._kubectl_base_cmd + [
+                "exec", "-n", self.namespace,
+                self.orchestrator_pod, "--",
+                "sh", "-c", f"cat {tar_name}"
+            ]
+
+            try:
+                with open(local_tar, "wb") as f_out:
+                    subprocess.run(exec_cat_cmd, stdout=f_out, stderr=subprocess.PIPE, check=True)
+            except subprocess.CalledProcessError as e:
+                err = e.stderr.decode(errors="ignore") if e.stderr else str(e)
+                print(f"Failed to download archive: {err}")
+                return False
 
         os.makedirs(local_destination, exist_ok=True)
 

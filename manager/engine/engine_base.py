@@ -174,6 +174,17 @@ class EngineBase:
         with open(os.path.join(client_path, "keys.json"), "w") as f:
             json.dump(client.list_keys(), f, indent=2)
             print(f"- stored {client.name} keys")
+
+        # Store fidelity bonds data if available
+        if hasattr(client, 'export_fidelity_bonds_data') and hasattr(client, 'fidelity_bonds'):
+            bonds_data = client.export_fidelity_bonds_data(self.current_block)
+            with open(os.path.join(client_path, "fidelity_bonds.json"), "w") as f:
+                json.dump(bonds_data, f, indent=2)
+                if bonds_data['total_bonds'] > 0:
+                    print(f"- stored {client.name} fidelity bonds ({bonds_data['total_bonds']} bonds)")
+                else:
+                    print(f"- stored {client.name} fidelity bonds (none)")
+
         try:
             self.driver.download(client.name, self.log_src_path, client_path)
             print(f"- stored {client.name} logs, {self.log_src_path}, {client_path}")
@@ -301,16 +312,33 @@ class EngineBase:
 
         except Exception as e:
             print("- invoice payment failed")
-            pass
-            sleep(360)
+            raise e
 
+    def prepare_additional_funding(self, wallets):
+        """
+        Hook for engines to perform additional post-funding setup.
+        Default implementation does nothing.
+
+        Args:
+            wallets: List of wallet configurations
+        """
+        pass
+    
     def run(self):
         print(f"=== Scenario {self.scenario.name} ===")
         self.prepare_images()
         self.start_infrastructure()
-        self.fund_distributor(500)
+        self.fund_distributor(1000)
         self.start_clients(self.scenario.wallets)
         self.prepare_invoices(self.scenario.wallets)
+
+        # Pay initial wallet funding invoices before additional funding
+        print("Paying initial wallet funding")
+        self.update_invoice_payments()
+
+        # Allow engines to perform additional post-funding setup (e.g., fidelity bonds)
+        self.prepare_additional_funding(self.scenario.wallets)
+
         print("Running simulation")
         self.run_engine()
 
