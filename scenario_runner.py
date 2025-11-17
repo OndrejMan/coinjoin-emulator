@@ -9,6 +9,7 @@ import subprocess
 import time
 import json
 import argparse
+import signal
 from datetime import datetime
 from typing import List, Tuple, Optional
 
@@ -33,7 +34,45 @@ class ScenarioRunner:
         self.results = []
         self.in_cluster = in_cluster
         self.current_scenario_file = None
+        self.stop_requested = False
+        self.skip_requested = False
+        self.current_process = None  # Track currently running subprocess
 
+        # Register signal handlers
+        signal.signal(signal.SIGTERM, self._handle_stop_signal)   # Terminate entire run
+        signal.signal(signal.SIGINT, self._handle_stop_signal)    # Ctrl+C = stop
+        signal.signal(signal.SIGUSR1, self._handle_skip_signal)   # Skip to next scenario
+
+
+    def _handle_stop_signal(self, signum, frame):
+        """Handle stop signals (SIGTERM/SIGINT) - terminate entire run"""
+        signal_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+        print(f"\n[{self.get_timestamp()}] Received {signal_name}, terminating entire run...")
+        self.stop_requested = True
+
+        # Forward the signal to the currently running subprocess (manager.py)
+        # This allows manager.py to do its cleanup (stop_coinjoins, store_logs, etc.)
+        if self.current_process and self.current_process.poll() is None:  # Process is still running
+            print(f"[{self.get_timestamp()}] Forwarding {signal_name} to running manager.py (PID: {self.current_process.pid})...")
+            try:
+                self.current_process.send_signal(signum)
+            except ProcessLookupError:
+                # Process already terminated
+                pass
+
+    def _handle_skip_signal(self, signum, frame):
+        """Handle skip signal (SIGUSR1) - skip current scenario and continue to next"""
+        print(f"\n[{self.get_timestamp()}] Received SIGUSR1, skipping current scenario...")
+        self.skip_requested = True
+
+        # Forward SIGTERM to the currently running subprocess to stop it gracefully
+        if self.current_process and self.current_process.poll() is None:  # Process is still running
+            print(f"[{self.get_timestamp()}] Sending SIGTERM to running manager.py (PID: {self.current_process.pid})...")
+            try:
+                self.current_process.send_signal(signal.SIGTERM)
+            except ProcessLookupError:
+                # Process already terminated
+                pass
 
     def _write_current_status(self):
         """Write current status to a file for external monitoring"""
@@ -42,7 +81,9 @@ class ScenarioRunner:
                 "current_scenario": self.current_scenario_file,
                 "timestamp": self.get_timestamp(),
                 "completed": len([r for r in self.results if r.get("success", False)]),
-                "total": len(self.results)
+                "total": len(self.results),
+                "stop_requested": self.stop_requested,
+                "skip_requested": self.skip_requested
             }
             # Write to a known location in the container
             with open("/tmp/scenario-runner-status.json", "w") as f:
@@ -114,6 +155,7 @@ class ScenarioRunner:
         try:
             # Run the scenario
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.current_process = process  # Track the current process
 
             # Stream output in real-time
             for line in iter(process.stdout.readline, ''):
@@ -123,6 +165,7 @@ class ScenarioRunner:
             # Wait for completion
             return_code = process.wait()
             duration = time.time() - start_time
+            self.current_process = None  # Clear when done
 
             if return_code == 0:
                 print(f"[{self.get_timestamp()}] SUCCESS: Scenario completed in {duration:.1f} seconds")
@@ -188,6 +231,11 @@ class ScenarioRunner:
 
             # Run each scenario
             for i, scenario in enumerate(scenarios[start_index:], start=start_index):
+                # Check if stop was requested (terminate entire run)
+                if self.stop_requested:
+                    print(f"\n[{self.get_timestamp()}] Stop requested, terminating run after cleanup...")
+                    break
+
                 print(f"\n{'=' * 80}")
                 print(f"Scenario {i + 1}/{len(scenarios)}: {os.path.basename(scenario)}")
                 print(f"{'=' * 80}")
@@ -195,32 +243,44 @@ class ScenarioRunner:
                 # Try to run the scenario
                 success, duration = self.run_scenario(scenario)
 
-                self.results.append({
-                    "scenario": scenario,
-                    "success": success,
-                    "duration": duration,
-                    "timestamp": self.get_timestamp()
-                })
+                # Check if skip was requested during the run
+                if self.skip_requested:
+                    print(f"[{self.get_timestamp()}] Skip requested, marking scenario as skipped and continuing to next...")
+                    self.results.append({
+                        "scenario": scenario,
+                        "success": False,
+                        "skipped": True,
+                        "duration": duration,
+                        "timestamp": self.get_timestamp()
+                    })
+                    self.skip_requested = False  # Reset for next scenario
+                else:
+                    self.results.append({
+                        "scenario": scenario,
+                        "success": success,
+                        "duration": duration,
+                        "timestamp": self.get_timestamp()
+                    })
 
-                # If failed, try cleanup and retry once
-                if not success:
-                    print(f"\n[{self.get_timestamp()}] Scenario failed, attempting cleanup and retry...")
+                    # If failed and not skipped, try cleanup and retry once (but not if stop requested)
+                    if not success and not self.stop_requested:
+                        print(f"\n[{self.get_timestamp()}] Scenario failed, attempting cleanup and retry...")
 
-                    if self.cleanup_kubernetes():
-                        print(f"[{self.get_timestamp()}] Retrying scenario...")
-                        success, duration = self.run_scenario(scenario)
+                        if self.cleanup_kubernetes():
+                            print(f"[{self.get_timestamp()}] Retrying scenario...")
+                            success, duration = self.run_scenario(scenario)
 
-                        self.results[-1]["retry"] = True
-                        self.results[-1]["retry_success"] = success
-                        self.results[-1]["retry_duration"] = duration
+                            self.results[-1]["retry"] = True
+                            self.results[-1]["retry_success"] = success
+                            self.results[-1]["retry_duration"] = duration
 
-                        if not success:
-                            print(f"[{self.get_timestamp()}] Scenario failed on retry, continuing to next...")
-                    else:
-                        print(f"[{self.get_timestamp()}] Cleanup failed, skipping retry")
+                            if not success:
+                                print(f"[{self.get_timestamp()}] Scenario failed on retry, continuing to next...")
+                        else:
+                            print(f"[{self.get_timestamp()}] Cleanup failed, skipping retry")
 
-                # Clean up after each scenario
-                if i < len(scenarios) - 1:  # Don't cleanup after last scenario
+                # Clean up after each scenario (unless stop requested)
+                if not self.stop_requested and i < len(scenarios) - 1:  # Don't cleanup after last scenario
                     print(f"\n[{self.get_timestamp()}] Cleaning up before next scenario...")
                     self.cleanup_kubernetes()
 
@@ -228,7 +288,8 @@ class ScenarioRunner:
                 self.save_results()
 
         except KeyboardInterrupt:
-            print(f"\n[{self.get_timestamp()}] Interrupted by user")
+            print(f"\n[{self.get_timestamp()}] Interrupted by user (Ctrl+C)")
+            self.stop_requested = True
         finally:
             # Final cleanup
             print(f"\n[{self.get_timestamp()}] Performing final cleanup...")

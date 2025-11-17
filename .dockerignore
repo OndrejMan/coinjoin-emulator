@@ -1,4 +1,5 @@
 *.log
+runner_logs
 logs/
 .github
 .secrets
@@ -7,4 +8,5 @@ containers
 shadowsocks
 logs*
 logs_download
+logs_download/
 .simulation*

@@ -7,6 +7,12 @@ import uuid
 
 import backoff
 
+# File transfer settings
+CHUNK_SIZE_MB = 10
+LARGE_FILE_THRESHOLD_MB = 20
+MAX_DOWNLOAD_RETRIES = 3
+RETRY_BACKOFF_BASE = 2  # seconds
+
 
 class KubernetesLocalProxy:
     """
@@ -335,11 +341,377 @@ class KubernetesLocalProxy:
             result = subprocess.run(tail_cmd, capture_output=True, text=True)
             print(result.stdout)
 
+    def _resolve_pod_name(self):
+        """
+        Resolve deployment/statefulset references to actual pod name.
+
+        kubectl exec works with 'deployment/name' but kubectl cp requires actual pod names.
+        This resolves the orchestrator_pod reference to a real pod name.
+
+        Returns:
+            str: Actual pod name
+
+        Raises:
+            Exception: If pod cannot be resolved
+        """
+        # If it's already a pod name (doesn't contain '/'), return as-is
+        if '/' not in self.orchestrator_pod:
+            return self.orchestrator_pod
+
+        # Parse the resource type and name
+        resource_type, resource_name = self.orchestrator_pod.split('/', 1)
+
+        # For deployments/statefulsets, get the selector labels and find the pod
+        if resource_type in ["deployment", "deploy", "statefulset", "sts"]:
+            # Get the label selector from the deployment
+            get_selector_cmd = self._kubectl_base_cmd + [
+                "get", resource_type, resource_name,
+                "-n", self.namespace,
+                "-o", "jsonpath={.spec.selector.matchLabels}"
+            ]
+
+            try:
+                result = subprocess.run(get_selector_cmd, capture_output=True, text=True, check=True)
+                # Parse JSON output like {"app":"emulation-manager"}
+                import json
+                labels = json.loads(result.stdout.strip())
+
+                # Build label selector string: "app=emulation-manager,component=orchestrator"
+                label_selector = ",".join([f"{k}={v}" for k, v in labels.items()])
+
+                # Get the first pod matching these labels
+                get_pod_cmd = self._kubectl_base_cmd + [
+                    "get", "pods",
+                    "-n", self.namespace,
+                    "-l", label_selector,
+                    "-o", "jsonpath={.items[0].metadata.name}"
+                ]
+
+                result = subprocess.run(get_pod_cmd, capture_output=True, text=True, check=True)
+                pod_name = result.stdout.strip()
+
+                if not pod_name:
+                    raise Exception(f"No running pod found for {self.orchestrator_pod}")
+
+                return pod_name
+
+            except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+                raise Exception(f"Failed to resolve pod name for {self.orchestrator_pod}: {e}")
+
+        # For other resource types, just use the name directly
+        return resource_name
+
+    def _get_remote_file_size(self, remote_file):
+        """
+        Get the size of a file on the remote pod.
+
+        Args:
+            remote_file: Path to file in the orchestrator pod
+
+        Returns:
+            int: File size in bytes
+
+        Raises:
+            Exception: If file doesn't exist or size cannot be determined
+        """
+        size_check_cmd = self._kubectl_base_cmd + [
+            "exec", "-n", self.namespace,
+            self.orchestrator_pod, "--",
+            "sh", "-c", f"stat -c%s {remote_file} 2>/dev/null || echo 0"
+        ]
+
+        try:
+            result = subprocess.run(size_check_cmd, capture_output=True, text=True, check=True)
+            file_size = int(result.stdout.strip())
+
+            if file_size == 0:
+                raise FileNotFoundError(f"Remote file not found or is empty: {remote_file}")
+
+            return file_size
+        except (subprocess.CalledProcessError, ValueError) as e:
+            raise Exception(f"Failed to check file size for {remote_file}: {e}")
+
+    def _split_remote_file(self, remote_file):
+        """
+        Split a large file on the remote pod into chunks.
+
+        Args:
+            remote_file: Path to file in the orchestrator pod
+
+        Returns:
+            list[tuple[str, int]]: List of (chunk_path, chunk_size_bytes) tuples
+
+        Raises:
+            Exception: If split operation fails
+        """
+        split_script = f'''
+        cd /tmp
+        split -b {CHUNK_SIZE_MB}M {remote_file} {remote_file}.part
+        echo "SPLIT_FILES:"
+        ls -1 {remote_file}.part* | while read f; do
+            size=$(stat -c%s "$f")
+            echo "$f:$size"
+        done
+        '''
+
+        split_cmd = self._kubectl_base_cmd + [
+            "exec", "-n", self.namespace,
+            self.orchestrator_pod, "--",
+            "sh", "-c", split_script
+        ]
+
+        result = subprocess.run(split_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"Failed to split file: {result.stderr}")
+
+        # Parse the split files list
+        split_files = []
+        for line in result.stdout.split('\n'):
+            if line.startswith(f"{remote_file}.part"):
+                parts = line.split(':')
+                if len(parts) == 2:
+                    filename = parts[0]
+                    size = int(parts[1])
+                    split_files.append((filename, size))
+
+        if not split_files:
+            raise Exception("No split files found after splitting operation")
+
+        return split_files
+
+    def _download_file_with_retry(self, remote_path, local_path, max_retries=MAX_DOWNLOAD_RETRIES):
+        """
+        Download a single file from remote pod with retry logic.
+
+        Args:
+            remote_path: Path to file in the orchestrator pod
+            local_path: Local path where file should be saved
+            max_retries: Maximum number of retry attempts
+
+        Returns:
+            bool: True if download successful, False otherwise
+        """
+        # Resolve deployment/statefulset to actual pod name for kubectl cp
+        try:
+            pod_name = self._resolve_pod_name()
+        except Exception as e:
+            print(f"Failed to resolve pod name: {e}")
+            return False
+
+        cp_cmd = self._kubectl_base_cmd + [
+            "cp",
+            "-n", self.namespace,
+            f"{pod_name}:{remote_path}",
+            local_path
+        ]
+
+        for attempt in range(max_retries):
+            try:
+                subprocess.run(cp_cmd, stderr=subprocess.PIPE, check=True)
+                return True  # Success
+            except subprocess.CalledProcessError as e:
+                err = e.stderr.decode(errors="ignore") if e.stderr else str(e)
+                if attempt < max_retries - 1:
+                    wait_time = RETRY_BACKOFF_BASE ** attempt
+                    print(f"Attempt {attempt+1} failed, retrying in {wait_time}s... ({err})")
+                    time.sleep(wait_time)
+                else:
+                    print(f"Failed to download after {max_retries} attempts: {err}")
+                    return False
+
+        return False
+
+    def _reassemble_chunks(self, chunk_paths, output_file):
+        """
+        Reassemble downloaded chunks into a single file.
+
+        Args:
+            chunk_paths: List of paths to chunk files (in order)
+            output_file: Path where reassembled file should be saved
+
+        Raises:
+            Exception: If reassembly fails
+        """
+        try:
+            with open(output_file, "wb") as f_out:
+                for chunk_path in chunk_paths:
+                    with open(chunk_path, "rb") as f_in:
+                        f_out.write(f_in.read())
+                    os.remove(chunk_path)  # Clean up chunk after adding to output
+        except Exception as e:
+            # Clean up partial output file
+            if os.path.exists(output_file):
+                os.remove(output_file)
+            raise Exception(f"Failed to reassemble chunks: {e}")
+
+    def _cleanup_remote_files(self, file_pattern):
+        """
+        Remove files matching pattern from remote pod.
+
+        This is a best-effort operation - failures are logged but not raised.
+
+        Args:
+            file_pattern: Shell glob pattern for files to remove
+        """
+        cleanup_cmd = self._kubectl_base_cmd + [
+            "exec", "-n", self.namespace,
+            self.orchestrator_pod, "--",
+            "sh", "-c", f"rm -f {file_pattern}"
+        ]
+        result = subprocess.run(cleanup_cmd, capture_output=True)
+        if result.returncode != 0:
+            print(f"Warning: Failed to clean up remote files: {file_pattern}")
+
+    def _download_large_file(self, remote_file, local_file, description="file"):
+        """
+        Download a file from orchestrator pod with automatic chunking for large files.
+
+        Strategy:
+        - Files > LARGE_FILE_THRESHOLD_MB: Split into chunks, download separately, reassemble
+        - Files <= LARGE_FILE_THRESHOLD_MB: Direct download
+
+        Args:
+            remote_file: Path to file in the orchestrator pod
+            local_file: Path where to save the file locally
+            description: Description of what's being downloaded (for user messages)
+
+        Returns:
+            bool: True if download successful, False otherwise
+        """
+        print(f"Downloading {description}...")
+
+        # Step 1: Check file size
+        try:
+            file_size = self._get_remote_file_size(remote_file)
+            size_mb = file_size / (1024 * 1024)
+            print(f"File size: {size_mb:.1f}MB")
+        except Exception as e:
+            print(f"Failed to check file size: {e}")
+            return False
+
+        # Step 2: Choose download strategy based on file size
+        threshold_bytes = LARGE_FILE_THRESHOLD_MB * 1024 * 1024
+
+        if file_size > threshold_bytes:
+            # Large file: split, download chunks, reassemble
+            if not self._download_large_file_chunked(remote_file, local_file, file_size):
+                return False
+        else:
+            # Small file: direct download
+            if not self._download_file_with_retry(remote_file, local_file):
+                print(f"Failed to download {description}")
+                return False
+
+        # Step 3: Verify the download
+        try:
+            local_size = os.path.getsize(local_file)
+            local_size_mb = local_size / (1024 * 1024)
+            print(f"✓ Downloaded {local_size_mb:.1f}MB to {local_file}")
+
+            if local_size != file_size:
+                print(f"⚠ Warning: Size mismatch (remote: {file_size}, local: {local_size})")
+        except Exception as e:
+            print(f"Warning: Could not verify download: {e}")
+
+        return True
+
+    def _download_large_file_chunked(self, remote_file, local_file, file_size):
+        """
+        Download a large file by splitting into chunks.
+
+        Args:
+            remote_file: Path to file in the orchestrator pod
+            local_file: Local destination path
+            file_size: Size of the file in bytes (for progress tracking)
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        print(f"Large file detected (>{LARGE_FILE_THRESHOLD_MB}MB), splitting into {CHUNK_SIZE_MB}MB chunks...")
+
+        # Step 1: Split the file on remote
+        try:
+            split_files = self._split_remote_file(remote_file)
+            print(f"File split into {len(split_files)} chunks")
+        except Exception as e:
+            print(f"Failed to split file: {e}")
+            return False
+
+        # Step 2: Download each chunk
+        local_parts = []
+        try:
+            for i, (remote_part, size) in enumerate(split_files):
+                local_part = f"{local_file}.part{chr(97+i)}"  # .partaa, .partab, etc.
+                local_parts.append(local_part)
+
+                chunk_size_mb = size / (1024 * 1024)
+                print(f"Downloading chunk {i+1}/{len(split_files)} ({chunk_size_mb:.1f}MB)...")
+
+                if not self._download_file_with_retry(remote_part, local_part):
+                    print(f"Failed to download chunk {i+1}")
+                    # Cleanup partial downloads
+                    for cleanup_part in local_parts:
+                        if os.path.exists(cleanup_part):
+                            os.remove(cleanup_part)
+                    return False
+
+        finally:
+            # Always clean up remote split files, even if download failed
+            self._cleanup_remote_files(f"{remote_file}.part*")
+
+        # Step 3: Reassemble chunks
+        try:
+            print("Reassembling chunks...")
+            self._reassemble_chunks(local_parts, local_file)
+        except Exception as e:
+            print(f"Failed to reassemble file: {e}")
+            return False
+
+        return True
+
+    def download_runner_logs(self, runner_id=None, local_destination="./runner_logs"):
+        """
+        Download the complete scenario runner output log file.
+
+        This downloads the full /tmp/scenario-runners/{runner_id}/output.log file
+        that contains all the output from the batch scenario run.
+
+        Args:
+            runner_id: The runner ID (optional, uses saved ID if not provided)
+            local_destination: Local directory to save the log file
+
+        Returns:
+            bool: True if download successful
+        """
+        r_id = runner_id or getattr(self, 'runner_id', None)
+        if not r_id:
+            print("No runner ID provided")
+            return False
+
+        remote_file = f"/tmp/scenario-runners/{r_id}/output.log"
+
+        # Create local destination directory
+        os.makedirs(local_destination, exist_ok=True)
+        local_file = os.path.join(local_destination, f"runner_{r_id}_output.log")
+
+        try:
+            return self._download_large_file(
+                remote_file=remote_file,
+                local_file=local_file,
+                description=f"runner logs for {r_id}"
+            )
+        except Exception as e:
+            print(f"Unexpected error during download: {e}")
+            if os.path.exists(local_file):
+                os.remove(local_file)
+            return False
+
     def stop_scenario_runner(self, runner_id=None):
         """
-        Stop a running scenario runner.
+        Stop a running scenario runner - terminates entire run.
 
         This will stop the current simulation and prevent further scenarios from running.
+        The environment will be cleaned up and ready for a new run.
         """
         r_id = runner_id or getattr(self, 'runner_id', None)
         if not r_id:
@@ -357,7 +729,7 @@ class KubernetesLocalProxy:
                 PID=$(cat "$RUNNER_DIR/pid")
 
                 if ps -p $PID > /dev/null 2>&1; then
-                    echo "Sending SIGTERM to scenario runner (PID: $PID)..."
+                    # Send SIGTERM to scenario runner (terminate entire run)
                     kill -TERM $PID
 
                     # Update status
@@ -375,6 +747,48 @@ class KubernetesLocalProxy:
 
         try:
             result = subprocess.run(stop_cmd, capture_output=True, text=True, check=True)
+            return json.loads(result.stdout.strip())
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def skip_scenario_runner(self, runner_id=None):
+        """
+        Skip the current scenario and continue to next one.
+
+        This will stop the current simulation gracefully but continue with
+        the next scenario in the batch.
+        """
+        r_id = runner_id or getattr(self, 'runner_id', None)
+        if not r_id:
+            return {"status": "error", "message": "No runner ID provided"}
+
+        # Send SIGUSR1 to the scenario runner process
+        skip_cmd = self._kubectl_base_cmd + [
+            "exec", "-n", self.namespace,
+            self.orchestrator_pod, "--",
+            "sh", "-c",
+            f"""
+            RUNNER_DIR=/tmp/scenario-runners/{r_id}
+
+            if [ -f "$RUNNER_DIR/pid" ]; then
+                PID=$(cat "$RUNNER_DIR/pid")
+
+                if ps -p $PID > /dev/null 2>&1; then
+                    # Send SIGUSR1 to scenario runner (skip to next scenario)
+                    kill -USR1 $PID
+
+                    echo '{{"status": "skip_signal_sent", "pid": "'$PID'"}}'
+                else
+                    echo '{{"status": "not_running"}}'
+                fi
+            else
+                echo '{{"status": "not_found"}}'
+            fi
+            """
+        ]
+
+        try:
+            result = subprocess.run(skip_cmd, capture_output=True, text=True, check=True)
             return json.loads(result.stdout.strip())
         except Exception as e:
             return {"status": "error", "message": str(e)}
@@ -410,7 +824,7 @@ class KubernetesLocalProxy:
 
                 # First try graceful shutdown with SIGTERM
                 if ps -p $PID > /dev/null 2>&1; then
-                    echo "Sending SIGTERM to process $PID..."
+                    # Send SIGTERM to process
                     kill -TERM $PID
 
                     echo '{{"status": "stopping"}}'
@@ -504,118 +918,15 @@ class KubernetesLocalProxy:
 
         local_tar = tar_name.replace("/tmp/", "/tmp/local-")
 
-        # Check archive size and split if necessary
-        size_check_cmd = self._kubectl_base_cmd + [
-            "exec", "-n", self.namespace,
-            self.orchestrator_pod, "--",
-            "sh", "-c", f"stat -c%s {tar_name} 2>/dev/null || echo 0"
-        ]
+        # Use the unified download utility function
+        success = self._download_large_file(
+            remote_file=tar_name,
+            local_file=local_tar,
+            description="logs archive"
+        )
 
-        try:
-            result = subprocess.run(size_check_cmd, capture_output=True, text=True, check=True)
-            archive_size = int(result.stdout.strip())
-            size_mb = archive_size / (1024 * 1024)
-            print(f"Archive size: {size_mb:.1f}MB")
-        except:
-            archive_size = 0
-            print("Could not determine archive size, proceeding with splitting")
-
-        # If archive is larger than 50MB, split it
-        if archive_size > 50 * 1024 * 1024:  # 50MB threshold
-            print("Large archive detected, splitting into chunks...")
-
-            # Split the archive into 40MB chunks
-            split_script = f'''
-            cd /tmp
-            split -b 40M {tar_name} {tar_name}.part
-            echo "SPLIT_FILES:"
-            ls -1 {tar_name}.part* | while read f; do
-                size=$(stat -c%s "$f")
-                echo "$f:$size"
-            done
-            '''
-
-            split_cmd = self._kubectl_base_cmd + [
-                "exec", "-n", self.namespace,
-                self.orchestrator_pod, "--",
-                "sh", "-c", split_script
-            ]
-
-            result = subprocess.run(split_cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                print("Failed to split archive")
-                return False
-
-            # Parse the split files list
-            split_files = []
-            for line in result.stdout.split('\n'):
-                if line.startswith(f"{tar_name}.part"):
-                    parts = line.split(':')
-                    if len(parts) == 2:
-                        filename = parts[0]
-                        size = int(parts[1])
-                        split_files.append((filename, size))
-
-            print(f"Archive split into {len(split_files)} chunks")
-
-            # Download each chunk
-            local_parts = []
-            for i, (remote_part, size) in enumerate(split_files):
-                local_part = f"{local_tar}.part{chr(97+i)}"  # .partaa, .partab, etc.
-                local_parts.append(local_part)
-
-                print(f"Downloading chunk {i+1}/{len(split_files)} ({size/(1024*1024):.1f}MB)...")
-
-                exec_cat_cmd = self._kubectl_base_cmd + [
-                    "exec", "-n", self.namespace,
-                    self.orchestrator_pod, "--",
-                    "cat", remote_part
-                ]
-
-                try:
-                    with open(local_part, "wb") as f_out:
-                        subprocess.run(exec_cat_cmd, stdout=f_out, stderr=subprocess.PIPE, check=True)
-                except subprocess.CalledProcessError as e:
-                    err = e.stderr.decode(errors="ignore") if e.stderr else str(e)
-                    print(f"Failed to download chunk {i+1}: {err}")
-                    # Cleanup partial downloads
-                    for cleanup_part in local_parts:
-                        if os.path.exists(cleanup_part):
-                            os.remove(cleanup_part)
-                    return False
-
-            # Reassemble the archive
-            print("Reassembling archive...")
-            with open(local_tar, "wb") as f_out:
-                for local_part in local_parts:
-                    with open(local_part, "rb") as f_in:
-                        f_out.write(f_in.read())
-                    os.remove(local_part)  # Clean up part files
-
-            # Clean up remote split files
-            cleanup_split_cmd = self._kubectl_base_cmd + [
-                "exec", "-n", self.namespace,
-                self.orchestrator_pod, "--",
-                "sh", "-c", f"rm -f {tar_name}.part*"
-            ]
-            subprocess.run(cleanup_split_cmd, capture_output=True)
-
-        else:
-            # Small file, download directly
-            print("Downloading archive via kubectl exec (streaming)...")
-            exec_cat_cmd = self._kubectl_base_cmd + [
-                "exec", "-n", self.namespace,
-                self.orchestrator_pod, "--",
-                "sh", "-c", f"cat {tar_name}"
-            ]
-
-            try:
-                with open(local_tar, "wb") as f_out:
-                    subprocess.run(exec_cat_cmd, stdout=f_out, stderr=subprocess.PIPE, check=True)
-            except subprocess.CalledProcessError as e:
-                err = e.stderr.decode(errors="ignore") if e.stderr else str(e)
-                print(f"Failed to download archive: {err}")
-                return False
+        if not success:
+            return False
 
         os.makedirs(local_destination, exist_ok=True)
 
