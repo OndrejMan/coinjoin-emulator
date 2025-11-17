@@ -133,7 +133,7 @@ class KubernetesDriver(Driver):
                         ],
                         "securityContext": security_context,
                         "resources": {
-                            "limits": {"cpu": cpu, "memory": f"{memory}Mi"},
+                            "limits": {"cpu": cpu*1.5, "memory": f"{memory*1.5}Mi"},
                             "requests": {"cpu": cpu, "memory": f"{memory}Mi"},
                         },
                     }
@@ -210,7 +210,7 @@ class KubernetesDriver(Driver):
         try:
             self.client.delete_namespaced_pod(name=name, namespace=self.namespace)
             self.client.delete_namespaced_service(
-                f"{name}-service", namespace=self.namespace
+                name, namespace=self.namespace
             )
         except:
             pass
@@ -317,6 +317,61 @@ class KubernetesDriver(Driver):
         resp.close()
         return output
 
+    def get_pod_resource_usage(self, name):
+        """
+        Get memory usage of a pod by reading /proc/self/status.
+        Returns dict with memory_mb and memory_limit_mb, or None if failed.
+        """
+        try:
+            # Read process memory info from /proc
+            exec_command = ["cat", "/proc/self/status"]
+            resp = stream(
+                self.client.connect_get_namespaced_pod_exec,
+                name,
+                self.namespace,
+                command=exec_command,
+                stderr=True,
+                stdin=True,
+                stdout=True,
+                tty=False,
+                _preload_content=False,
+            )
+
+            output = ""
+            while resp.is_open():
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    output += resp.read_stdout()
+            resp.close()
+
+            # Parse VmRSS (Resident Set Size - actual RAM used)
+            memory_kb = None
+            for line in output.split('\n'):
+                if line.startswith('VmRSS:'):
+                    # Format: "VmRSS:      123456 kB"
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        memory_kb = int(parts[1])
+                        break
+
+            if memory_kb is None:
+                return None
+
+            # Get pod spec to find memory limit
+            pod = self.client.read_namespaced_pod(name=name, namespace=self.namespace)
+            memory_limit_str = pod.spec.containers[0].resources.limits.get('memory', '0Mi')
+            # Parse memory limit (e.g., "128Mi" -> 128)
+            memory_limit_mb = int(memory_limit_str.replace('Mi', '').replace('Gi', '000'))
+
+            return {
+                'memory_mb': memory_kb / 1024,
+                'memory_limit_mb': memory_limit_mb,
+                'memory_percent': (memory_kb / 1024 / memory_limit_mb * 100) if memory_limit_mb > 0 else 0
+            }
+        except Exception as e:
+            # Silently fail - pod might be terminating
+            return None
+
     def upload(self, name, src_path, dst_path):
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:tar") as tar:
@@ -370,7 +425,7 @@ class KubernetesDriver(Driver):
             if any(
                     x in pod.metadata.name
                     for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-coordinator", "wasabi-client",
-                              "joinmarket-client-server", "joinmarket-distributor", "jcs")
+                              "joinmarket-client-server", "joinmarket-distributor", "jcs", "joinmarket-obwatch")
             ):
                 try:
                     print(f"Deleting pod {pod.metadata.name}")
@@ -385,7 +440,7 @@ class KubernetesDriver(Driver):
             if any(
                     x in service.metadata.name
                     for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-coordinator", "wasabi-client",
-                              "joinmarket-client-server", "joinmarket-distributor", "jcs")
+                              "joinmarket-client-server", "joinmarket-distributor", "jcs", "joinmarket-obwatch")
             ):
                 try:
                     print("Deleting service", service.metadata.name)
