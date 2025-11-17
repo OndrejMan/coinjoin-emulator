@@ -16,7 +16,7 @@ if [ "$MODE" = "obwatch" ]; then
   # Note: ob-watcher reads JoinMarket config from the default location.
   exec python3 /jm/clientserver/scripts/obwatch/ob-watcher.py \
        -p 62602 \
-       >> /home/joinmarket/obwatch.log 2>&1
+       2>&1 | tee -a /home/joinmarket/obwatch.log
 else
   # ── Wallet daemon mode (default) ───────────────────────────────────────
   # Forward external 28183 → local-loopback 28182
@@ -25,5 +25,5 @@ else
 
   # Launch the wallet daemon bound to 127.0.0.1:28182
   exec python3 /jm/clientserver/scripts/jmwalletd.py --port 28182 \
-       >> /home/joinmarket/jmwalletd.log 2>&1
+       2>&1 | tee -a /home/joinmarket/jmwalletd.log
 fi

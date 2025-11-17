@@ -1,4 +1,5 @@
 import time
+import signal
 
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
@@ -13,20 +14,38 @@ args = None
 engine = None
 versions = set()
 
+def handle_shutdown_signal(signum, frame):
+    """Convert SIGTERM to SystemExit to ensure finally block runs"""
+    signal_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+    print(f"\n[manager.py] Received {signal_name}, triggering cleanup...", flush=True)
+    # Raise SystemExit which will trigger the finally block
+    sys.exit(1)
+
 def run():
+    # Register signal handlers to ensure finally block runs on SIGTERM/SIGINT
+    signal.signal(signal.SIGTERM, handle_shutdown_signal)
+    signal.signal(signal.SIGINT, handle_shutdown_signal)
+
     try:
         engine.run()
     except KeyboardInterrupt:
         print()
-        print("KeyboardInterrupt received")
+        print("KeyboardInterrupt received", flush=True)
+    except SystemExit:
+        print("[manager.py] SystemExit caught, proceeding to cleanup...", flush=True)
+        raise  # Re-raise to ensure finally runs
     except Exception as e:
-        print(f"Terminating exception: {e}", file=sys.stderr)
+        print(f"Terminating exception: {e}", file=sys.stderr, flush=True)
     finally:
+        print("[manager.py] Starting cleanup phase...", flush=True)
         engine.stop_coinjoins()
         if not args.no_logs:
+            print("[manager.py] Storing logs...", flush=True)
             engine.store_logs()
             # time.sleep(10)
+        print("[manager.py] Cleaning up resources...", flush=True)
         driver.cleanup(args.image_prefix)
+        print("[manager.py] Cleanup complete", flush=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run coinjoin simulation setup")
