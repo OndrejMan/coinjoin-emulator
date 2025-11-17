@@ -1,20 +1,18 @@
 #!/bin/bash
 
-OUT_DIR="scenarios/joinmarket/experiments/production_bonds_1"
+OUT_DIR="scenarios/joinmarket/experiments/production_bonds_2"
 
 # Fidelity Bond Parameters (50% of makers)
-BOND_ARGS_1="--enable-fidelity-bonds --bond-percentage-makers 0.1 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
-BOND_ARGS_2="--enable-fidelity-bonds --bond-percentage-makers 0.5 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
-BOND_ARGS_3="--enable-fidelity-bonds --bond-percentage-makers 0.1 --bond-min-amount 25000 --bond-max-amount 100000000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
-BOND_ARGS_4="--enable-fidelity-bonds --bond-percentage-makers 0.5 --bond-min-amount 25000 --bond-max-amount 100000000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
-
+BOND_ARGS_1="--enable-fidelity-bonds --bond-percentage-makers 0.01 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
+BOND_ARGS_2="--enable-fidelity-bonds --bond-percentage-makers 0.05 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
+BOND_ARGS_3="--enable-fidelity-bonds --bond-percentage-makers 0.2 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
 
 # Function to run a scenario with all bond configs
 run_scenario() {
   local name=$1
   shift  # Shift to get the rest of the arguments
   
-  for i in {1..4}; do
+  for i in {1..3}; do
     local bond_var="BOND_ARGS_$i"
     echo "Running $name with bond config $i"
     python manager.py genscen-joinmarket \
