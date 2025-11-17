@@ -29,11 +29,12 @@ def run_scenario_batch(args):
             f.write(runner_id)
 
         print(f"\nUseful commands:")
-        print(f"  Check status:  manager-remote --namespace {args.namespace} runner-status")
-        print(f"  Follow logs:   manager-remote --namespace {args.namespace} runner-logs -f")
-        print(f"  Stop runner:   manager-remote --namespace {args.namespace} runner-stop")
+        print(f"  Check status:  python manager/manager_remote_batch.py --namespace {args.namespace} status")
+        print(f"  Follow logs:   python manager/manager_remote_batch.py --namespace {args.namespace} logs -f")
+        print(f"  Stop runner:   python manager/manager_remote_batch.py --namespace {args.namespace} stop")
 
     except Exception as e:
+        print(f"Failed to start scenario runner: {e}", file=sys.stderr)
         print(f"Failed to start scenario runner: {e}", file=sys.stderr)
         return False
     return True
@@ -93,11 +94,22 @@ def runner_logs(args):
                 print("No runner ID provided and no saved ID found", file=sys.stderr)
                 return False
 
-        proxy.tail_runner_logs(
-            runner_id=runner_id,
-            lines=args.lines,
-            follow=args.follow
-        )
+        # Download logs if --download flag is set
+        if args.download:
+            success = proxy.download_runner_logs(
+                runner_id=runner_id,
+                local_destination=args.destination
+            )
+            if success:
+                print("✓ Runner logs downloaded successfully")
+            return success
+        else:
+            # Tail/follow logs
+            proxy.tail_runner_logs(
+                runner_id=runner_id,
+                lines=args.lines,
+                follow=args.follow
+            )
 
     except KeyboardInterrupt:
         print("\n✓ Stopped following logs")
@@ -108,7 +120,7 @@ def runner_logs(args):
 
 
 def runner_stop(args):
-    """Stop a running scenario batch"""
+    """Stop a running scenario batch - terminates entire run"""
     try:
         proxy = KubernetesLocalProxy(
             namespace=args.namespace,
@@ -131,7 +143,8 @@ def runner_stop(args):
 
         if result['status'] == 'stop_signal_sent':
             print("✓ Stop signal sent to scenario runner")
-            print("The runner will stop after the current simulation completes its cleanup")
+            print("The runner will terminate after the current simulation completes its cleanup")
+            print("Environment will be cleaned and ready for a new run")
 
     except Exception as e:
         print(f"Failed to stop runner: {e}", file=sys.stderr)
@@ -139,56 +152,113 @@ def runner_stop(args):
     return True
 
 
+def runner_skip(args):
+    """Skip current scenario and continue to next"""
+    try:
+        proxy = KubernetesLocalProxy(
+            namespace=args.namespace,
+            kubectl_context=args.kubectl_context,
+            auto_deploy=False
+        )
+
+        # Get runner ID
+        runner_id = args.runner_id
+        if not runner_id:
+            try:
+                with open(f".runner-{args.namespace}", "r") as f:
+                    runner_id = f.read().strip()
+            except FileNotFoundError:
+                print("No runner ID provided and no saved ID found", file=sys.stderr)
+                return False
+
+        result = proxy.skip_scenario_runner(runner_id)
+        print(f"Skip result: {result}")
+
+        if result['status'] == 'skip_signal_sent':
+            print("✓ Skip signal sent to scenario runner")
+            print("The current scenario will be skipped and the runner will continue to the next scenario")
+
+    except Exception as e:
+        print(f"Failed to skip scenario: {e}", file=sys.stderr)
+        return False
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Remote Simulation Manager for Kubernetes",
-        prog="manager-remote"
+        description="Batch Scenario Runner Manager for Kubernetes - Manages running multiple scenarios sequentially",
+        prog="manager_remote_batch.py"
     )
 
     # Global arguments
-    parser.add_argument("--namespace", type=str, default="coinjoin", help="Kubernetes namespace")
-    parser.add_argument("--kubectl-context", type=str, help="Kubernetes context to use")
+    parser.add_argument("--namespace", type=str, default="coinjoin",
+                       help="Kubernetes namespace where orchestrator is deployed")
+    parser.add_argument("--kubectl-context", type=str,
+                       help="Kubernetes context to use (optional)")
 
-    subparsers = parser.add_subparsers(dest="command", title="commands", help="Available commands")
+    subparsers = parser.add_subparsers(dest="command", title="commands",
+                                      help="Available commands")
 
-    # Deploy command (existing)
-    deploy_parser = subparsers.add_parser("deploy", help="Deploy simulation manager to cluster")
-    deploy_parser.add_argument("--image-prefix", type=str, default="", help="Image prefix/registry")
-
+    # Deploy command
+    deploy_parser = subparsers.add_parser("deploy",
+                                         help="Deploy emulation-manager orchestrator to cluster")
+    deploy_parser.add_argument("--image-prefix", type=str, default="",
+                              help="Image prefix/registry (e.g., 'myregistry.io/project/')")
 
     # Download-logs command
-    download_parser = subparsers.add_parser("download-logs", help="Download simulation logs")
-    download_parser.add_argument("--sim-id", type=str, help="Simulation ID")
+    download_parser = subparsers.add_parser("download-logs",
+                                           help="Download simulation logs from orchestrator pod")
+    download_parser.add_argument("--sim-id", type=str,
+                                help="Specific simulation ID (optional)")
     download_parser.add_argument("--all-logs", action="store_true",
-                                 help="Download all logs from the orchestrator")
+                                help="Download all logs from /app/logs directory")
     download_parser.add_argument("--destination", type=str, default="./logs_download",
-                                 help="Local directory to save logs")
+                                help="Local directory where logs will be saved")
 
-
-    # Deploy command (existing)
-    batch_parser = subparsers.add_parser("run", help="Run a batch of scenarios")
+    # Run command
+    batch_parser = subparsers.add_parser("run",
+                                        help="Start a new batch scenario runner")
     batch_parser.add_argument("--scenario-dir", type=str, required=True,
-                              help="Directory containing scenarios (in container)")
+                             help="Path to scenario directory inside the orchestrator container (e.g., '/app/scenarios/experiment1')")
     batch_parser.add_argument("--engine", type=str, choices=["joinmarket", "wasabi"],
-                              default="joinmarket", help="Simulation engine")
-    batch_parser.add_argument("--image-prefix", type=str, default="", help="Image prefix")
+                             default="joinmarket",
+                             help="Coinjoin simulation engine to use")
+    batch_parser.add_argument("--image-prefix", type=str, default="",
+                             help="Image prefix/registry for simulation pods (e.g., 'drajnoha/')")
     batch_parser.add_argument("--cleanup-wait", type=int, default=90,
-                              help="Seconds to wait after cleanup")
+                             help="Seconds to wait after cleanup before starting next scenario")
 
-    # Runner-status command
-    runner_status_parser = subparsers.add_parser("status", help="Check scenario runner status")
-    runner_status_parser.add_argument("--runner-id", type=str, help="Runner ID")
+    # Status command
+    runner_status_parser = subparsers.add_parser("status",
+                                                 help="Check status of running scenario batch")
+    runner_status_parser.add_argument("--runner-id", type=str,
+                                     help="Runner ID (optional, uses saved ID from .runner-{namespace} if not provided)")
 
-    # Runner-logs command
-    runner_logs_parser = subparsers.add_parser("logs", help="Get scenario runner logs")
-    runner_logs_parser.add_argument("--runner-id", type=str, help="Runner ID")
-    runner_logs_parser.add_argument("--lines", type=int, default=50, help="Number of lines")
-    runner_logs_parser.add_argument("--follow", "-f", action="store_true", help="Follow logs")
+    # Logs command
+    runner_logs_parser = subparsers.add_parser("logs",
+                                              help="View or download scenario runner output logs")
+    runner_logs_parser.add_argument("--runner-id", type=str,
+                                    help="Runner ID (optional, uses saved ID from .runner-{namespace} if not provided)")
+    runner_logs_parser.add_argument("--lines", type=int, default=50,
+                                    help="Number of lines to show from logs (when not downloading)")
+    runner_logs_parser.add_argument("--follow", "-f", action="store_true",
+                                    help="Follow log output in real-time (like tail -f)")
+    runner_logs_parser.add_argument("--download", "-d", action="store_true",
+                                    help="Download complete log file instead of viewing")
+    runner_logs_parser.add_argument("--destination", type=str, default="./runner_logs",
+                                    help="Local directory to save downloaded logs (used with --download)")
 
-    # Runner-stop command
-    runner_stop_parser = subparsers.add_parser("stop", help="Stop scenario runner")
-    runner_stop_parser.add_argument("--runner-id", type=str, help="Runner ID")
+    # Stop command
+    runner_stop_parser = subparsers.add_parser("stop",
+                                              help="Terminate entire scenario batch run (stops current scenario and exits)")
+    runner_stop_parser.add_argument("--runner-id", type=str,
+                                    help="Runner ID (optional, uses saved ID from .runner-{namespace} if not provided)")
 
+    # Skip command
+    runner_skip_parser = subparsers.add_parser("skip",
+                                              help="Skip current scenario and continue to next one")
+    runner_skip_parser.add_argument("--runner-id", type=str,
+                                    help="Runner ID (optional, uses saved ID from .runner-{namespace} if not provided)")
 
     args = parser.parse_args()
 
@@ -207,6 +277,8 @@ def main():
         success = runner_logs(args)
     elif args.command == "stop":
         success = runner_stop(args)
+    elif args.command == "skip":
+        success = runner_skip(args)
     elif args.command == "download-logs":
         success = download_logs_remote(args)
     else:
