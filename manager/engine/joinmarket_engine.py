@@ -1,5 +1,6 @@
 import backoff
 import asyncio
+import random
 
 from manager.engine.engine_base import EngineBase
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
@@ -26,6 +27,8 @@ class JoinmarketEngine(EngineBase):
         self.obwatch_client = None
         # Feature flag to enable async client updates (default: enabled for better performance)
         self.async_updates = getattr(args, 'async_updates', True)
+        self.loop = None
+        self.last_resource_check = 0  # Track when we last checked resources
 
     def default_scenario(self):
         return SCENARIO
@@ -162,7 +165,7 @@ class JoinmarketEngine(EngineBase):
                 # Mine additional blocks to ensure fidelity bond transactions are confirmed
                 # JoinMarket needs confirmed UTXOs to calculate bond values for maker offers
                 print("Mining blocks to confirm fidelity bond transactions")
-                for i in range(15):  # Mine 6 blocks for solid confirmation
+                for i in range(15):  # Mine 15 blocks for solid confirmation
                     self.node.mine_block()
                 print("- fidelity bond confirmations completed")
 
@@ -214,6 +217,12 @@ class JoinmarketEngine(EngineBase):
         ob_root = os.path.join(data_path, "orderbook")
         os.makedirs(ob_root, exist_ok=True)
         client = self.obwatch_client
+
+        # Check if orderbook watcher client exists
+        if client is None:
+            print(f"- no orderbook watcher client to store")
+            return
+
         src = getattr(client, "snapshot_dir", None)
         if not src or not os.path.isdir(src):
             print(f"- no snapshots to store for {client.name}")
@@ -278,7 +287,7 @@ class JoinmarketEngine(EngineBase):
 
         print(f"- started {name} at {actual_ip}:{actual_port}")
 
-        sleep(10)
+        sleep(30)
         client = JoinMarketClientServer.from_wallet(
             name=name,
             port=actual_port,
@@ -313,18 +322,22 @@ class JoinmarketEngine(EngineBase):
     async def update_coinjoins_joinmarket_async(self):
         """
         Async version: Update all clients in parallel using asyncio.gather()
+        Adds jitter between task creation to prevent synchronized RPC storms
         """
-        # Create tasks for all client updates
+        # Create tasks for all client updates with jitter to desynchronize RPC calls
         client_tasks = []
         for client in self.clients:
             task = self._update_client_async(client)
             client_tasks.append(task)
-        
+            # Add jitter between task creations to desynchronize Bitcoin Core RPC calls
+            jitter = random.uniform(0.01, 0.05)  # 10-50ms jitter
+            await asyncio.sleep(jitter)
+
         # Add orderbook watcher client task if it exists
         if self.obwatch_client:
             obwatch_task = self._update_obwatch_async(self.obwatch_client)
             client_tasks.append(obwatch_task)
-        
+
         # Run all updates concurrently
         results = await asyncio.gather(*client_tasks, return_exceptions=True)
         
@@ -372,6 +385,34 @@ class JoinmarketEngine(EngineBase):
             await asyncio.gather(*cleanup_tasks, return_exceptions=True)
             print("- closed all async HTTP clients")
 
+    def check_client_resources(self):
+        """
+        Check resource usage for a sample of client pods.
+        Logs memory usage and alerts if pods are near limits.
+        """
+        # Sample 5 random clients to avoid overhead
+        import random
+        sample_size = min(5, len(self.clients))
+        sample_clients = random.sample(self.clients, sample_size) if self.clients else []
+
+        high_usage_count = 0
+        for client in sample_clients:
+            stats = self.driver.get_pod_resource_usage(client.name)
+            if stats:
+                mem_mb = stats['memory_mb']
+                mem_limit = stats['memory_limit_mb']
+                mem_pct = stats['memory_percent']
+
+                # Log if usage is over 80%
+                if mem_pct > 80:
+                    print(f"[RESOURCE WARNING] {client.name}: {mem_mb:.1f}/{mem_limit}MB ({mem_pct:.1f}%)")
+                    high_usage_count += 1
+                elif mem_pct > 60:
+                    print(f"[RESOURCE] {client.name}: {mem_mb:.1f}/{mem_limit}MB ({mem_pct:.1f}%)")
+
+        if high_usage_count > 0:
+            print(f"[RESOURCE] {high_usage_count}/{sample_size} sampled pods using >80% memory")
+
     def shutdown_engine(self):
         """
         Shutdown the engine and cleanup resources.
@@ -395,40 +436,59 @@ class JoinmarketEngine(EngineBase):
 
         print(f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60))
 
-        while ( self.scenario["rounds"] == 0 or self.current_round < self.scenario["rounds"] ) and (
-                self.scenario["blocks"] == 0 or self.current_block < self.scenario["blocks"]):
-            # refresh block count
-            for _ in range(3):
-                try:
-                    self.current_block = self.node.get_block_count() - initial_block
-                    break
-                except Exception as e:
-                    print(f"- could not get blocks".ljust(60), end="\r")
-                    print(f"Block exception: {e}", file=sys.stderr)
-            # safe updates
-            try:
-                self.update_invoice_payments()
-            except Exception as e:
-                print(f"- invoice update failed: {e}")
-            try:
-                if self.async_updates:
-                    # Use async path for parallel client updates
-                    asyncio.run(self.update_coinjoins_joinmarket_async())
-                else:
-                    # Use synchronous path (legacy)
-                    self.update_coinjoins_joinmarket()
-            except Exception as e:
-                print(f"- coinjoin update failed: {e}")
-            print(
-                f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60),
-                end="\r",
-            )
-            sleep(30)
+        try:
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
 
-        print()
-        print(f"- limit reached")
-        sleep(60)
-        self.node.mine_block()
+            while ( self.scenario["rounds"] == 0 or self.current_round < self.scenario["rounds"] ) and (
+                    self.scenario["blocks"] == 0 or self.current_block < self.scenario["blocks"]):
+                # refresh block count
+                for _ in range(3):
+                    try:
+                        self.current_block = self.node.get_block_count() - initial_block
+                        break
+                    except Exception as e:
+                        print(f"- could not get blocks".ljust(60), end="\r")
+                        print(f"Block exception: {e}", file=sys.stderr)
+
+                # Check resource usage every 5 minutes (10 iterations * 30s = 5 min)
+                current_time = time()
+                if current_time - self.last_resource_check > 300:  # 5 minutes
+                    try:
+                        self.check_client_resources()
+                        self.last_resource_check = current_time
+                    except Exception as e:
+                        print(f"- resource check failed: {e}")
+
+                # safe updates
+                try:
+                    self.update_invoice_payments()
+                except Exception as e:
+                    print(f"- invoice update failed: {e}")
+                try:
+                    if self.async_updates:
+                        # Use async path for parallel client updates
+                        self.loop.run_until_complete(self.update_coinjoins_joinmarket_async())
+                    else:
+                        # Use synchronous path (legacy)
+                        self.update_coinjoins_joinmarket()
+                except Exception as e:
+                    print(f"- coinjoin update failed: {e}")
+                print(
+                    f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60),
+                    end="\r",
+                )
+                sleep(30)
+
+            print()
+            print(f"- limit reached")
+            sleep(60)
+            self.node.mine_block()
+
+        finally:
+            if self.loop and not self.loop.is_closed():
+                self.loop.close()
+
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
 def ensure_client_session(client, name):

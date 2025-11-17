@@ -10,7 +10,7 @@ then
 
     # Mine first 200 blocks
     ADDR=$(curl -s -u user:password --data-binary '{"jsonrpc": "2.0", "method": "getnewaddress", "params": ["wallet"]}' -H 'content-type: text/plain;' http://localhost:18443 | jq -r '.result')
-    curl -s -u user:password --data-binary "{\"jsonrpc\": \"2.0\", \"method\": \"generatetoaddress\", \"params\": [201, \"$ADDR\"]}" -H 'content-type: text/plain;' http://localhost:18443 > /dev/null
+    curl -s -u user:password --data-binary "{\"jsonrpc\": \"2.0\", \"method\": \"generatetoaddress\", \"params\": [1001, \"$ADDR\"]}" -H 'content-type: text/plain;' http://localhost:18443 > /dev/null
 fi
 
 # Mine new block periodically
