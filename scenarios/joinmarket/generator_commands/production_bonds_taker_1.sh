@@ -1,11 +1,13 @@
 #!/bin/bash
 
-OUT_DIR="scenarios/joinmarket/experiments/production_bonds_1"
+OUT_DIR="scenarios/joinmarket/experiments/production_bonds_taker_4"
 
 # Fidelity Bond Parameters (50% of makers)
-BOND_ARGS_1="--enable-fidelity-bonds --bond-percentage-makers 0.01 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
+BOND_ARGS_1="--enable-fidelity-bonds --bond-percentage-makers 0.02 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
 BOND_ARGS_2="--enable-fidelity-bonds --bond-percentage-makers 0.05 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
-BOND_ARGS_2="--enable-fidelity-bonds --bond-percentage-makers 0.2 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
+BOND_ARGS_3="--enable-fidelity-bonds --bond-percentage-makers 0.1 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
+BOND_ARGS_4="--enable-fidelity-bonds --bond-percentage-makers 0.2 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
+BOND_ARGS_5="--enable-fidelity-bonds --bond-percentage-makers 0.5 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
 
 # Function to run a scenario with all bond configs
 run_scenario() {
@@ -27,11 +29,9 @@ run_scenario() {
 run_scenario "baseline_makers_9_1_utxos_10" \
   --maker-count 80 \
   --relative-makers 0 \
-  --tumbler-taker-count 4 \
-  --taker-count 0 \
-  --block-count 500 \
-  --tumbler-makercountrange "9,1" \
-  --tumbler-stage1-timelambda-increase 2 \
+  --taker-count 4 \
+  --tumbler-taker-count 0 \
+  --block-count 200 \
   --wallet-min-utxos 2 \
   --wallet-max-utxos 2 \
   --wallet-min-total-btc 4.0 \

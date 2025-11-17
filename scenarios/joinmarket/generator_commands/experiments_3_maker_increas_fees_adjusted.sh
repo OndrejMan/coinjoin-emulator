@@ -12,7 +12,7 @@ python manager.py genscen-joinmarket  \
   --block-count 1000 \
   --tumbler-makercountrange "9,1" \
   --tumbler-stage1-timelambda-increase 2 \
-  --wallet-min-utxos 10 \
+  --wallet-min-ut xos 10 \
   --wallet-max-utxos 10 \
   --wallet-min-total-btc 4.0 \
   --wallet-max-total-btc 6.0 \

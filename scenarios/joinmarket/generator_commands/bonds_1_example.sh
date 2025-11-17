@@ -6,7 +6,7 @@ BOND_ARGS="--enable-fidelity-bonds --bond-percentage-makers 0.9 --bond-min-amoun
 # 1. BASELINE: [9,1] makers, 10 UTXOs with fidelity bonds
 python manager.py genscen-joinmarket  \
   --name "baseline_makers_9_1_utxos_10_bonds" \
-  --maker-count 9 \
+  --maker-count 30 \
   --relative-makers 2 \
   --tumbler-taker-count 0 \
   --taker-count 1 \
