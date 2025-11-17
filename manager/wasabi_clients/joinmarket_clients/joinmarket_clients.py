@@ -240,15 +240,37 @@ class OrderbookWatchClient(JoinMarketClientServer):
 
         return 0
 
+    async def _refresh_orderbook_async(self):
+        """Refresh the orderbook by calling the refreshorderbook endpoint."""
+        url = f"http://{self.ob_host}:{self.ob_port}/refreshorderbook"
+        proxy_config = self.proxy if self.proxy else None
+
+        try:
+            async with httpx.AsyncClient(proxy=proxy_config, timeout=10.0) as client:
+                response = await client.post(url)
+                response.raise_for_status()
+                return True
+        except Exception as e:
+            print(f"[Orderbook] Error refreshing orderbook: {e}")
+            return False
+
     async def _fetch_orderbook_async(self):
         """Async version of _fetch_orderbook using httpx"""
+        # First refresh the orderbook
+        await self._refresh_orderbook_async()
+        
+        # Then fetch the updated orderbook
         url = f"http://{self.ob_host}:{self.ob_port}/orderbook.json"
         proxy_config = self.proxy if self.proxy else None
 
-        async with httpx.AsyncClient(proxy=proxy_config, timeout=10.0) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            return resp.json()
+        try:
+            async with httpx.AsyncClient(proxy=proxy_config, timeout=10.0) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            print(f"[Orderbook] Error fetching orderbook: {e}")
+            return None
 
     async def _fetch_fidelity_bonds_async(self):
         """Async version of _fetch_fidelity_bonds using httpx"""
