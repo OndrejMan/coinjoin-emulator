@@ -417,6 +417,7 @@ def setup_parser(parser: argparse.ArgumentParser):
     parser.add_argument("--block-count", type=int, default=0, help="number of blocks")
     parser.add_argument("--taker-delays", type=str, required=False, help="comma-separated block delays for takers, e.g. 0,10,30")
     parser.add_argument("--tumbler-taker-delays", type=str, required=False, help="comma-separated block delays for tumbler takers, e.g. 0,10,20,30")
+    parser.add_argument("--taker-max-coinjoins", type=int, default=0, help="max coinjoins for standard takers (0 for unlimited)")
     parser.add_argument("--force", action="store_true", help="overwrite existing files")
     parser.add_argument("--out-dir", type=str, default="scenarios/joinmarket", help="output directory")
     # FeeConfig
@@ -455,6 +456,8 @@ def setup_parser(parser: argparse.ArgumentParser):
     parser.add_argument("--bond-max-amount", type=int, default=100000, help="maximum fidelity bond amount (satoshis)")
     parser.add_argument("--bond-min-locktime-months", type=int, default=3, help="minimum bond locktime (months)")
     parser.add_argument("--bond-max-locktime-months", type=int, default=12, help="maximum bond locktime (months)")
+    parser.add_argument("--bond-maker-extra-utxos", action="store_true", help="give fidelity bond makers more UTXOs scaled by taker count to handle concurrent coinjoins")
+    parser.add_argument("--bond-maker-utxo-multiplier", type=float, default=1.0, help="multiplier for bond maker UTXOs (e.g., 1.5 = 50% more UTXOs than taker count)")
 
     # Quantile-based distribution options
     parser.add_argument("--use-quantiles", action="store_true", help="use quantile-based distributions instead of min/max ranges")
@@ -539,7 +542,7 @@ def handler(args):
     makercountrange = parse_list_int(args.tumbler_makercountrange)
     # Use the first value as the main range (as in default_tumbler_options)
     if makercountrange:
-        min_makers_required = makercountrange[0] * (args.taker_count + args.tumbler_taker_count)
+        min_makers_required = makercountrange[0] * (args.tumbler_taker_count)
         if args.maker_count < min_makers_required:
             print(f"ERROR: Not enough makers for the scenario. Requested {args.maker_count}, but at least {min_makers_required} are required for taker_count={args.taker_count}, tumbler_taker_count={args.tumbler_taker_count}, makercountrange={makercountrange[0]}.")
             import sys
@@ -586,11 +589,20 @@ def handler(args):
         funds = random_partition(total_sats, n_utxos)
         wallet = {
             "funds": funds,
-            "type": "taker"
+            "type": "taker",
+            "offers": [
+                {
+                    "mixdepth": 0,
+                    "amount_sats": 0,  # 0 means sweep (use all available)
+                    "counterparties": 4
+                }
+            ]
         }
         delay = taker_delays[idx] if idx < len(taker_delays) else 0
         if delay:
             wallet["delay_blocks"] = delay
+        if args.taker_max_coinjoins > 0:
+            wallet["max_coinjoins"] = args.taker_max_coinjoins
         scenario["wallets"].append(wallet)
     # TUMBLER TAKERS
     tumbler_taker_delays = parse_delays(args.tumbler_taker_delays, args.tumbler_taker_count)
@@ -621,8 +633,33 @@ def handler(args):
     makers_with_bonds = int(total_makers * args.bond_percentage_makers) if args.enable_fidelity_bonds else 0
     bond_indices = set(random.sample(range(total_makers), makers_with_bonds)) if makers_with_bonds > 0 else set()
 
+    # Calculate UTXO requirements for bond makers to handle concurrent taker requests
+    total_taker_count = args.taker_count + args.tumbler_taker_count
+    if args.bond_maker_extra_utxos and makers_with_bonds > 0:
+        # Each bond maker should have at least enough UTXOs to handle multiple concurrent takers
+        # Formula: max(4, total_takers * multiplier / num_bond_makers)
+        bond_maker_min_utxos = max(int(total_taker_count * 1.5), int(total_taker_count * args.bond_maker_utxo_multiplier / makers_with_bonds))
+        # Calculate total UTXOs needed for all bond makers
+        total_bond_utxos = bond_maker_min_utxos * makers_with_bonds
+        # Calculate liquidity multiplier to maintain proportional liquidity
+        regular_maker_avg_utxos = (args.wallet_min_utxos + args.wallet_max_utxos) / 2
+        bond_maker_liquidity_multiplier = bond_maker_min_utxos / regular_maker_avg_utxos
+        print(f"Bond maker UTXO configuration:")
+        print(f"  - Total takers: {total_taker_count}")
+        print(f"  - Bond makers: {makers_with_bonds}")
+        print(f"  - UTXOs per bond maker: {bond_maker_min_utxos}")
+        print(f"  - Liquidity multiplier: {bond_maker_liquidity_multiplier:.2f}x")
+    else:
+        bond_maker_min_utxos = args.wallet_min_utxos
+        bond_maker_liquidity_multiplier = 1.0
+
     for idx in range(abs_makers):
-        n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
+        # Check if this maker gets a fidelity bond and extra UTXOs
+        is_bond_maker = idx in bond_indices
+        if is_bond_maker and args.bond_maker_extra_utxos:
+            n_utxos = bond_maker_min_utxos
+        else:
+            n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
 
         if args.use_quantiles:
             total_btc = sample_from_quantiles(wallet_config.btc_quantiles, 1)[0]
@@ -630,6 +667,10 @@ def handler(args):
         else:
             total_btc = random.uniform(args.wallet_min_total_btc, args.wallet_max_total_btc)
             cjfee_a = random.randint(args.maker_min_absolute_fee, args.maker_max_absolute_fee)
+
+        # Apply liquidity multiplier for bond makers to avoid dilution
+        if is_bond_maker and args.bond_maker_extra_utxos:
+            total_btc *= bond_maker_liquidity_multiplier
 
         total_sats = int(total_btc * SATOSHI)
         funds = random_partition(total_sats, n_utxos)
@@ -660,7 +701,13 @@ def handler(args):
         scenario["wallets"].append(wallet)
     for idx in range(args.relative_makers):
         maker_idx = abs_makers + idx  # Adjust index for relative makers
-        n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
+
+        # Check if this maker gets a fidelity bond and extra UTXOs
+        is_bond_maker = maker_idx in bond_indices
+        if is_bond_maker and args.bond_maker_extra_utxos:
+            n_utxos = bond_maker_min_utxos
+        else:
+            n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
 
         if args.use_quantiles:
             total_btc = sample_from_quantiles(wallet_config.btc_quantiles, 1)[0]
@@ -668,6 +715,10 @@ def handler(args):
         else:
             total_btc = random.uniform(args.wallet_min_total_btc, args.wallet_max_total_btc)
             cjfee_r = round(random.uniform(args.maker_min_relative_fee, args.maker_max_relative_fee), 6)
+
+        # Apply liquidity multiplier for bond makers to avoid dilution
+        if is_bond_maker and args.bond_maker_extra_utxos:
+            total_btc *= bond_maker_liquidity_multiplier
 
         total_sats = int(total_btc * SATOSHI)
         funds = random_partition(total_sats, n_utxos)
