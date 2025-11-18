@@ -212,6 +212,8 @@ def main():
                                 help="Specific simulation ID (optional)")
     download_parser.add_argument("--all-logs", action="store_true",
                                 help="Download all logs from /app/logs directory")
+    download_parser.add_argument("-n", "--last-n", type=int, dest="last_n",
+                                help="Download the last N simulation log directories (default: 1)")
     download_parser.add_argument("--destination", type=str, default="./logs_download",
                                 help="Local directory where logs will be saved")
 

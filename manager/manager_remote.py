@@ -182,7 +182,10 @@ def download_logs_remote(args):
             auto_deploy=False
         )
 
-        success = proxy.download_logs(args.destination, args.all_logs)
+        # Get last_n parameter if provided
+        last_n = getattr(args, 'last_n', None)
+
+        success = proxy.download_logs(args.destination, args.all_logs, last_n=last_n)
 
         if success:
             print(f"\n✓ Logs downloaded successfully to {args.destination}")
@@ -241,6 +244,8 @@ def main():
     download_parser.add_argument("--sim-id", type=str, help="Simulation ID")
     download_parser.add_argument("--all-logs", action="store_true",
                                  help="Download all logs from the orchestrator")
+    download_parser.add_argument("-n", "--last-n", type=int, dest="last_n",
+                                 help="Download the last N simulation log directories (default: 1)")
     download_parser.add_argument("--destination", type=str, default="./logs_download",
                                  help="Local directory to save logs")
 
