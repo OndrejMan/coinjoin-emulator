@@ -840,11 +840,12 @@ class KubernetesLocalProxy:
         result = subprocess.run(stop_cmd, capture_output=True, text=True, check=True)
         print(f"Stop command result: {result.stdout}")
 
-    def download_logs(self, local_destination="./logs", all_logs=False):
+    def download_logs(self, local_destination="./logs", all_logs=False, last_n=None):
         """
         Download logs from the orchestrator container to local machine.
 
         If all_logs is True, downloads the entire /app/logs directory.
+        If last_n is specified, downloads the last N simulation directories.
         Otherwise, downloads the most recent top-level simulation directory.
         """
         print("Preparing to download logs from orchestrator...")
@@ -854,13 +855,16 @@ class KubernetesLocalProxy:
             tar_name = "/tmp/logs-all.tar.gz"
             print("Downloading the entire /app/logs directory...")
         else:
-            find_sim_logs_script = '''
-            LOGS_DIR=$(find /app/logs -mindepth 1 -maxdepth 1 -type d | grep -E "[0-9]{4}-[0-9]{2}-[0-9]{2}" | sort -r | head -1)
-            if [ -z "$LOGS_DIR" ]; then
+            # Determine how many log directories to get
+            num_logs = last_n if last_n else 1
+
+            find_sim_logs_script = f'''
+            LOGS_DIRS=$(find /app/logs -mindepth 1 -maxdepth 1 -type d | grep -E "[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}" | sort -r | head -{num_logs})
+            if [ -z "$LOGS_DIRS" ]; then
                 echo "ERROR: No simulation logs found"
                 exit 1
             fi
-            echo "LOGS_DIR:$LOGS_DIR"
+            echo "LOGS_DIRS:$LOGS_DIRS"
             '''
 
             find_cmd = self._kubectl_base_cmd + [
@@ -874,33 +878,65 @@ class KubernetesLocalProxy:
                 print("Could not find simulation logs")
                 return False
 
-            logs_dir = None
+            logs_dirs = []
+            found_marker = False
             for line in result.stdout.split('\n'):
-                if line.startswith("LOGS_DIR:"):
-                    logs_dir = line.split(":", 1)[1]
-                    break
+                if line.startswith("LOGS_DIRS:"):
+                    # First directory is on the same line as the marker
+                    first_dir = line.split(":", 1)[1].strip()
+                    if first_dir:
+                        logs_dirs.append(first_dir)
+                    found_marker = True
+                elif found_marker and line.strip() and line.startswith("/app/logs"):
+                    # Subsequent directories on following lines
+                    logs_dirs.append(line.strip())
 
-            if not logs_dir:
+            if not logs_dirs:
                 print("Could not determine logs directory")
                 return False
 
-            print(f"Found logs directory: {logs_dir}")
+            if len(logs_dirs) == 1:
+                print(f"Found logs directory: {logs_dirs[0]}")
+            else:
+                print(f"Found {len(logs_dirs)} log directories:")
+                for d in logs_dirs:
+                    print(f"  - {d}")
+
             tar_name = "/tmp/logs-latest.tar.gz"
 
-        tar_script = f'''
-        TAR_FILE="{tar_name}"
-        # Create archive while being tolerant to files changing during read
-        # --warning=no-file-changed avoids non-zero exit when files are updated during archiving
-        # --ignore-failed-read skips files that disappear mid-archive
-        tar --warning=no-file-changed --ignore-failed-read -czf "$TAR_FILE" -C "/" "{logs_dir.lstrip('/')}"
-        if [ -f "$TAR_FILE" ]; then
-            SIZE=$(ls -lh "$TAR_FILE" | awk '{{print $5}}')
-            echo "Created archive: $TAR_FILE ($SIZE)"
-        else
-            echo "ERROR: Failed to create archive"
-            exit 1
-        fi
-        '''
+        if all_logs:
+            # For all_logs, archive the entire logs directory
+            tar_script = f'''
+            TAR_FILE="{tar_name}"
+            # Create archive while being tolerant to files changing during read
+            # --warning=no-file-changed avoids non-zero exit when files are updated during archiving
+            # --ignore-failed-read skips files that disappear mid-archive
+            tar --warning=no-file-changed --ignore-failed-read -czf "$TAR_FILE" -C "/" "{logs_dir.lstrip('/')}"
+            if [ -f "$TAR_FILE" ]; then
+                SIZE=$(ls -lh "$TAR_FILE" | awk '{{print $5}}')
+                echo "Created archive: $TAR_FILE ($SIZE)"
+            else
+                echo "ERROR: Failed to create archive"
+                exit 1
+            fi
+            '''
+        else:
+            # For specific directories, create tar command with all found directories
+            dirs_for_tar = ' '.join([f'"{d.lstrip("/")}"' for d in logs_dirs])
+            tar_script = f'''
+            TAR_FILE="{tar_name}"
+            # Create archive while being tolerant to files changing during read
+            # --warning=no-file-changed avoids non-zero exit when files are updated during archiving
+            # --ignore-failed-read skips files that disappear mid-archive
+            tar --warning=no-file-changed --ignore-failed-read -czf "$TAR_FILE" -C "/" {dirs_for_tar}
+            if [ -f "$TAR_FILE" ]; then
+                SIZE=$(ls -lh "$TAR_FILE" | awk '{{print $5}}')
+                echo "Created archive: $TAR_FILE ($SIZE)"
+            else
+                echo "ERROR: Failed to create archive"
+                exit 1
+            fi
+            '''
 
         tar_cmd = self._kubectl_base_cmd + [
             "exec", "-n", self.namespace,
