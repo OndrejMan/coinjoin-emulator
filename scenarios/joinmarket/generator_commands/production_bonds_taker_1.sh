@@ -1,20 +1,20 @@
 #!/bin/bash
 
-OUT_DIR="scenarios/joinmarket/experiments/production_bonds_taker_4"
+OUT_DIR="scenarios/joinmarket/experiments/production_bonds_taker_4_adjusted_UTXOs"
 
 # Fidelity Bond Parameters (50% of makers)
-BOND_ARGS_1="--enable-fidelity-bonds --bond-percentage-makers 0.02 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
-BOND_ARGS_2="--enable-fidelity-bonds --bond-percentage-makers 0.05 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
-BOND_ARGS_3="--enable-fidelity-bonds --bond-percentage-makers 0.1 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
-BOND_ARGS_4="--enable-fidelity-bonds --bond-percentage-makers 0.2 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
-BOND_ARGS_5="--enable-fidelity-bonds --bond-percentage-makers 0.5 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 6 --bond-max-locktime-months 18"
+BOND_ARGS_1="--enable-fidelity-bonds --bond-percentage-makers 0.02 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 12 --bond-max-locktime-months 12"
+BOND_ARGS_2="--enable-fidelity-bonds --bond-percentage-makers 0.05 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 12 --bond-max-locktime-months 12"
+BOND_ARGS_3="--enable-fidelity-bonds --bond-percentage-makers 0.1 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 12 --bond-max-locktime-months 12"
+BOND_ARGS_4="--enable-fidelity-bonds --bond-percentage-makers 0.2 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 12 --bond-max-locktime-months 12"
+BOND_ARGS_5="--enable-fidelity-bonds --bond-percentage-makers 0.5 --bond-min-amount 25000 --bond-max-amount 100000 --bond-min-locktime-months 12 --bond-max-locktime-months 12"
 
 # Function to run a scenario with all bond configs
 run_scenario() {
   local name=$1
   shift  # Shift to get the rest of the arguments
   
-  for i in {1..3}; do
+  for i in {1..5}; do
     local bond_var="BOND_ARGS_$i"
     echo "Running $name with bond config $i"
     python manager.py genscen-joinmarket \
@@ -39,7 +39,9 @@ run_scenario "baseline_makers_9_1_utxos_10" \
   --maker-min-absolute-fee 1000 \
   --maker-max-absolute-fee 6000 \
   --maker-min-relative-fee 0.0001 \
-  --maker-max-relative-fee 0.0040
+  --maker-max-relative-fee 0.0040 \
+  --bond-maker-extra-utxos \
+  --bond-maker-utxo-multiplier 4.0
 
 
 echo "Generated all scenarios with fidelity bonds in $OUT_DIR"
