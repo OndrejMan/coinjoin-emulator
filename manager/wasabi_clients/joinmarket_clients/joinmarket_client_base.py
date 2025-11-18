@@ -40,6 +40,7 @@ class JoinMarketClientServer:
         tumbler_options=None,
         time_between_rounds=0,
         has_fidelity_bonds=False,
+        max_coinjoins=0,
     ):
         self.host = host
         self.port = port
@@ -61,6 +62,8 @@ class JoinMarketClientServer:
         self.coin_history = {}
         self.seedphrase = ""
         self.has_fidelity_bonds = has_fidelity_bonds
+        self.max_coinjoins = max_coinjoins
+        self.completed_coinjoins = 0
 
         # Fidelity bond tracking
         self.fidelity_bonds = {}  # Track created bonds: {address: {amount, locktime, creation_block}}
@@ -127,6 +130,7 @@ class JoinMarketClientServer:
             tumbler_options=tumbler_options,
             time_between_rounds=wallet.get("time_between_rounds", 0),
             has_fidelity_bonds=has_fidelity_bonds,
+            max_coinjoins=wallet.get("max_coinjoins", 0),
             host=host,
             proxy=proxy
         )
@@ -249,8 +253,13 @@ class JoinMarketClientServer:
         raise Exception("timeout")
 
     def is_paused(self, current_block):
-        # “delay[0]” means “don’t run until current_block >= delay[0]”
-        return current_block < self.next_coinjoin_allowed
+        # Check delay - "delay[0]" means "don't run until current_block >= delay[0]"
+        if current_block < self.next_coinjoin_allowed:
+            return True
+        # Check max coinjoins limit
+        if self.max_coinjoins > 0 and self.completed_coinjoins >= self.max_coinjoins:
+            return True
+        return False
 
 
 

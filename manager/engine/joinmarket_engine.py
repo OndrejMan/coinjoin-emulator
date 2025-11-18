@@ -308,7 +308,16 @@ class JoinmarketEngine(EngineBase):
     def update_coinjoins_joinmarket(self):
         for client in self.clients:
             try:
+                # Check if client just reached its limit
+                was_active = not client.is_paused(self.current_block)
                 delta = client.update(self.current_block, self.current_round)
+                now_paused = client.is_paused(self.current_block)
+
+                # Log when a client reaches its coinjoin limit
+                if was_active and now_paused and hasattr(client, 'max_coinjoins') and client.max_coinjoins > 0:
+                    if hasattr(client, 'completed_coinjoins') and client.completed_coinjoins >= client.max_coinjoins:
+                        print(f"✓ {client.name} reached max coinjoins limit ({client.max_coinjoins})")
+
                 # Apply any change in round count; alternatively, have the client trigger an event.
                 self.current_round += delta
             except Exception as e:

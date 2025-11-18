@@ -83,7 +83,15 @@ class TakerClient(JoinMarketClientServer):
         Get the status of the client and update the coinjoin_in_process flag.
         """
         response = super().update_status()
+        was_in_process = self.coinjoin_in_process
         self.coinjoin_in_process = response.get("coinjoin_in_process", False)
+
+        # Detect coinjoin completion and increment counter
+        if was_in_process and not self.coinjoin_in_process:
+            self.completed_coinjoins += 1
+            limit_str = f"/{self.max_coinjoins}" if self.max_coinjoins > 0 else ""
+            print(f"Coinjoin completed for {self.name} (completed {self.completed_coinjoins}{limit_str})")
+
         return response
 
     def update(self, current_block, current_round):
@@ -110,7 +118,7 @@ class TakerClient(JoinMarketClientServer):
             self.coinjoin_in_process = False
             self.next_coinjoin_allowed = current_block + self.time_between_rounds
             delta = -1
-            print(f"Stopping coinjoin {self.name}")
+            print(f"Stopping coinjoin {self.name} (timeout after 8 blocks)")
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
         return delta
 
@@ -119,11 +127,23 @@ class TakerClient(JoinMarketClientServer):
         Async version: Start a coinjoin if none is running and the client is not paused.
         Stop the coinjoin if it has been running for 8 blocks.
         """
+        # Update status (which will increment completed_coinjoins if coinjoin finished)
         response = await self.update_status_async()
+        was_in_process = self.coinjoin_in_process
         self.coinjoin_in_process = response.get("coinjoin_in_process", False)
 
+        # Detect coinjoin completion and increment counter
+        if was_in_process and not self.coinjoin_in_process:
+            self.completed_coinjoins += 1
+            limit_str = f"/{self.max_coinjoins}" if self.max_coinjoins > 0 else ""
+            print(f"Coinjoin completed for {self.name} (completed {self.completed_coinjoins}{limit_str})")
+
+        # Early return if paused
+        if self.is_paused(current_block):
+            return 0
+
         delta = 0
-        if not self.coinjoin_in_process and not self.is_paused(current_block):
+        if not self.coinjoin_in_process:
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
             await self.start_coinjoin_async(**offer)
@@ -139,7 +159,7 @@ class TakerClient(JoinMarketClientServer):
             self.coinjoin_in_process = False
             self.next_coinjoin_allowed = current_block + self.time_between_rounds
             delta = -1
-            print(f"Stopping coinjoin {self.name}")
+            print(f"Stopping coinjoin {self.name} (timeout after 8 blocks)")
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
         return delta
 
