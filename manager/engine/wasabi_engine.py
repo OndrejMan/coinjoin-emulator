@@ -9,7 +9,7 @@ from manager.wasabi_backend_factory import (
     detect_backend_architecture,
     create_backend,
     create_coordinator,
-    get_backend_container_name,
+    get_backend_version,
     get_backend_image_names,
     BackendArchitecture,
 )
@@ -58,7 +58,9 @@ class WasabiEngine(EngineBase):
 
         self.backend_architecture = self.determine_backend_architecture()
         for image_name in get_backend_image_names(self.backend_architecture):
-            self.prepare_image(image_name)
+            base, version = image_name.split(":")
+            path = f"./containers/{base}/{version}"
+            self.prepare_image(image_name, path)
 
     def prepare_client_images(self):
         for version in self.versions:
@@ -72,7 +74,7 @@ class WasabiEngine(EngineBase):
 
         self.start_wasabi_backend()
 
-        if self.backend_architecture == "split":
+        if self.backend_architecture == BackendArchitecture.SPLIT:
             self.start_wasabi_coordinator()
 
     def start_wasabi_backend(self):
@@ -82,11 +84,11 @@ class WasabiEngine(EngineBase):
         if self.backend_architecture is None:
             self.backend_architecture = self.determine_backend_architecture()
 
-        container_name = get_backend_container_name(self.backend_architecture)
+        version = get_backend_version(self.backend_architecture)
 
         wasabi_backend_ip, wasabi_backend_ports = self.driver.run(
             "wasabi-backend",
-            f"{self.args.image_prefix}{container_name}",
+            f"{self.args.image_prefix}wasabi-backend:{version}",
             ports={37127: 37127},
             env={
                 "WASABI_BIND": "http://0.0.0.0:37127",
@@ -97,7 +99,7 @@ class WasabiEngine(EngineBase):
         )
         sleep(1)
 
-        config_path = f"./containers/{container_name}/WabiSabiConfig.json"
+        config_path = f"./containers/wasabi-backend/{version}/WabiSabiConfig.json"
         with open(config_path, "r") as config_file:
             backend_config = json.load(config_file)
         backend_config.update(self.scenario.backend or {})
@@ -124,15 +126,18 @@ class WasabiEngine(EngineBase):
             proxy=self.args.proxy,
         )
         self.backend.wait_ready()
-        print(f"- started wasabi-backend ({self.backend_architecture} architecture)")
+        print(f"- started wasabi-backend ({self.backend_architecture.value} architecture)")
 
     def start_wasabi_coordinator(self):
         """Start the Wasabi coordinator (only for split architecture)."""
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
+        if self.backend_architecture is None:
+            self.backend_architecture = self.determine_backend_architecture()
+        version = get_backend_version(self.backend_architecture)
         wasabi_coordinator_ip, wasabi_coordinator_ports = self.driver.run(
             "wasabi-coordinator",
-            f"{self.args.image_prefix}wasabi-coordinator",
+            f"{self.args.image_prefix}wasabi-coordinator:{version}",
             ports={37128: 37128},
             env={
                 "ADDR_BTC_NODE": self.args.btc_node_ip or self.node.internal_ip,
@@ -272,7 +277,7 @@ class WasabiEngine(EngineBase):
 
     def store_engine_logs(self, data_path):
         try:
-            if self.backend_architecture == "split":
+            if self.backend_architecture == BackendArchitecture.SPLIT:
                 self.driver.download(
                     "wasabi-backend",
                     "/home/wasabi/.walletwasabi/backend/",
@@ -368,7 +373,7 @@ class WasabiEngine(EngineBase):
         print(f"- limit reached")
 
     def _get_current_round(self) -> int:
-        if self.backend_architecture == "split" and self.coordinator is not None:
+        if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
             resp = self.coordinator._get_status()
             if resp is not None:
                 for round_state in resp["RoundStates"]:

@@ -98,7 +98,6 @@ class DockerDriver(Driver):
                     "irc-server",
                     "btc-node",
                     "wasabi-backend",
-                    "wasabi-backend-2.6",
                     "wasabi-client",
                     "wasabi-client-distributor",
                     "wasabi-coordinator",

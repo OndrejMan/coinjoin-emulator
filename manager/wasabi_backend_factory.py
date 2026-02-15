@@ -1,6 +1,6 @@
 """Factory for creating appropriate Wasabi backend and coordinator instances."""
 
-from typing import Literal
+from enum import Enum
 from manager.wasabi_backend import WasabiBackend
 from manager.wasabi_backend_26 import WasabiBackend26
 from manager.wasabi_coordinator import WasabiCoordinator
@@ -8,7 +8,15 @@ from manager.wasabi_backend_protocol import WasabiBackendProtocol
 from manager.wasabi_coordinator_protocol import WasabiCoordinatorProtocol
 
 
-BackendArchitecture = Literal["legacy", "split"]
+class BackendArchitecture(Enum):
+    LEGACY = "legacy"
+    SPLIT = "split"
+
+
+BACKEND_VERSION_MAP: dict[BackendArchitecture, str] = {
+    BackendArchitecture.LEGACY: "2.0.4",
+    BackendArchitecture.SPLIT: "2.6.0",
+}
 
 
 def detect_backend_architecture(versions: set[str]) -> BackendArchitecture:
@@ -18,10 +26,10 @@ def detect_backend_architecture(versions: set[str]) -> BackendArchitecture:
         versions: Set of Wasabi client versions in use
         
     Returns:
-        "legacy" for versions < 2.6.0 (integrated backend+coordinator)
-        "split" for versions >= 2.6.0 (separate backend and coordinator)
+        LEGACY for versions < 2.6.0 (integrated backend+coordinator)
+        SPLIT for versions >= 2.6.0 (separate backend and coordinator)
     """
-    return "split" if any(version >= "2.6.0" for version in versions) else "legacy"
+    return BackendArchitecture.SPLIT if any(version >= "2.6.0" for version in versions) else BackendArchitecture.LEGACY
 
 
 def create_backend(
@@ -43,7 +51,7 @@ def create_backend(
     Returns:
         A backend instance implementing WasabiBackendProtocol
     """
-    if architecture == "split":
+    if architecture == BackendArchitecture.SPLIT:
         return WasabiBackend26(host=host, port=port, internal_ip=internal_ip, proxy=proxy)
     else:
         return WasabiBackend(host=host, port=port, internal_ip=internal_ip, proxy=proxy)
@@ -71,28 +79,12 @@ def create_coordinator(
     return WasabiCoordinator(host=host, port=port, internal_ip=internal_ip, proxy=proxy)
 
 
-def get_backend_container_name(architecture: BackendArchitecture) -> str:
-    """Get the container name for the backend.
-    
-    Args:
-        architecture: The backend architecture to use
-        
-    Returns:
-        Container name string
-    """
-    return "wasabi-backend-2.6" if architecture == "split" else "wasabi-backend"
+def get_backend_version(architecture: BackendArchitecture) -> str:
+    return BACKEND_VERSION_MAP[architecture]
 
 
 def get_backend_image_names(architecture: BackendArchitecture) -> list[str]:
-    """Get the image names needed for the backend architecture.
-    
-    Args:
-        architecture: The backend architecture to use
-        
-    Returns:
-        List of image names to prepare
-    """
-    if architecture == "split":
-        return ["wasabi-backend-2.6", "wasabi-coordinator"]
-    else:
-        return ["wasabi-backend"]
+    version = get_backend_version(architecture)
+    if architecture == BackendArchitecture.SPLIT:
+        return [f"wasabi-backend:{version}", f"wasabi-coordinator:{version}"]
+    return [f"wasabi-backend:{version}"]
