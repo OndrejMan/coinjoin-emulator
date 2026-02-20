@@ -1,15 +1,22 @@
+from traceback import print_exception
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
+from manager.engine.engine_base import EngineBase
 import manager.commands.genscen
 import sys
 import argparse
 
 
-args = None
-engine = None
+args: argparse.Namespace | None = None
+engine: EngineBase | None = None
 versions = set()
 
 def run():
+    if engine is None:
+        raise RuntimeError("Engine is not initialized")
+    if args is None:
+        raise RuntimeError("Arguments are not initialized")
+    
     try:
         engine.run()
     except KeyboardInterrupt:
@@ -17,6 +24,7 @@ def run():
         print("KeyboardInterrupt received")
     except Exception as e:
         print(f"Terminating exception: {e}", file=sys.stderr)
+        print_exception(e)
     finally:
         engine.stop_coinjoins()
         if not args.no_logs:

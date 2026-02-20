@@ -1,37 +1,72 @@
 from manager.engine.engine_base import EngineBase
+from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
 from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
 from time import sleep, time
 import sys
-
-SCENARIO = {
-    "name": "default",
-    "default_version": "joinmarket",
-    "rounds": 5,  # the number of coinjoins after which the simulation stops (0 for no limit)
-    "blocks": 0,  # the number of mined blocks after which the simulation stops (0 for no limit)
-    "wallets": [
-        {"funds": [200000, 50000], "type": "taker"},
-        {"funds": [3000000], "type": "taker", "delay_blocks": 2},
-        {"funds": [1000000, 500000], "type": "maker"},
-        {"funds": [3000000, 15000], "type": "maker"},
-        {"funds": [1000000, 500000], "type": "maker"},
-        {"funds": [3000000, 600000], "type": "maker"},
-        {"funds": [200000, 50000], "type": "maker"},
-        {"funds": [3000000], "type": "maker"},
-        {"funds": [1000000, 500000], "type": "maker"},
-        {"funds": [3000000, 15000], "type": "maker"},
-        {"funds": [1000000, 500000], "type": "maker"},
-        {"funds": [3000000, 600000], "type": "maker"},
-    ],
-}
-
 
 class JoinmarketEngine(EngineBase):
 
     def __init__(self, args, driver):
         super().__init__(args, driver, "/home/joinmarket")
 
-    def default_scenario(self):
-        return SCENARIO
+    def default_scenario(self) -> ScenarioConfig:
+        return ScenarioConfig(
+            name="default",
+            default_version="joinmarket",
+            rounds=5,  # the number of coinjoins after which the simulation stops (0 for no limit)
+            blocks=0,  # the number of mined blocks after which the simulation stops (0 for no limit)
+            wallets=[
+                WalletConfig(
+                    funds=[200000, 50000],
+                    joinmarket=JoinMarketConfig(role=JoinMarketRole.TAKER)
+                ),
+                WalletConfig(
+                    funds=[3000000],
+                    delay_blocks=2,
+                    joinmarket=JoinMarketConfig(role=JoinMarketRole.TAKER)
+                ),
+                WalletConfig(
+                    funds=[1000000, 500000],
+                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                ),
+                WalletConfig(
+                    funds=[3000000, 15000],
+                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                ),
+                WalletConfig(
+                    funds=[1000000, 500000],
+                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                ),
+                WalletConfig(
+                    funds=[3000000, 600000],
+                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                ),
+                WalletConfig(
+                    funds=[200000, 50000],
+                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                ),
+                WalletConfig(
+                    funds=[3000000],
+                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                ),
+                WalletConfig(
+                    funds=[1000000, 500000],
+                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                ),
+                WalletConfig(
+                    funds=[3000000, 15000],
+                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                ),
+                WalletConfig(
+                    funds=[1000000, 500000],
+                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                ),
+                WalletConfig(
+                    funds=[3000000, 600000],
+                    joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER)
+                ),
+            ],
+        )
 
     def prepare_images(self):
         print("Preparing images")
@@ -41,6 +76,8 @@ class JoinmarketEngine(EngineBase):
 
 
     def start_engine_infrastructure(self):
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
         self.node.create_wallet("jm_wallet")
         print("- created jm_wallet in BitcoinCore")
 
@@ -94,7 +131,7 @@ class JoinmarketEngine(EngineBase):
         return JoinMarketClientServer(name=name, port=port, type=type)
 
 
-    def start_client(self, idx: int, wallet=None):
+    def start_client(self, idx: int, wallet: WalletConfig):
         name = f"jcs-{idx:03}"
         port = 28184 + idx
         try:
@@ -112,11 +149,14 @@ class JoinmarketEngine(EngineBase):
 
         print(f"driver starting {name}")
 
-        delay = (wallet.get("delay_blocks", 0), wallet.get("delay_rounds", 0))
-        stop = (wallet.get("stop_blocks", 0), wallet.get("stop_rounds", 0))
-        type = wallet.get("type", "maker")
+        delay = (wallet.delay_blocks or 0, wallet.delay_rounds or 0)
+        stop = (wallet.stop_blocks or 0, wallet.stop_rounds or 0)
+        
+        # Get JoinMarket role
+        joinmarket_config = wallet.joinmarket
+        role_str = joinmarket_config.role.value if joinmarket_config and joinmarket_config.role else "maker"
 
-        client = JoinMarketClientServer(name=name, port=port, type=type, delay=delay, stop=stop)
+        client = JoinMarketClientServer(name=name, port=port, type=role_str, delay=delay, stop=stop)
 
 
         start = time()
@@ -160,17 +200,20 @@ class JoinmarketEngine(EngineBase):
 
 
     def run_engine(self):
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+            
         self.update_invoice_payments()
         initial_block = self.node.get_block_count()
         for i in range(5):
             # Takers need 3 confirmations of transactions for the sourcing commitments
             self.node.mine_block()
 
-        while ( self.scenario["rounds"] == 0 or self.current_round < self.scenario["rounds"] ) and (
-                self.scenario["blocks"] == 0 or self.current_block < self.scenario["blocks"]):
+        while (self.scenario.rounds == 0 or self.current_round < self.scenario.rounds) and (
+                self.scenario.blocks == 0 or self.current_block < self.scenario.blocks):
             for _ in range(3):
                 try:
-                    self.current_block = self.node.get_block_count() - initial_block
+                    self.current_block = self.node.get_block_count() - initial_block  # type: ignore
                     break
                 except Exception as e:
                     print(f"- could not get blocks".ljust(60), end="\r")

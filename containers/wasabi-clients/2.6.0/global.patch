@@ -1,0 +1,22 @@
+diff --git a/WalletWasabi.Daemon/Global.cs b/WalletWasabi.Daemon/Global.cs
+index 1234567..abcdefg 100644
+--- a/WalletWasabi.Daemon/Global.cs	2025-10-25 13:47:55.275419894 +0200
++++ a/WalletWasabi.Daemon/Global.cs	2025-10-25 13:47:43.010393435 +0200
+@@ -37,6 +37,7 @@
+ using WalletWasabi.Models;
+ using WalletWasabi.Wallets.Exchange;
+ using WalletWasabi.FeeRateEstimation;
++using WalletWasabi.Userfacing;
+ 
+ namespace WalletWasabi.Daemon;
+ 
+@@ -144,7 +145,8 @@
+ 		if (config.UseBitcoinRpc && !string.IsNullOrWhiteSpace(credentialString))
+ 		{
+ 			var bitcoinRpcEndPoint = config.GetBitcoinRpcEndPoint();
+-			BitcoinRpcClient = new RpcClientBase(new RPCClient(credentialString, bitcoinRpcEndPoint.ToString(), Network));
++			var endpointStringWithPort = bitcoinRpcEndPoint.ToString(Network.RPCPort);
++			BitcoinRpcClient = new RpcClientBase(new RPCClient(credentialString, endpointStringWithPort, Network));
+ 			HostedServices.Register<RpcMonitor>(() => new RpcMonitor(TimeSpan.FromSeconds(7), BitcoinRpcClient, EventBus), "RPC Monitor");
+ 
+ 			var supportsBlockFilters = BitcoinRpcClient.SupportsBlockFiltersAsync(CancellationToken.None).GetAwaiter().GetResult();

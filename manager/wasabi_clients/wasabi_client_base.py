@@ -25,7 +25,7 @@ class WasabiClientBase:
         self.delay = delay
         self.stop = stop
 
-    def _rpc(self, request, wallet=True, timeout=5, repeat=1):
+    def _rpc(self, request, wallet=True, timeout=5, repeat=1, wallet_name=None):
         request["jsonrpc"] = "2.0"
         request["id"] = "1"
 
@@ -35,7 +35,7 @@ class WasabiClientBase:
         for _ in range(repeat):
             try:
                 response = requests.post(
-                    f"http://{self.host}:{self.port}/{WALLET_NAME if wallet else ''}",
+                    f"http://{self.host}:{self.port}/{(wallet_name or WALLET_NAME) if wallet else ''}",
                     data=json.dumps(request),
                     proxies=dict(http=self.proxy),
                     timeout=timeout,
@@ -55,10 +55,10 @@ class WasabiClientBase:
         }
         return self._rpc(request, wallet=False)
 
-    def _create_wallet(self):
+    def _create_wallet(self, wallet_name: str | None = None):
         request = {
             "method": "createwallet",
-            "params": [WALLET_NAME, ""],
+            "params": [wallet_name or WALLET_NAME, ""],
         }
         return self._rpc(request)
 
@@ -67,13 +67,14 @@ class WasabiClientBase:
             "method": "getnewaddress",
             "params": ["label"],
         }
-        return self._rpc(request)["address"]
+        res = self._rpc(request)["address"]
+        return res
 
-    def get_balance(self, timeout=None):
+    def get_balance(self, timeout=None, wallet_name=None):
         request = {
             "method": "getwalletinfo",
         }
-        return self._rpc(request, timeout=timeout)["balance"]
+        return self._rpc(request, timeout=timeout, wallet_name=wallet_name)["balance"]
 
     def wait_wallet(self, timeout=None):
         start = time()

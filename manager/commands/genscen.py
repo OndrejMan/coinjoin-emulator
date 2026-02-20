@@ -6,22 +6,20 @@ import numpy.random
 import copy
 import random
 
-SCENARIO_TEMPLATE = {
-    "name": "template",
-    "rounds": 0,
-    "blocks": 0,
-    "backend": {
-        "MaxInputCountByRound": 400,
-        "MinInputCountByRoundMultiplier": 0.01,
+from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
+
+def create_backend_config(args):
+    """Create backend configuration dictionary."""
+    return {
+        "MaxInputCountByRound": args.max_coinjoin,
+        "MinInputCountByRoundMultiplier": args.min_coinjoin / args.max_coinjoin,
         "StandardInputRegistrationTimeout": "0d 0h 20m 0s",
         "ConnectionConfirmationTimeout": "0d 0h 6m 0s",
         "OutputRegistrationTimeout": "0d 0h 6m 0s",
         "TransactionSigningTimeout": "0d 0h 6m 0s",
         "FailFastTransactionSigningTimeout": "0d 0h 6m 0s",
         "RoundExpiryTimeout": "0d 0h 10m 0s",
-    },
-    "wallets": [],
-}
+    }
 
 
 def setup_parser(parser: argparse.ArgumentParser):
@@ -114,6 +112,9 @@ def format_name(args):
         return f"{args.distribution}-{args.type}-{args.client_count}"
     if args.type == "delayed-overmixing":
         return f"{args.distribution}-{args.type}-{args.client_count}"
+    
+    # Default fallback
+    return f"{args.distribution}-{args.type}-{args.client_count}"
 
 
 def prepare_skip_rounds(args):
@@ -159,96 +160,91 @@ def prepare_distribution(distribution):
     dist_name = distribution.split("[")[0]
     dist_params = None
     if "[" in distribution:
-        dist_params = map(float, distribution.split("[")[1].split("]")[0].split(","))
+        dist_params = list(map(float, distribution.split("[")[1].split("]")[0].split(",")))
 
     match dist_name:
         case "uniform":
-            dist_params = dist_params or [0.0, 10_000_000.0]
-            return lambda x: map(round, numpy.random.uniform(*dist_params, x))
+            params = dist_params or [0.0, 10_000_000.0]
+            return lambda x: map(round, numpy.random.uniform(params[0], params[1], x))
         case "pareto":
-            dist_params = dist_params or [1.16]
+            params = dist_params or [1.16]
             return lambda x: map(
-                round, numpy.random.pareto(*dist_params, x) * 1_000_000
+                round, numpy.random.pareto(params[0], x) * 1_000_000
             )
         case "lognorm":
             # parameters estimated from mainnet data of Wasabi 2.0 coinjoins
-            dist_params = dist_params or [14.1, 2.29]
-            return lambda x: map(round, numpy.random.lognormal(*dist_params, x))
+            params = dist_params or [14.1, 2.29]
+            return lambda x: map(round, numpy.random.lognormal(params[0], params[1], x))
         case _:
             return None
 
 
 def prepare_wallet(args, idx, distribution, skip_rounds):
-    wallet = dict()
+    """Create a WalletConfig object based on args and wallet type."""
+    funds = None
+    anon_score_target = None
+    redcoin_isolation = None
+    skip_rounds_list = None
 
     if args.type == "default":
-        wallet["funds"] = list(distribution(random.randint(1, 10)))
+        funds = list(distribution(random.randint(1, 10)))
         if idx < args.client_count // 5:
-            wallet["anon_score_target"] = random.randint(27, 75)
-            wallet["redcoin_isolation"] = True
+            anon_score_target = random.randint(27, 75)
+            redcoin_isolation = True
         else:
-            wallet["anon_score_target"] = 5
+            anon_score_target = 5
     elif args.type == "overmixing":
-        wallet["funds"] = list(distribution(random.randint(1, 10)))
+        funds = list(distribution(random.randint(1, 10)))
         if idx < args.client_count // 10:
-            wallet["anon_score_target"] = 1_000_000
+            anon_score_target = 1_000_000
         elif idx < args.client_count // 5:
-            wallet["anon_score_target"] = random.randint(27, 75)
-            wallet["redcoin_isolation"] = True
+            anon_score_target = random.randint(27, 75)
+            redcoin_isolation = True
         else:
-            wallet["anon_score_target"] = 5
+            anon_score_target = 5
     elif args.type == "delayed":
-        wallet["funds"] = list(distribution(random.randint(1, 10)))
-        wallet["skip_rounds"] = list(range(random.randint(1, 5)))
+        funds = list(distribution(random.randint(1, 10)))
+        skip_rounds_list = list(range(random.randint(1, 5)))
         if idx < args.client_count // 5:
-            wallet["anon_score_target"] = random.randint(27, 75)
-            wallet["redcoin_isolation"] = True
+            anon_score_target = random.randint(27, 75)
+            redcoin_isolation = True
         else:
-            wallet["anon_score_target"] = 5
+            anon_score_target = 5
     elif args.type == "delayed-overmixing":
-        wallet["funds"] = list(distribution(random.randint(1, 10)))
+        funds = list(distribution(random.randint(1, 10)))
         if idx < args.client_count // 10:
-            wallet["anon_score_target"] = 1_000_000
+            anon_score_target = 1_000_000
         elif idx < args.client_count // 5:
-            wallet["skip_rounds"] = list(range(random.randint(1, 5)))
-            wallet["anon_score_target"] = random.randint(27, 75)
-            wallet["redcoin_isolation"] = True
+            skip_rounds_list = list(range(random.randint(1, 5)))
+            anon_score_target = random.randint(27, 75)
+            redcoin_isolation = True
         else:
-            wallet["skip_rounds"] = list(range(random.randint(1, 5)))
-            wallet["anon_score_target"] = 5
+            skip_rounds_list = list(range(random.randint(1, 5)))
+            anon_score_target = 5
     else:
-        wallet["funds"] = list(distribution(args.utxo_count))
+        funds = list(distribution(args.utxo_count))
 
     if skip_rounds:
-        wallet["skip_rounds"] = skip_rounds(idx)
+        skip_rounds_list = skip_rounds(idx)
 
-    return wallet
+    # Create Wasabi-specific config if any Wasabi settings are present
+    wasabi_config = None
+    if anon_score_target is not None or redcoin_isolation is not None or skip_rounds_list is not None:
+        wasabi_config = WasabiConfig(
+            anon_score_target=anon_score_target,
+            redcoin_isolation=redcoin_isolation,
+            skip_rounds=skip_rounds_list
+        )
+
+    return WalletConfig(
+        funds=funds,
+        wasabi=wasabi_config
+    )
 
 
 def handler(args):
     print("Generating scenario...")
-    scenario = copy.deepcopy(SCENARIO_TEMPLATE)
-    scenario["name"] = format_name(args)
-
-    scenario["backend"]["MaxInputCountByRound"] = args.max_coinjoin
-    scenario["backend"]["MinInputCountByRoundMultiplier"] = (
-        args.min_coinjoin / args.max_coinjoin
-    )
-    scenario["rounds"] = args.stop_round
-    scenario["blocks"] = args.stop_block
-
-    if args.distributor_version:
-        scenario["distributor_version"] = args.distributor_version
-
-    if args.client_version:
-        scenario["default_version"] = args.client_version
-
-    if args.anon_score_target:
-        scenario["default_anon_score_target"] = args.anon_score_target
-
-    if args.redcoin_isolation:
-        scenario["default_redcoin_isolation"] = args.redcoin_isolation
-
+    
     distribution = prepare_distribution(args.distribution)
     if not distribution:
         print("- invalid distribution")
@@ -256,22 +252,42 @@ def handler(args):
 
     skip_rounds = prepare_skip_rounds(args)
 
+    # Generate wallets
+    wallets = []
     for idx in range(args.client_count):
-        scenario["wallets"].append(prepare_wallet(args, idx, distribution, skip_rounds))
+        wallets.append(prepare_wallet(args, idx, distribution, skip_rounds))
 
-    print(
-        f"- requires {(sum(map(lambda x: sum(x['funds']), scenario['wallets'])) / 100_000_000):0.8f} BTC"
+    # Create scenario
+    scenario = ScenarioConfig(
+        name=format_name(args),
+        rounds=args.stop_round,
+        blocks=args.stop_block,
+        default_version=args.client_version or "2.0.4",
+        wallets=wallets,
+        distributor_version=args.distributor_version,
+        default_anon_score_target=args.anon_score_target,
+        default_redcoin_isolation=args.redcoin_isolation,
+        backend=create_backend_config(args)
     )
 
+    # Calculate total BTC required
+    total_funds = 0
+    for wallet in scenario.wallets:
+        for fund in wallet.funds:
+            if isinstance(fund, int):
+                total_funds += fund
+            # FundConfig objects would have fund.value, but genscen only creates int funds
+    print(f"- requires {total_funds / 100_000_000:0.8f} BTC")
+
     os.makedirs(args.out_dir, exist_ok=True)
-    if os.path.exists(f"{args.out_dir}/{scenario['name']}.json") and not args.force:
-        print(f"- file {args.out_dir}/{scenario['name']}.json already exists")
+    if os.path.exists(f"{args.out_dir}/{scenario.name}.json") and not args.force:
+        print(f"- file {args.out_dir}/{scenario.name}.json already exists")
         sys.exit(1)
 
-    with open(f"{args.out_dir}/{scenario['name']}.json", "w") as f:
-        json.dump(scenario, f, indent=2)
+    with open(f"{args.out_dir}/{scenario.name}.json", "w") as f:
+        json.dump(scenario.to_dict(), f, indent=2)
 
-    print(f"- saved to {args.out_dir}/{scenario['name']}.json")
+    print(f"- saved to {args.out_dir}/{scenario.name}.json")
 
 
 if __name__ == "__main__":

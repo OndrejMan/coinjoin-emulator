@@ -2,13 +2,15 @@ from functools import cached_property
 from io import BytesIO
 import os
 import tarfile
+
+from docker.models.containers import Container
 from . import Driver
 import docker
 
 
 class DockerDriver(Driver):
     def __init__(self, namespace="coinjoin"):
-        self.client = docker.from_env()
+        self.client: docker.DockerClient = docker.from_env()
         self._namespace = namespace
 
     @cached_property
@@ -88,12 +90,19 @@ class DockerDriver(Driver):
         self.client.containers.get(name).put_archive(os.path.dirname(dst_path), fo)
 
     def cleanup(self, image_prefix=""):
-        
         containers = []
         for container in self.client.containers.list():
             if any(
                 x in container.attrs["Config"]["Image"]
-                for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-client", "joinmarket-client-server")
+                for x in (
+                    "irc-server",
+                    "btc-node",
+                    "wasabi-backend",
+                    "wasabi-client",
+                    "wasabi-client-distributor",
+                    "wasabi-coordinator",
+                    "joinmarket-client-server",
+                )
             ):
                 containers.append(container)
 

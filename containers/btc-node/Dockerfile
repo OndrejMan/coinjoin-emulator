@@ -1,4 +1,4 @@
-FROM ruimarinho/bitcoin-core:23-alpine
+FROM bitcoin/bitcoin:29.1-alpine
 RUN apk add curl jq
 USER 100:101
 COPY --chown=100:101 bitcoin.conf /home/bitcoin/.bitcoin/bitcoin.conf

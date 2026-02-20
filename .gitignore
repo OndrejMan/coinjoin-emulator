@@ -1,3 +1,6 @@
 __pycache__/
 mounts/
 logs/
+
+.python-version
+pyrightconfig.json

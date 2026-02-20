@@ -1,0 +1,13 @@
+diff --git a/WalletWasabi/Logging/Logger.cs b/WalletWasabi/Logging/Logger.cs
+index eb096be1e..7e73d7371 100644
+--- a/WalletWasabi/Logging/Logger.cs
++++ b/WalletWasabi/Logging/Logger.cs
+@@ -27,7 +27,7 @@ public static class Logger
+ 
+ 	private static int LoggingFailedCount = 0;
+ 
+-	private static LogLevel MinimumLevel { get; set; } = LogLevel.Critical;
++	private static LogLevel MinimumLevel { get; set; } = LogLevel.Debug;
+ 
+ 	private static HashSet<LogMode> Modes { get; } = new HashSet<LogMode>();
+ 

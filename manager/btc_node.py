@@ -13,12 +13,11 @@ class BtcNode:
         self.proxy = proxy
 
     def _rpc(self, request, wallet=None):
-        request["jsonrpc"] = "2.0"
+        request["jsonrpc"] = "1.0"
         request["id"] = "1"
         try:
             response = requests.post(
-                f"http://{self.host}:{self.port}"
-                + ("/wallet/" + WALLET if wallet else ""),
+                f"http://{self.host}:{self.port}" + ("/wallet/" + WALLET if wallet else ""),
                 data=json.dumps(request),
                 auth=("user", "password"),
                 proxies=dict(http=self.proxy),
@@ -79,11 +78,14 @@ class BtcNode:
         while True:
             try:
                 block_count = self.get_block_count()
-                if block_count > 100:
+                if block_count > 200:
                     break
             except Exception:
                 pass
             sleep(0.1)
+
+        # wait for the fee-building transactions
+        sleep(20)
 
     def create_wallet(self, wallet):
         request = {
