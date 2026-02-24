@@ -1,8 +1,8 @@
 {
   "Network": "RegTest",
   "BitcoinRpcConnectionString": "user:password",
-  "MainNetBitcoinCoreRpcEndPoint": "btc-node:8332",
-  "TestNetBitcoinCoreRpcEndPoint": "btc-node:48332",
-  "RegTestBitcoinCoreRpcEndPoint": "btc-node:18443",
+  "MainNetBitcoinCoreRpcEndPoint": "${ADDR_BTC_NODE}:8332",
+  "TestNetBitcoinCoreRpcEndPoint": "${ADDR_BTC_NODE}:48332",
+  "RegTestBitcoinCoreRpcEndPoint": "${ADDR_BTC_NODE}:18443",
   "FilterType": "legacy"
 }

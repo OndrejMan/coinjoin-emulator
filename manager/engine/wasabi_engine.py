@@ -266,7 +266,7 @@ class WasabiEngine(EngineBase):
         )
 
         start = time()
-        if not client.wait_wallet(timeout=60):
+        if not client.wait_wallet(timeout=120):
             print(f"- could not start {name} (application timeout {time() - start} seconds)")
             return None
         print(f"- started {client.name} (wait took {time() - start} seconds)")

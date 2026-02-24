@@ -232,11 +232,12 @@
   "backend": {
     "MaxInputCountByRound": 100,
     "MinInputCountByRoundMultiplier": 0.02,
-    "StandardInputRegistrationTimeout": "0d 0h 20m 0s",
-    "ConnectionConfirmationTimeout": "0d 0h 6m 0s",
-    "OutputRegistrationTimeout": "0d 0h 6m 0s",
-    "TransactionSigningTimeout": "0d 0h 6m 0s",
-    "FailFastTransactionSigningTimeout": "0d 0h 6m 0s",
-    "RoundExpiryTimeout": "0d 0h 10m 0s"
+    "StandardInputRegistrationTimeout": "0d 0h 6m 0s",
+    "ConnectionConfirmationTimeout": "0d 0h 1m 30s",
+    "OutputRegistrationTimeout": "0d 0h 1m 30s",
+    "TransactionSigningTimeout": "0d 0h 2m 00s",
+    "FailFastTransactionSigningTimeout": "0d 0h 2m 0s",
+    "DoSMinTimeInPrison": "99d 0h 0m 0s",
+    "RoundExpiryTimeout": "0d 0h 1m 0s"
   }
 }

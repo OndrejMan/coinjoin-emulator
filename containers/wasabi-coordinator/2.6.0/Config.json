@@ -1,6 +1,6 @@
 {
   "Network": "RegTest",
-  "BitcoinCoreRpcEndPoint": "btc-node:18443",
+  "BitcoinCoreRpcEndPoint": "${ADDR_BTC_NODE}:18443",
   "BitcoinRpcConnectionString": "user:password",
   "ConfirmationTarget": 108,
   "DoSSeverity": "0.10",
