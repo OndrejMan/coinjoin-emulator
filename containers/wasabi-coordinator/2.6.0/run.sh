@@ -15,5 +15,5 @@ cat /home/wasabi/.walletwasabi/coordinator/Config.json
 cp /home/wasabi/Config.json /home/wasabi/.walletwasabi/coordinator/Config.json
 cat /home/wasabi/.walletwasabi/coordinator/Config.json
 
-sleep 3
+sleep 15
 ./WalletWasabi.Coordinator --loglevel=trace

@@ -12,7 +12,9 @@ cat /home/wasabi/.walletwasabi/backend/Config.json
 cp /home/wasabi/Config.json /home/wasabi/.walletwasabi/backend/Config.json
 
 cat /home/wasabi/.walletwasabi/backend/Config.json
-sleep 2
-timeout 10 ./WalletWasabi.Backend
+sleep 15
+timeout 30 ./WalletWasabi.Backend
+
+sleep 15
 
 ./WalletWasabi.Backend
