@@ -9,7 +9,7 @@ rm -rf /home/wasabi/.walletwasabi
 ./WalletWasabi.Backend
 
 cat /home/wasabi/.walletwasabi/backend/Config.json
-cp /home/wasabi/Config.json /home/wasabi/.walletwasabi/backend/Config.json
+( echo "cat <<EOF" ; cat /home/wasabi/Config.json ; echo EOF ) | sh > /home/wasabi/.walletwasabi/backend/Config.json
 
 cat /home/wasabi/.walletwasabi/backend/Config.json
 sleep 15

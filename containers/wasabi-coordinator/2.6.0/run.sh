@@ -12,7 +12,8 @@ rm -rf /home/wasabi/.walletwasabi
 
 ./WalletWasabi.Coordinator
 cat /home/wasabi/.walletwasabi/coordinator/Config.json
-cp /home/wasabi/Config.json /home/wasabi/.walletwasabi/coordinator/Config.json
+( echo "cat <<EOF" ; cat /home/wasabi/Config.json ; echo EOF ) | sh > /home/wasabi/.walletwasabi/coordinator/Config.json
+
 cat /home/wasabi/.walletwasabi/coordinator/Config.json
 
 sleep 15
