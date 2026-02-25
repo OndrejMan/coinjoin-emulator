@@ -234,7 +234,7 @@ class KubernetesDriver(Driver):
         for pod in pods.items:
             if any(
                 x in pod.metadata.name
-                for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-client", "joinmarket-client-server")
+                for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-coordinator", "wasabi-client", "joinmarket-client-server")
             ):
                 try:
                     self.client.delete_namespaced_pod(
@@ -246,7 +246,7 @@ class KubernetesDriver(Driver):
         for service in services.items:
             if any(
                 x in service.metadata.name
-                for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-client", "joinmarket-client-server")
+                for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-coordinator", "wasabi-client", "joinmarket-client-server")
             ):
                 try:
                     self.client.delete_namespaced_service(
