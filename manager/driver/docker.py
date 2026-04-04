@@ -39,7 +39,14 @@ class DockerDriver(Driver):
         skip_ip=False,
         cpu=0.1,
         memory=768,
+        volumes: dict | None = None
     ):
+        # try:
+        #     old_container = self.client.containers.get(name)
+        #     old_container.remove(force=True)
+        # except docker.errors.NotFound:
+        #     pass
+
         self.client.containers.run(
             image,
             detach=True,
@@ -49,6 +56,7 @@ class DockerDriver(Driver):
             network=self.network.id,
             ports=ports or {},
             environment=env or {},
+            volumes=volumes
         )
         return "", ports
 

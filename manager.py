@@ -29,7 +29,7 @@ def run():
         engine.stop_coinjoins()
         if not args.no_logs:
             engine.store_logs()
-        driver.cleanup(args.image_prefix)
+        driver.cleanup(args.image_prefix) # todo
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run coinjoin simulation setup")
@@ -86,6 +86,9 @@ if __name__ == "__main__":
     )
     run_subparser.add_argument(
         "--scenario", type=str, help="scenario specification file"
+    )
+    run_subparser.add_argument(
+        "--btcFolder", type=str, help="folder with btc node data", default=""
     )
     run_subparser.add_argument(
         "--btc-node-ip", type=str, help="override btc-node ip", default=""

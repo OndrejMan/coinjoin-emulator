@@ -1,5 +1,6 @@
 import os
 from traceback import print_exception
+from tracemalloc import stop
 
 from manager.engine.engine_base import EngineBase
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
@@ -32,6 +33,32 @@ class WasabiEngine(EngineBase):
         super().__init__(args, driver, "/home/wasabi/.walletwasabi/backend/")
 
     def default_scenario(self) -> ScenarioConfig:
+        # custom_wallets = [
+        #     WalletConfig(funds=[200000, 50000], wasabi=WasabiConfig(anon_score_target=7)),
+        #     WalletConfig(funds=[3000000], wasabi=WasabiConfig(redcoin_isolation=True)),
+        #     WalletConfig(funds=[1000000, 500000], wasabi=WasabiConfig(skip_rounds=[0, 1, 2])),
+        # ]
+        
+        # bulk_wallets = []
+        # for _ in range(10):
+        #     # A list of 10 different UTXO amounts for a single wallet
+        #     heavy_funds = [1000000, 500000, 200000, 100000, 50000, 600000, 300000, 150000, 75000, 25000]
+        #     bulk_wallets.append(WalletConfig(funds=heavy_funds))
+        
+        # all_wallets = custom_wallets + bulk_wallets
+
+        # return ScenarioConfig(
+        #     name="default",
+        #     rounds=10, 
+        #     blocks=0,  
+        #     default_version="2.6.0",
+        #     wallets=all_wallets,
+            
+        #     backend={
+        #         "StandardInputRegistrationTimeout": "0d 0h 5m 0s" 
+        #     }
+        # )
+
         return ScenarioConfig(
             name="default",
             rounds=10,  # the number of coinjoins after which the simulation stops (0 for no limit)
@@ -319,7 +346,9 @@ class WasabiEngine(EngineBase):
         client.stop_coinjoin()
 
     def update_coinjoins(self):
+        print(f"- updating coinjoins...".ljust(60), end="\r")
         def start_condition(client):
+            print(f"Checking client {client.name} with delay {client.delay} and stop {client.stop} against current block {self.current_block} and round {self.current_round}")
             if client.stop[0] > 0 and self.current_block >= client.stop[0]:
                 return False
             if client.stop[1] > 0 and self.current_round >= client.stop[1]:
@@ -332,16 +361,21 @@ class WasabiEngine(EngineBase):
 
         start, stop = [], []
         for client in self.clients:
+            print(f"Client {client.name} is currently ")
             if start_condition(client):
                 start.append(client)
             else:
                 stop.append(client)
 
+        print(f"- {len(start)} coinjoins to start, {len(stop)} coinjoins to stop".ljust(60), end="\r")
         with multiprocessing.pool.ThreadPool() as pool:
             pool.starmap(self.start_coinjoin, ((client,) for client in start))
 
+        print(f"- coinjoins updated".ljust(60), end="\r")
         with multiprocessing.pool.ThreadPool() as pool:
             pool.starmap(self.stop_coinjoin, ((client,) for client in stop))
+
+        print(f"- coinjoins updated".ljust(60), end="\r")
 
     def run_engine(self):
         print("Running simulation")
