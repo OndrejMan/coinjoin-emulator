@@ -14,8 +14,8 @@ permissions:
 jobs:
   build-and-push:
     runs-on: self-hosted
-    
-  steps:
+
+    steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
