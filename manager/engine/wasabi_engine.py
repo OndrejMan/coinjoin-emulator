@@ -1,5 +1,6 @@
 import os
 from traceback import print_exception
+from tracemalloc import stop
 
 from manager.engine.engine_base import EngineBase
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
@@ -319,7 +320,9 @@ class WasabiEngine(EngineBase):
         client.stop_coinjoin()
 
     def update_coinjoins(self):
+        print(f"- updating coinjoins...".ljust(60), end="\r")
         def start_condition(client):
+            print(f"Checking client {client.name} with delay {client.delay} and stop {client.stop} against current block {self.current_block} and round {self.current_round}")
             if client.stop[0] > 0 and self.current_block >= client.stop[0]:
                 return False
             if client.stop[1] > 0 and self.current_round >= client.stop[1]:
@@ -332,16 +335,21 @@ class WasabiEngine(EngineBase):
 
         start, stop = [], []
         for client in self.clients:
+            print(f"Client {client.name} is currently ")
             if start_condition(client):
                 start.append(client)
             else:
                 stop.append(client)
 
+        print(f"- {len(start)} coinjoins to start, {len(stop)} coinjoins to stop".ljust(60), end="\r")
         with multiprocessing.pool.ThreadPool() as pool:
             pool.starmap(self.start_coinjoin, ((client,) for client in start))
 
+        print(f"- coinjoins updated".ljust(60), end="\r")
         with multiprocessing.pool.ThreadPool() as pool:
             pool.starmap(self.stop_coinjoin, ((client,) for client in stop))
+
+        print(f"- coinjoins updated".ljust(60), end="\r")
 
     def run_engine(self):
         print("Running simulation")

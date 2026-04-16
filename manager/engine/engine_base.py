@@ -73,20 +73,37 @@ class EngineBase:
         self.start_distributor()
 
     def start_btc_node(self):
+        node_volumes = None
+        if self.args.btcFolder:
+            absolute_host_path = os.path.abspath(self.args.btcFolder)
+            print(f"- mounting external btc-data from: {absolute_host_path}")
+            node_volumes = {
+                absolute_host_path: {
+                    'bind': '/home/bitcoin/data', 
+                    'mode': 'rw'
+                }
+            }
+        else:
+            print("- no btcFolder provided; using internal container storage")
+
+        print("- starting btc-node")
         btc_node_ip, btc_node_ports = self.driver.run(
             "btc-node",
             f"{self.args.image_prefix}btc-node",
             ports={18443: 18443, 18444: 18444},
             cpu=4.0,
             memory=8192,
+            volumes=node_volumes
         )
 
+        print("- middle btc-node")
         self.node = BtcNode(
             host=btc_node_ip if self.args.proxy else self.args.control_ip,
             port=18443 if self.args.proxy else btc_node_ports[18443],
             internal_ip=btc_node_ip,
             proxy=self.args.proxy,
         )
+        print("- waiting btc-node")
         self.node.wait_ready()
         print("- started btc-node")
 
@@ -222,6 +239,8 @@ class EngineBase:
         due = list(filter(lambda x: x[0] <= self.current_block and x[1] <= self.current_round, self.invoices.keys()))
         for i in due:
             self.pay_invoices(self.invoices.pop(i, []))
+            print(f"- paid invoices for block {i[0]} and round {i[1]}")
+        print(f"- {len(self.invoices)} invoices still pending")
 
     def prepare_invoices(self, wallets: list[WalletConfig]):
         print("Preparing invoices")
@@ -262,6 +281,7 @@ class EngineBase:
                         if str(result) == "timeout":
                             print("- transaction timeout")
                             continue
+                        print(f"- transaction sent with txid {result}")
                         break
                     except Exception as e:
                         # https://github.com/zkSNACKs/WalletWasabi/issues/12764
@@ -272,6 +292,7 @@ class EngineBase:
                 else:
                     print("- invoice payment failed")
                     raise Exception("Invoice payment failed")
+                print(f"- paid batch of {len(batch)} invoices")
 
         except Exception as e:
             print("- invoice payment failed")

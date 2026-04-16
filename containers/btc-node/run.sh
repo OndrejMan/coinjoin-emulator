@@ -1,3 +1,3 @@
 #!/bin/sh
 ./mine.sh &
-bitcoind -conf=/home/bitcoin/.bitcoin/bitcoin.conf -datadir=/home/bitcoin/data -printtoconsole -regtest -maxconnections=1024
+bitcoind -conf=/home/bitcoin/.bitcoin/bitcoin.conf -datadir=/home/bitcoin/data -printtoconsole -regtest -maxconnections=1024 -blocksxor=0
