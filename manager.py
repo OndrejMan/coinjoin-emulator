@@ -7,6 +7,9 @@ import sys
 import argparse
 
 
+DEFAULT_IMAGE_PREFIX = "ghcr.io/ondrejman/"
+
+
 args: argparse.Namespace | None = None
 engine: EngineBase | None = None
 versions = set()
@@ -55,7 +58,7 @@ if __name__ == "__main__":
     )
     console_subparser.add_argument("--namespace", type=str, default="coinjoin")
     console_subparser.add_argument(
-        "--image-prefix", type=str, default="", help="image prefix"
+        "--image-prefix", type=str, default=DEFAULT_IMAGE_PREFIX, help="image prefix"
     )
     console_subparser.add_argument("--proxy", type=str, default="")
     console_subparser.add_argument(
@@ -74,7 +77,7 @@ if __name__ == "__main__":
     )
     build_subparser.add_argument("--namespace", type=str, default="coinjoin")
     build_subparser.add_argument(
-        "--image-prefix", type=str, default="", help="image prefix"
+        "--image-prefix", type=str, default=DEFAULT_IMAGE_PREFIX, help="image prefix"
     )
 
     run_subparser = subparsers.add_parser("run", help="run simulation")
@@ -82,7 +85,7 @@ if __name__ == "__main__":
         "--force-rebuild", action="store_true", help="force rebuild of images"
     )
     run_subparser.add_argument(
-        "--image-prefix", type=str, default="", help="image prefix"
+        "--image-prefix", type=str, default=DEFAULT_IMAGE_PREFIX, help="image prefix"
     )
     run_subparser.add_argument(
         "--scenario", type=str, help="scenario specification file"
@@ -113,7 +116,7 @@ if __name__ == "__main__":
     )
     clean_subparser.add_argument("--proxy", type=str, default="")
     clean_subparser.add_argument(
-        "--image-prefix", type=str, default="", help="image prefix"
+        "--image-prefix", type=str, default=DEFAULT_IMAGE_PREFIX, help="image prefix"
     )
 
     genscen_subparser = subparsers.add_parser("genscen", help="generate scenario file")
