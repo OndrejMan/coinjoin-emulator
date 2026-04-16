@@ -33,32 +33,6 @@ class WasabiEngine(EngineBase):
         super().__init__(args, driver, "/home/wasabi/.walletwasabi/backend/")
 
     def default_scenario(self) -> ScenarioConfig:
-        # custom_wallets = [
-        #     WalletConfig(funds=[200000, 50000], wasabi=WasabiConfig(anon_score_target=7)),
-        #     WalletConfig(funds=[3000000], wasabi=WasabiConfig(redcoin_isolation=True)),
-        #     WalletConfig(funds=[1000000, 500000], wasabi=WasabiConfig(skip_rounds=[0, 1, 2])),
-        # ]
-        
-        # bulk_wallets = []
-        # for _ in range(10):
-        #     # A list of 10 different UTXO amounts for a single wallet
-        #     heavy_funds = [1000000, 500000, 200000, 100000, 50000, 600000, 300000, 150000, 75000, 25000]
-        #     bulk_wallets.append(WalletConfig(funds=heavy_funds))
-        
-        # all_wallets = custom_wallets + bulk_wallets
-
-        # return ScenarioConfig(
-        #     name="default",
-        #     rounds=10, 
-        #     blocks=0,  
-        #     default_version="2.6.0",
-        #     wallets=all_wallets,
-            
-        #     backend={
-        #         "StandardInputRegistrationTimeout": "0d 0h 5m 0s" 
-        #     }
-        # )
-
         return ScenarioConfig(
             name="default",
             rounds=10,  # the number of coinjoins after which the simulation stops (0 for no limit)
