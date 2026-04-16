@@ -34,6 +34,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        
+      # ADDED: Convert the repository owner to lowercase using bash parameter expansion
+      - name: Set lowercase repository owner
+        run: echo "REPO_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -50,4 +55,5 @@ jobs:
           context: ./containers/wasabi-clients/${{ matrix.version }}
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/${{ github.repository_owner }}/wasabi-client:${{ matrix.version }}
+          # UPDATED: Replaced github.repository_owner with the lowercase env variable
+          tags: ghcr.io/${{ env.REPO_OWNER }}/wasabi-client:${{ matrix.version }}
