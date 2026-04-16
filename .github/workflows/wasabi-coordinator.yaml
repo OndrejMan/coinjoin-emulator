@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'containers/wasabi-coordinator/**'
 
 permissions:
   contents: read
