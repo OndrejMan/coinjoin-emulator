@@ -4,8 +4,8 @@ on:
 	push:
 		branches:
 			- main
-		paths:
-			- "containers/wasabi-clients/**"
+		# paths:
+		# 	- "containers/wasabi-clients/**"
 
 permissions:
 	contents: read
