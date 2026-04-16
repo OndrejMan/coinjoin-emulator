@@ -1,6 +1,7 @@
 name: Build and Push wasabi-coordinator to GHCR
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main

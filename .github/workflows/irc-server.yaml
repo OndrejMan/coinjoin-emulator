@@ -1,6 +1,7 @@
 name: Build and Push irc-server to GHCR
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main

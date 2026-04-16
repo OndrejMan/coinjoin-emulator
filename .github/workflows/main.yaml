@@ -2,6 +2,7 @@ name: Build and Push to GHCR
 
 # Trigger the workflow when code is pushed to the main branch
 on:
+  workflow_dispatch:
   push:
     branches:
       - main 
