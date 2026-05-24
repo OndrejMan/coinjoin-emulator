@@ -14,6 +14,23 @@ args: argparse.Namespace | None = None
 engine: EngineBase | None = None
 versions = set()
 
+def download_btc_data(dest_path: str):
+    """Download raw Bitcoin blockchain data from the btc-node container.
+    
+    This is used in the Kubernetes flow: after emulation finishes on k8s,
+    the raw chain data is downloaded locally so blocksci can analyze it.
+    """
+    import os
+    os.makedirs(dest_path, exist_ok=True)
+    print(f"Downloading btc-node data to {dest_path}")
+    try:
+        driver.download("btc-node", "/home/bitcoin/data/", dest_path)
+        print(f"- btc-node data downloaded to {dest_path}")
+    except Exception as e:
+        print(f"- failed to download btc-node data: {e}", file=sys.stderr)
+        raise
+
+
 def run():
     if engine is None:
         raise RuntimeError("Engine is not initialized")
@@ -32,6 +49,8 @@ def run():
         engine.stop_coinjoins()
         if not args.no_logs:
             engine.store_logs()
+        if args.download_btc_data:
+            download_btc_data(args.download_btc_data)
         driver.cleanup(args.image_prefix) # todo
 
 if __name__ == "__main__":
@@ -108,6 +127,12 @@ if __name__ == "__main__":
     run_subparser.add_argument("--proxy", type=str, default="")
     run_subparser.add_argument("--namespace", type=str, default="coinjoin")
     run_subparser.add_argument("--reuse-namespace", action="store_true", default=False)
+    run_subparser.add_argument(
+        "--download-btc-data",
+        type=str,
+        default="",
+        help="Download raw btc-node blockchain data to this path before cleanup (for Kubernetes workflow)",
+    )
 
     clean_subparser = subparsers.add_parser("clean", help="clean up")
     clean_subparser.add_argument("--namespace", type=str, default="coinjoin")
