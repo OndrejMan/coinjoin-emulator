@@ -4,7 +4,7 @@ A container-based setup for the emulation of CoinJoin transactions on RegTest ne
 
 ## Usage
 
-1. Install [Docker](https://docker.com/) and [Python](http://python.org/).
+1. Install [Docker](https://docker.com/) or [Podman](https://podman.io/) and [Python](http://python.org/).
 2. Clone the repository `git clone --recurse-submodules https://github.com/crocs-muni/coinjoin-emulator`.
 3. Install dependencies: `pip install -r requirements.txt`.
 4. Run the default scenario with the default driver: `python manager.py run`.
@@ -83,11 +83,9 @@ The default driver is `docker`. Running `docker` requires [Docker](https://www.d
 
 #### Podman
 
-*Podman support will be likely **removed** in the future versions.*
+To run the simulation using `podman`, specify it as driver using `--driver podman`, for example `python manager.py --driver podman run`.
 
-To run the simulation using `podman`, specify it as driver using `--driver podman` option.
-
-The driver requires [Podman](https://podman.io/) being installed and you may also need to override default IP addresses to communicate via localhost using `--control-ip` and `--wasabi-backend-ip` options. 
+The driver requires the [Podman](https://podman.io/) CLI. You may also need to override default IP addresses to communicate via localhost using `--control-ip` and `--wasabi-backend-ip` options.
 
 
 #### Kubernetes

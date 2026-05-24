@@ -55,10 +55,14 @@ class DockerDriver(Driver):
             hostname=name,
             network=self.network.id,
             ports=ports or {},
-            environment=env or {},
-            volumes=volumes
+            environment={
+                key: value
+                for key, value in (env or {}).items()
+                if value is not None
+            },
+            volumes=volumes,
         )
-        return "", ports
+        return name, ports or {}
 
     def stop(self, name):
         try:
