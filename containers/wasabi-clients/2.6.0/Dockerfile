@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/sdk:8.0
+FROM mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
 RUN apt update && apt install -y patch
 

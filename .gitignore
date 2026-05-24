@@ -4,3 +4,11 @@ logs/
 
 .python-version
 pyrightconfig.json
+
+.DS_Store
+bin/
+lib/
+pyvenv.cfg
+venv/
+
+.vscode/

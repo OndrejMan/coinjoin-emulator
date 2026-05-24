@@ -1,27 +1,44 @@
-from io import BytesIO
-import os
-import tarfile
+import subprocess
+from functools import cached_property
+
 from . import Driver
-import podman
-import docker
 
 
 class PodmanDriver(Driver):
-    def __init__(self):
-        self.client = podman.PodmanClient()
+    def __init__(self, namespace="coinjoin"):
+        self._namespace = namespace
+
+    def _run(self, args, **kwargs):
+        return subprocess.run(["podman", *args], check=True, **kwargs)
+
+    @cached_property
+    def network(self):
+        exists = subprocess.run(
+            ["podman", "network", "exists", self._namespace],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if exists.returncode not in (0, 1):
+            exists.check_returncode()
+        if exists.returncode != 0:
+            self._run(["network", "create", self._namespace])
+        return self._namespace
 
     def has_image(self, name):
-        try:
-            docker.from_env().images.get(name)
-            return True
-        except docker.errors.ImageNotFound:
-            return False
+        result = subprocess.run(
+            ["podman", "image", "exists", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode not in (0, 1):
+            result.check_returncode()
+        return result.returncode == 0
 
     def build(self, name, path):
-        docker.from_env().images.build(path=path, tag=name, rm=True, nocache=True)
+        self._run(["build", "--rm", "--no-cache", "-t", name, path])
 
     def pull(self, name):
-        docker.from_env().images.pull(name)
+        self._run(["pull", name])
 
     def run(
         self,
@@ -32,66 +49,95 @@ class PodmanDriver(Driver):
         skip_ip=False,
         cpu=0.1,
         memory=768,
+        volumes: dict | None = None,
     ):
-        self.client.containers.run(
-            image,
-            detach=True,
-            auto_remove=True,
-            name=name,
-            hostname=name,
-            ports=ports or {},
-            environment=env or {},
-        )
-        return "", ports
+        command = [
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            name,
+            "--hostname",
+            name,
+            "--network",
+            self.network,
+        ]
+
+        for container_port, host_port in (ports or {}).items():
+            command.extend(["-p", f"{host_port}:{container_port}"])
+
+        for key, value in (env or {}).items():
+            if value is not None:
+                command.extend(["-e", f"{key}={value}"])
+
+        for host_path, mount in (volumes or {}).items():
+            bind_path = mount["bind"]
+            mode = mount.get("mode", "rw")
+            command.extend(["-v", f"{host_path}:{bind_path}:{mode}"])
+
+        command.append(image)
+        self._run(command)
+        return name, ports or {}
 
     def stop(self, name):
-        try:
-            self.client.containers.get(name).stop()
+        exists = subprocess.run(
+            ["podman", "container", "exists", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if exists.returncode not in (0, 1):
+            exists.check_returncode()
+        if exists.returncode == 0:
+            self._run(["stop", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             print(f"- stopped {name}")
-        except docker.errors.NotFound:
-            pass
 
     def download(self, name, src_path, dst_path):
         try:
-            stream, _ = docker.from_env().containers.get(name).get_archive(src_path)
-
-            fo = BytesIO()
-            for d in stream:
-                fo.write(d)
-            fo.seek(0)
-            with tarfile.open(fileobj=fo) as tar:
-                tar.extractall(dst_path)
-
-            print(f"- stored backend logs")
-        except:
-            print(f"- could not store backend logs")
+            self._run(["cp", f"{name}:{src_path}", dst_path])
+        except subprocess.CalledProcessError:
+            pass
 
     def peek(self, name, path):
-        stream, _ = docker.from_env().containers.get(name).get_archive(path)
-
-        fo = BytesIO()
-        for d in stream:
-            fo.write(d)
-        fo.seek(0)
-        with tarfile.open(fileobj=fo) as tar:
-            return tar.extractfile(os.path.basename(path)).read().decode()
+        result = self._run(["exec", name, "cat", path], capture_output=True, text=True)
+        return result.stdout
 
     def upload(self, name, src_path, dst_path):
-        fo = BytesIO()
-        with tarfile.open(fileobj=fo, mode="w") as tar:
-            tar.add(src_path, os.path.basename(dst_path))
-        fo.seek(0)
-        docker.from_env().containers.get(name).put_archive(
-            os.path.dirname(dst_path), fo
-        )
+        self._run(["cp", src_path, f"{name}:{dst_path}"])
 
     def cleanup(self, image_prefix=""):
+        try:
+            result = subprocess.run(
+                ["podman", "ps", "--format", "{{.Names}}\t{{.Image}}"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError:
+            return
+
         containers = []
-        for container in docker.from_env().containers.list():
+        for line in result.stdout.splitlines():
+            try:
+                name, image = line.split("\t", maxsplit=1)
+            except ValueError:
+                continue
             if any(
-                x in container.attrs["Config"]["Image"]
-                for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-client", "joinmarket-client-server")
+                marker in image
+                for marker in (
+                    "irc-server",
+                    "btc-node",
+                    "wasabi-backend",
+                    "wasabi-client",
+                    "wasabi-client-distributor",
+                    "wasabi-coordinator",
+                    "joinmarket-client-server",
+                )
             ):
-                containers.append(container)
-                
-        self.stop_many(map(lambda x: x.name, containers))
+                containers.append(name)
+
+        self.stop_many(containers)
+        subprocess.run(
+            ["podman", "network", "rm", self._namespace],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )

@@ -1,45 +1,59 @@
-name: Upload wasabi-coordinator
+name: Build and Push wasabi-coordinator to GHCR
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
     paths:
       - 'containers/wasabi-coordinator/**'
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   list-coordinator-versions:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
+      - name: Checkout repository
+        uses: actions/checkout@v4
       - name: List coordinator versions
         id: list-versions
         run: |
           cd containers/wasabi-coordinator
-          VERSIONS=$(ls -d */ | cut -f1 -d'/' | sort -V | jq -R . | jq -s . | tr -d '\n ')
-          echo "versions=$VERSIONS" >> "$GITHUB_OUTPUT"
+          VERSIONS_JSON=$(printf '%s\n' */ | cut -f1 -d'/' | sort -V | awk 'BEGIN { printf "[" } { printf "%s\"%s\"", sep, $0; sep = "," } END { print "]" }')
+          echo "versions=$VERSIONS_JSON" >> "$GITHUB_OUTPUT"
     outputs:
       versions: ${{ steps.list-versions.outputs.versions }}
 
-  docker:
+  build-and-push:
     needs: list-coordinator-versions
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     strategy:
       fail-fast: false
       matrix:
         version: ${{ fromJson(needs.list-coordinator-versions.outputs.versions) }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        # ADDED: Convert the repository owner to lowercase using bash parameter expansion
+      - name: Set lowercase repository owner
+        run: echo "REPO_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Login to Docker Hub
+      - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v5
         with:
-          context: "{{ defaultContext }}:containers/wasabi-coordinator/${{ matrix.version }}"
+          context: ./containers/wasabi-coordinator/${{ matrix.version }}
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/wasabi-coordinator:${{ matrix.version }}
+          platforms: linux/amd64,linux/arm64
+          tags: ghcr.io/${{ env.REPO_OWNER }}/wasabi-coordinator:${{ matrix.version }}
