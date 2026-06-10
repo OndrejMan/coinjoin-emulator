@@ -25,6 +25,7 @@ class Driver(ABC):
         skip_ip=False,
         cpu=0.1,
         memory=768,
+        volumes=None,
     ):
         pass
 

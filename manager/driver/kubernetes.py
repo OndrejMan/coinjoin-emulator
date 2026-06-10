@@ -45,11 +45,32 @@ class KubernetesDriver(Driver):
         skip_ip=False,
         cpu=0.1,
         memory=768,
+        volumes: dict | None = None,
     ):
         if ports is None:
             ports = {}
         if env is None:
             env = {}
+        volume_mounts = []
+        pod_volumes = []
+        for index, (host_path, mount) in enumerate((volumes or {}).items()):
+            volume_name = f"host-volume-{index}"
+            volume_mounts.append(
+                {
+                    "name": volume_name,
+                    "mountPath": mount["bind"],
+                    "readOnly": mount.get("mode") == "ro",
+                }
+            )
+            pod_volumes.append(
+                {
+                    "name": volume_name,
+                    "hostPath": {
+                        "path": host_path,
+                        "type": "DirectoryOrCreate",
+                    },
+                }
+            )
 
         pod_manifest = {
             "apiVersion": "v1",
@@ -75,6 +96,7 @@ class KubernetesDriver(Driver):
                             }
                             for k, v in env.items()
                         ],
+                        "volumeMounts": volume_mounts,
                         "securityContext": {
                             "allowPrivilegeEscalation": False,
                             "capabilities": {
@@ -97,6 +119,7 @@ class KubernetesDriver(Driver):
                         },
                     }
                 ],
+                "volumes": pod_volumes,
             },
         }
 
