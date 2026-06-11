@@ -3,11 +3,14 @@ from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarke
 from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
 from time import sleep, time
 import sys
+import json
+import os
 
 class JoinmarketEngine(EngineBase):
 
     def __init__(self, args, driver):
         super().__init__(args, driver, "/home/joinmarket")
+        self.joinmarket_round_events = []
 
     def default_scenario(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -108,7 +111,7 @@ class JoinmarketEngine(EngineBase):
         try:
             ip, manager_ports = self.driver.run(
                 name,
-                "joinmarket-client-server:latest",
+                f"{self.args.image_prefix}joinmarket-client-server",
                 env={},  # Add any necessary environment variables
                 ports={28183: port},
                 cpu=1.0,
@@ -118,7 +121,12 @@ class JoinmarketEngine(EngineBase):
             print(f"- could not start {name} ({e})")
             raise Exception("Could not start distributor")
 
-        self.distributor = self.init_joinmarket_clientserver(name=name, port=port)
+        self.distributor = self.init_joinmarket_clientserver(
+            name=name,
+            host=ip if self.args.proxy else self.args.control_ip,
+            port=28183 if self.args.proxy else manager_ports[28183],
+            proxy=self.args.proxy,
+        )
 
         start = time()
         if not self.distributor.wait_wallet(timeout=60):
@@ -127,8 +135,25 @@ class JoinmarketEngine(EngineBase):
         print(f"- started distributor")
 
 
-    def init_joinmarket_clientserver(self, name, port, host="localhost", type="maker"):
-        return JoinMarketClientServer(name=name, port=port, type=type)
+    def init_joinmarket_clientserver(
+        self,
+        name,
+        port,
+        host="localhost",
+        type="maker",
+        delay=(0, 0),
+        stop=(0, 0),
+        proxy="",
+    ):
+        return JoinMarketClientServer(
+            name=name,
+            host=host,
+            port=port,
+            type=type,
+            delay=delay,
+            stop=stop,
+            proxy=proxy,
+        )
 
 
     def start_client(self, idx: int, wallet: WalletConfig):
@@ -137,7 +162,7 @@ class JoinmarketEngine(EngineBase):
         try:
             ip, manager_ports = self.driver.run(
                 name,
-                "joinmarket-client-server:latest",
+                f"{self.args.image_prefix}joinmarket-client-server",
                 env={},
                 ports={28183: port},
                 cpu=(0.1),
@@ -156,7 +181,15 @@ class JoinmarketEngine(EngineBase):
         joinmarket_config = wallet.joinmarket
         role_str = joinmarket_config.role.value if joinmarket_config and joinmarket_config.role else "maker"
 
-        client = JoinMarketClientServer(name=name, port=port, type=role_str, delay=delay, stop=stop)
+        client = self.init_joinmarket_clientserver(
+            name=name,
+            host=ip if self.args.proxy else self.args.control_ip,
+            port=28183 if self.args.proxy else manager_ports[28183],
+            type=role_str,
+            delay=delay,
+            stop=stop,
+            proxy=self.args.proxy,
+        )
 
 
         start = time()
@@ -174,8 +207,49 @@ class JoinmarketEngine(EngineBase):
         self.driver.stop(name)
 
     def store_engine_logs(self, data_path):
-        # TODO: store irc logs.
-        pass
+        labels = self.match_joinmarket_rounds_to_blocks(data_path)
+        with open(os.path.join(data_path, "joinmarket_round_events.json"), "w") as f:
+            json.dump(labels, f, indent=2)
+            print("- stored JoinMarket round labels")
+
+    def match_joinmarket_rounds_to_blocks(self, data_path):
+        labels_by_destination = {
+            event["destination_address"]: dict(event)
+            for event in self.joinmarket_round_events
+            if event.get("destination_address")
+        }
+        if not labels_by_destination:
+            return []
+
+        node_path = os.path.join(data_path, "btc-node")
+        if not os.path.isdir(node_path):
+            return list(labels_by_destination.values())
+
+        for filename in sorted(os.listdir(node_path)):
+            if not filename.startswith("block_") or not filename.endswith(".json"):
+                continue
+            with open(os.path.join(node_path, filename), "r") as f:
+                block = json.load(f)
+            block_height = block.get("height")
+            for tx in block.get("tx", []):
+                txid = tx.get("txid")
+                for output in tx.get("vout", []):
+                    script_pub_key = output.get("scriptPubKey") or {}
+                    addresses = []
+                    if script_pub_key.get("address"):
+                        addresses.append(script_pub_key["address"])
+                    addresses.extend(script_pub_key.get("addresses") or [])
+                    for address in addresses:
+                        event = labels_by_destination.get(address)
+                        if event is not None and txid:
+                            event["txid"] = txid
+                            event["block_height"] = block_height
+                            event["match_source"] = "destination_output"
+
+        return sorted(
+            labels_by_destination.values(),
+            key=lambda event: (event.get("round_id", 0), event.get("taker", "")),
+        )
 
     def update_coinjoins_joinmarket(self):
         for client in self.clients:
@@ -188,14 +262,36 @@ class JoinmarketEngine(EngineBase):
             if client.type == "taker" and not client.coinjoin_in_process and not client.delay[0] > self.current_block:
                 self.current_round += 1
                 address = client.get_new_address()
+                maker_names = [
+                    maker.name
+                    for maker in self.clients
+                    if maker.type == "maker" and maker.maker_running
+                ]
                 client.start_coinjoin(0, 40000, 4, address)
                 client.coinjoin_start = self.current_block
+                self.joinmarket_round_events.append({
+                    "round_id": self.current_round,
+                    "engine": "joinmarket",
+                    "status": "started",
+                    "taker": client.name,
+                    "candidate_makers": maker_names,
+                    "counterparties": 4,
+                    "amount_sats": 40000,
+                    "mixdepth": 0,
+                    "destination_address": address,
+                    "start_block": self.current_block,
+                })
                 print(f"Starting coinjoin {client.name}")
 
             if client.type == "taker" and client.coinjoin_in_process and client.coinjoin_start + 4 < self.current_block:
                 self.current_round -= 1
                 client.stop_coinjoin()
                 client.coinjoin_in_process = False
+                for event in reversed(self.joinmarket_round_events):
+                    if event.get("taker") == client.name and event.get("status") == "started":
+                        event["status"] = "stopped"
+                        event["stop_block"] = self.current_block
+                        break
                 print(f"Stopping coinjoin {client.name}")
 
 

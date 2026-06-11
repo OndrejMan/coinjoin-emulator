@@ -59,11 +59,23 @@ class KubernetesDriverTest(TestCase):
         ):
             driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
             pod_bodies = []
+            service_bodies = []
 
             def create_pod(**kwargs):
                 pod_bodies.append(kwargs["body"])
 
+            def create_service(**kwargs):
+                service_bodies.append(kwargs["body"])
+                return SimpleNamespace(
+                    spec=SimpleNamespace(
+                        ports=[
+                            SimpleNamespace(target_port=18443, node_port=31843),
+                        ]
+                    )
+                )
+
             kube_client.create_namespaced_pod = create_pod
+            kube_client.create_namespaced_service = create_service
 
             pod_ip, ports = driver.run(
                 "btc-node",
@@ -79,6 +91,7 @@ class KubernetesDriverTest(TestCase):
 
         self.assertEqual(pod_ip, "10.42.0.10")
         self.assertEqual(ports, {18443: 31843})
+        self.assertNotIn("nodePort", service_bodies[0]["spec"]["ports"][0])
 
         pod_spec = pod_bodies[0]["spec"]
         container = pod_spec["containers"][0]
