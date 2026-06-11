@@ -1,4 +1,4 @@
-FROM joinmarket-test
+FROM ghcr.io/OndrejMan/joinmarket-test:latest
 
 
 # Copy the config file to the right place
