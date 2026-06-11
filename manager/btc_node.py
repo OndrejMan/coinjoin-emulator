@@ -1,6 +1,6 @@
 import requests
 import json
-from time import sleep
+from time import monotonic, sleep
 
 WALLET = "wallet"
 
@@ -15,16 +15,14 @@ class BtcNode:
     def _rpc(self, request, wallet=None):
         request["jsonrpc"] = "1.0"
         request["id"] = "1"
-        try:
-            response = requests.post(
-                f"http://{self.host}:{self.port}" + ("/wallet/" + WALLET if wallet else ""),
-                data=json.dumps(request),
-                auth=("user", "password"),
-                proxies=dict(http=self.proxy),
-                timeout=5,
-            )
-        except requests.exceptions.Timeout:
-            return "timeout"
+        response = requests.post(
+            f"http://{self.host}:{self.port}" + ("/wallet/" + WALLET if wallet else ""),
+            data=json.dumps(request),
+            auth=("user", "password"),
+            proxies=dict(http=self.proxy),
+            timeout=5,
+        )
+        response.raise_for_status()
         if response.json()["error"] is not None:
             raise Exception(response.json()["error"])
         return response.json()["result"]
@@ -74,15 +72,27 @@ class BtcNode:
         }
         self._rpc(request, WALLET)
 
-    def wait_ready(self):
-        while True:
+    def wait_ready(self, timeout=300):
+        deadline = monotonic() + timeout
+        last_error = None
+        last_block_count = None
+
+        while monotonic() < deadline:
             try:
                 block_count = self.get_block_count()
+                last_block_count = block_count
                 if block_count > 200:
                     break
-            except Exception:
-                pass
+            except Exception as exc:
+                last_error = exc
             sleep(0.1)
+        else:
+            detail = f"last block count: {last_block_count}"
+            if last_error is not None:
+                detail = f"last error: {last_error}"
+            raise TimeoutError(
+                f"btc-node RPC at {self.host}:{self.port} was not ready after {timeout}s ({detail})"
+            )
 
         # wait for the fee-building transactions
         sleep(20)
