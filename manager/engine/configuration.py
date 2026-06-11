@@ -107,21 +107,25 @@ class ScenarioConfig:
             else:
                 funds.append(fund)  # fallback
         
-        # Extract Wasabi-specific fields
+        # Extract Wasabi-specific fields. Keep backward compatibility with the
+        # older flat schema while supporting the generated nested schema.
         wasabi_config = None
+        nested_wasabi = wallet_data.get("wasabi") or {}
         wasabi_fields = {
-            "anon_score_target": wallet_data.get("anon_score_target"),
-            "redcoin_isolation": wallet_data.get("redcoin_isolation"),
-            "skip_rounds": wallet_data.get("skip_rounds")
+            "anon_score_target": nested_wasabi.get("anon_score_target", wallet_data.get("anon_score_target")),
+            "redcoin_isolation": nested_wasabi.get("redcoin_isolation", wallet_data.get("redcoin_isolation")),
+            "skip_rounds": nested_wasabi.get("skip_rounds", wallet_data.get("skip_rounds"))
         }
         if any(v is not None for v in wasabi_fields.values()):
             wasabi_config = WasabiConfig(**wasabi_fields)
         
-        # Extract JoinMarket-specific fields
+        # Extract JoinMarket-specific fields, also accepting the nested schema.
         joinmarket_config = None
-        if "type" in wallet_data:
-            role_str = wallet_data["type"]
-            role = JoinMarketRole.MAKER if role_str == "maker" else JoinMarketRole.TAKER
+        nested_joinmarket = wallet_data.get("joinmarket") or {}
+        role_str = nested_joinmarket.get("role", wallet_data.get("type"))
+        if role_str is not None:
+            role_value = role_str.value if isinstance(role_str, JoinMarketRole) else str(role_str)
+            role = JoinMarketRole.MAKER if role_value == "maker" else JoinMarketRole.TAKER
             joinmarket_config = JoinMarketConfig(role=role)
         
         return WalletConfig(
