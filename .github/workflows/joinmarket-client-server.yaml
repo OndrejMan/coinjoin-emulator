@@ -39,12 +39,14 @@ jobs:
 
       - name: Clone upstream joinmarket-clientserver
         run: |
-          git clone --depth 1 https://github.com/JoinMarket-Org/joinmarket-clientserver.git /tmp/joinmarket-clientserver
+          JOINMARKET_CLIENTSERVER_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/joinmarket-clientserver.XXXXXX")"
+          git clone --depth 1 https://github.com/JoinMarket-Org/joinmarket-clientserver.git "$JOINMARKET_CLIENTSERVER_DIR"
+          echo "JOINMARKET_CLIENTSERVER_DIR=$JOINMARKET_CLIENTSERVER_DIR" >> "$GITHUB_ENV"
 
       # UPDATED: Your requested block
       - name: Build and push joinmarket-test base image
         run: |
-          docker build -t ghcr.io/${{ env.REPO_OWNER }}/joinmarket-test:latest /tmp/joinmarket-clientserver
+          docker build -t ghcr.io/${{ env.REPO_OWNER }}/joinmarket-test:latest "$JOINMARKET_CLIENTSERVER_DIR"
           docker push ghcr.io/${{ env.REPO_OWNER }}/joinmarket-test:latest
 
       - name: Extract metadata (tags, labels) for Docker
