@@ -1,4 +1,5 @@
-FROM ghcr.io/OndrejMan/joinmarket-test:latest
+ARG JOINMARKET_TEST_IMAGE=ghcr.io/ondrejman/joinmarket-test:latest
+FROM ${JOINMARKET_TEST_IMAGE}
 
 
 # Copy the config file to the right place
@@ -23,4 +24,3 @@ RUN chmod +x /home/joinmarket/run.sh
 WORKDIR /home/joinmarket
 
 CMD ["./run.sh"]
-
