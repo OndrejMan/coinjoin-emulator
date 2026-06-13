@@ -11,6 +11,25 @@ from manager.btc_node import BtcNode
 
 
 class BtcNodeTest(unittest.TestCase):
+    def test_create_wallet_accepts_success_without_error_field(self):
+        response = Mock()
+        response.json.return_value = {"result": {"name": "jm_wallet"}}
+
+        with patch("manager.btc_node.requests.post", return_value=response) as post:
+            BtcNode().create_wallet("jm_wallet")
+
+        request = json.loads(post.call_args.kwargs["data"])
+        self.assertFalse(request["params"]["descriptors"])
+        self.assertEqual(request["params"]["wallet_name"], "jm_wallet")
+
+    def test_create_wallet_rejects_unexpected_json_without_rpc_fields(self):
+        response = Mock()
+        response.json.return_value = {"message": "not a JSON-RPC response"}
+
+        with patch("manager.btc_node.requests.post", return_value=response):
+            with self.assertRaisesRegex(Exception, "Unexpected btc-node RPC response"):
+                BtcNode().create_wallet("jm_wallet")
+
     def test_create_wallet_retries_with_descriptors_when_bdb_is_deprecated(self):
         legacy_response = Mock()
         legacy_response.json.return_value = {
@@ -26,6 +45,27 @@ class BtcNodeTest(unittest.TestCase):
 
         descriptor_response = Mock()
         descriptor_response.json.return_value = {"error": None, "result": {"name": "jm_wallet"}}
+
+        with patch("manager.btc_node.requests.post", side_effect=[legacy_response, descriptor_response]) as post:
+            BtcNode().create_wallet("jm_wallet")
+
+        first_request = json.loads(post.call_args_list[0].kwargs["data"])
+        second_request = json.loads(post.call_args_list[1].kwargs["data"])
+        self.assertFalse(first_request["params"]["descriptors"])
+        self.assertTrue(second_request["params"]["descriptors"])
+        self.assertEqual(second_request["params"]["wallet_name"], "jm_wallet")
+
+    def test_create_wallet_accepts_descriptor_success_without_error_field(self):
+        legacy_response = Mock()
+        legacy_response.json.return_value = {
+            "error": {
+                "code": -4,
+                "message": "Compiled without bdb support (required for legacy wallets)",
+            }
+        }
+
+        descriptor_response = Mock()
+        descriptor_response.json.return_value = {"result": {"name": "jm_wallet"}}
 
         with patch("manager.btc_node.requests.post", side_effect=[legacy_response, descriptor_response]) as post:
             BtcNode().create_wallet("jm_wallet")

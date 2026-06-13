@@ -98,34 +98,36 @@ class BtcNode:
         sleep(20)
 
     def create_wallet(self, wallet):
-        request = self._create_wallet_request(wallet, descriptors=False)
+        response_body = self._post_create_wallet_request(wallet, descriptors=False)
+        error = response_body.get("error")
+        if error is not None and self._is_bdb_wallet_creation_error(error):
+            response_body = self._post_create_wallet_request(wallet, descriptors=True)
+            error = response_body.get("error")
+
+        if error is not None:
+            print(response_body)
+            raise Exception(error)
+        print(response_body)
+
+    def _post_create_wallet_request(self, wallet, descriptors):
         try:
             response = requests.post(
                 f"http://{self.host}:{self.port}",
-                data=json.dumps(request),
+                data=json.dumps(self._create_wallet_request(wallet, descriptors=descriptors)),
                 auth=("user", "password"),
                 proxies=dict(http=self.proxy),
                 timeout=5,
             )
         except requests.exceptions.Timeout:
             raise TimeoutError(f"btc-node RPC at {self.host}:{self.port} timed out creating wallet {wallet}")
-        if response.json()["error"] is not None:
-            error = response.json()["error"]
-            if self._is_bdb_wallet_creation_error(error):
-                response = requests.post(
-                    f"http://{self.host}:{self.port}",
-                    data=json.dumps(self._create_wallet_request(wallet, descriptors=True)),
-                    auth=("user", "password"),
-                    proxies=dict(http=self.proxy),
-                    timeout=5,
-                )
-                response.raise_for_status()
-                if response.json()["error"] is None:
-                    print(response.json())
-                    return
-            print(response.json())
-            raise Exception(response.json()["error"])
-        print(response.json())
+
+        response.raise_for_status()
+        response_body = response.json()
+        if not isinstance(response_body, dict):
+            raise Exception(f"Unexpected btc-node RPC response creating wallet {wallet}: {response_body}")
+        if "error" not in response_body and "result" not in response_body:
+            raise Exception(f"Unexpected btc-node RPC response creating wallet {wallet}: {response_body}")
+        return response_body
 
     def _is_bdb_wallet_creation_error(self, error):
         message = error.get("message", "")
