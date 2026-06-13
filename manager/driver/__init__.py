@@ -46,6 +46,10 @@ class Driver(ABC):
         pass
 
     @abstractmethod
+    def logs(self, name):
+        pass
+
+    @abstractmethod
     def upload(self, name, src_path, dst_path):
         pass
 

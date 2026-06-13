@@ -14,6 +14,8 @@ from manager.engine.joinmarket_engine import JoinmarketEngine
 class FakeDriver:
     def __init__(self):
         self.calls = []
+        self.log_calls = []
+        self.peek_calls = []
 
     def run(self, name, image, env=None, ports=None, cpu=0.1, memory=768, **_kwargs):
         self.calls.append(
@@ -28,9 +30,18 @@ class FakeDriver:
         )
         return f"{name}.pod", {28183: 32083}
 
+    def logs(self, name):
+        self.log_calls.append(name)
+        return "container stderr"
+
+    def peek(self, name, path):
+        self.peek_calls.append((name, path))
+        return "jmwalletd stderr"
+
 
 class FakeJoinMarketClientServer:
     instances = []
+    wait_wallet_result = True
 
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
@@ -41,7 +52,7 @@ class FakeJoinMarketClientServer:
 
     def wait_wallet(self, timeout):
         self.wait_wallet_timeout = timeout
-        return True
+        return self.wait_wallet_result
 
 
 class FakeBtcNode:
@@ -68,6 +79,7 @@ def engine_args(proxy=""):
 class JoinmarketEngineTest(unittest.TestCase):
     def setUp(self):
         FakeJoinMarketClientServer.instances = []
+        FakeJoinMarketClientServer.wait_wallet_result = True
 
     def test_distributor_uses_driver_port_mapping_without_proxy(self):
         driver = FakeDriver()
@@ -84,6 +96,24 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(distributor.host, "host.docker.internal")
         self.assertEqual(distributor.port, 32083)
         self.assertEqual(distributor.proxy, "")
+
+    def test_distributor_timeout_dumps_container_logs(self):
+        driver = FakeDriver()
+        engine = JoinmarketEngine(engine_args(), driver)
+        FakeJoinMarketClientServer.wait_wallet_result = False
+
+        with patch(
+            "manager.engine.joinmarket_engine.JoinMarketClientServer",
+            FakeJoinMarketClientServer,
+        ):
+            with self.assertRaisesRegex(Exception, "Could not start distributor"):
+                engine.start_distributor()
+
+        self.assertEqual(driver.log_calls, ["joinmarket-distributor"])
+        self.assertEqual(
+            driver.peek_calls,
+            [("joinmarket-distributor", "/home/joinmarket/jmwalletd.log")],
+        )
 
     def test_engine_creates_watch_only_bitcoin_core_wallet_for_joinmarket(self):
         driver = FakeDriver()

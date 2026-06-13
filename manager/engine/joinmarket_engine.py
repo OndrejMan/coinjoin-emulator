@@ -111,6 +111,12 @@ class JoinmarketEngine(EngineBase):
     def _dump_container_log(self, container_name, log_path):
         """Try to read a log file from a running container for diagnostics."""
         try:
+            log_content = self.driver.logs(container_name)
+            print(f"- {container_name} container logs:\n{log_content}")
+        except Exception:
+            print(f"- could not retrieve container logs from {container_name}")
+
+        try:
             log_content = self.driver.peek(container_name, log_path)
             print(f"- {container_name} log ({log_path}):\n{log_content}")
         except Exception:

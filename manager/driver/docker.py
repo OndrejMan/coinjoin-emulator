@@ -50,7 +50,7 @@ class DockerDriver(Driver):
         self.client.containers.run(
             image,
             detach=True,
-            auto_remove=True,
+            auto_remove=False,
             name=name,
             hostname=name,
             network=self.network.id,
@@ -94,6 +94,9 @@ class DockerDriver(Driver):
         with tarfile.open(fileobj=fo) as tar:
             return tar.extractfile(os.path.basename(path)).read().decode()
 
+    def logs(self, name):
+        return self.client.containers.get(name).logs(stdout=True, stderr=True).decode()
+
     def upload(self, name, src_path, dst_path):
         fo = BytesIO()
         with tarfile.open(fileobj=fo, mode="w") as tar:
@@ -103,7 +106,7 @@ class DockerDriver(Driver):
 
     def cleanup(self, image_prefix=""):
         containers = []
-        for container in self.client.containers.list():
+        for container in self.client.containers.list(all=True):
             if any(
                 x in container.attrs["Config"]["Image"]
                 for x in (

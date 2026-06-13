@@ -220,6 +220,9 @@ class KubernetesDriver(Driver):
         resp.close()
         return output
 
+    def logs(self, name):
+        return self.client.read_namespaced_pod_log(name=name, namespace=self.namespace)
+
     def upload(self, name, src_path, dst_path):
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:tar") as tar:
