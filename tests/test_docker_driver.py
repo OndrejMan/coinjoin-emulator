@@ -21,8 +21,18 @@ except ModuleNotFoundError:
     class NotFound(Exception):
         pass
 
+    class APIError(Exception):
+        def __init__(self, message="", response=None, explanation=None):
+            super().__init__(message)
+            self.response = response
+            self.explanation = explanation
+
     docker_module.from_env = lambda: None
-    docker_module.errors = SimpleNamespace(ImageNotFound=ImageNotFound, NotFound=NotFound)
+    docker_module.errors = SimpleNamespace(
+        ImageNotFound=ImageNotFound,
+        NotFound=NotFound,
+        APIError=APIError,
+    )
     docker_containers_module.Container = object
 
     sys.modules["docker"] = docker_module
@@ -61,6 +71,25 @@ class DockerDriverTest(unittest.TestCase):
         client.containers.get.assert_called_once_with("btc-node")
         stale_container.remove.assert_called_once_with(force=True)
         client.containers.run.assert_called_once()
+
+    def test_run_retries_after_docker_name_conflict(self):
+        stale_container = Mock()
+        conflict = docker.errors.APIError(
+            "conflict",
+            explanation='Conflict. The container name "/btc-node" is already in use.',
+        )
+        client = Mock()
+        client.networks.create.return_value = SimpleNamespace(id="coinjoin-network-id")
+        client.containers.get.side_effect = [docker.errors.NotFound(), stale_container]
+        client.containers.run.side_effect = [conflict, None]
+
+        with patch("manager.driver.docker.docker.from_env", return_value=client):
+            driver = DockerDriver(namespace="coinjoin-test")
+            driver.run("btc-node", "btc-node:latest")
+
+        self.assertEqual(client.containers.get.call_count, 2)
+        stale_container.remove.assert_called_once_with(force=True)
+        self.assertEqual(client.containers.run.call_count, 2)
 
     def test_cleanup_includes_exited_emulator_containers(self):
         matching_container = Mock()

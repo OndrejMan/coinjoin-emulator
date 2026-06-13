@@ -2,6 +2,7 @@ from functools import cached_property
 from io import BytesIO
 import os
 import tarfile
+import time
 
 from docker.models.containers import Container
 from . import Driver
@@ -30,6 +31,19 @@ class DockerDriver(Driver):
     def pull(self, name):
         self.client.images.pull(name)
 
+    def _remove_existing_container(self, name):
+        try:
+            old_container = self.client.containers.get(name)
+            old_container.remove(force=True)
+            return True
+        except docker.errors.NotFound:
+            return False
+
+    @staticmethod
+    def _is_name_conflict(error):
+        explanation = getattr(error, "explanation", "") or str(error)
+        return "container name" in explanation and "already in use" in explanation
+
     def run(
         self,
         name,
@@ -41,27 +55,33 @@ class DockerDriver(Driver):
         memory=768,
         volumes: dict | None = None
     ):
-        try:
-            old_container = self.client.containers.get(name)
-            old_container.remove(force=True)
-        except docker.errors.NotFound:
-            pass
+        self._remove_existing_container(name)
 
-        self.client.containers.run(
-            image,
-            detach=True,
-            auto_remove=False,
-            name=name,
-            hostname=name,
-            network=self.network.id,
-            ports=ports or {},
-            environment={
-                key: value
-                for key, value in (env or {}).items()
-                if value is not None
-            },
-            volumes=volumes,
-        )
+        for attempt in range(2):
+            try:
+                self.client.containers.run(
+                    image,
+                    detach=True,
+                    auto_remove=False,
+                    name=name,
+                    hostname=name,
+                    network=self.network.id,
+                    ports=ports or {},
+                    environment={
+                        key: value
+                        for key, value in (env or {}).items()
+                        if value is not None
+                    },
+                    volumes=volumes,
+                )
+                break
+            except docker.errors.APIError as error:
+                if attempt == 0 and self._is_name_conflict(error):
+                    print(f"- removing stale container {name} after Docker name conflict")
+                    self._remove_existing_container(name)
+                    time.sleep(0.5)
+                    continue
+                raise
         return name, ports or {}
 
     def stop(self, name):

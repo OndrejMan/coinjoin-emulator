@@ -49,8 +49,10 @@ def run():
         exit_code = 1
     finally:
         engine.stop_coinjoins()
-        if not args.no_logs:
+        if not args.no_logs and engine.node is not None:
             engine.store_logs()
+        elif not args.no_logs:
+            print("- skipping log storage: Bitcoin node is not initialized", file=sys.stderr)
         if args.download_btc_data:
             download_btc_data(args.download_btc_data)
         driver.cleanup(args.image_prefix) # todo
