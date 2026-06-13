@@ -41,11 +41,11 @@ class DockerDriver(Driver):
         memory=768,
         volumes: dict | None = None
     ):
-        # try:
-        #     old_container = self.client.containers.get(name)
-        #     old_container.remove(force=True)
-        # except docker.errors.NotFound:
-        #     pass
+        try:
+            old_container = self.client.containers.get(name)
+            old_container.remove(force=True)
+        except docker.errors.NotFound:
+            pass
 
         self.client.containers.run(
             image,
@@ -66,7 +66,9 @@ class DockerDriver(Driver):
 
     def stop(self, name):
         try:
-            self.client.containers.get(name).stop()
+            container = self.client.containers.get(name)
+            container.stop()
+            container.remove(force=True)
             print(f"- stopped {name}")
         except docker.errors.NotFound:
             pass

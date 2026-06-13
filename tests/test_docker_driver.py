@@ -18,13 +18,18 @@ except ModuleNotFoundError:
     class ImageNotFound(Exception):
         pass
 
+    class NotFound(Exception):
+        pass
+
     docker_module.from_env = lambda: None
-    docker_module.errors = SimpleNamespace(ImageNotFound=ImageNotFound)
+    docker_module.errors = SimpleNamespace(ImageNotFound=ImageNotFound, NotFound=NotFound)
     docker_containers_module.Container = object
 
     sys.modules["docker"] = docker_module
     sys.modules["docker.models"] = docker_models_module
     sys.modules["docker.models.containers"] = docker_containers_module
+
+import docker
 
 from manager.driver.docker import DockerDriver
 
@@ -34,12 +39,28 @@ class DockerDriverTest(unittest.TestCase):
         client = Mock()
         client.networks.create.return_value = SimpleNamespace(id="coinjoin-network-id")
         client.containers.run.return_value = None
+        client.containers.get.side_effect = docker.errors.NotFound()
 
         with patch("manager.driver.docker.docker.from_env", return_value=client):
             driver = DockerDriver(namespace="coinjoin-test")
             driver.run("joinmarket-distributor", "joinmarket-client-server:latest")
 
         self.assertFalse(client.containers.run.call_args.kwargs["auto_remove"])
+
+    def test_run_removes_stale_container_before_reusing_name(self):
+        stale_container = Mock()
+        client = Mock()
+        client.networks.create.return_value = SimpleNamespace(id="coinjoin-network-id")
+        client.containers.get.return_value = stale_container
+        client.containers.run.return_value = None
+
+        with patch("manager.driver.docker.docker.from_env", return_value=client):
+            driver = DockerDriver(namespace="coinjoin-test")
+            driver.run("btc-node", "btc-node:latest")
+
+        client.containers.get.assert_called_once_with("btc-node")
+        stale_container.remove.assert_called_once_with(force=True)
+        client.containers.run.assert_called_once()
 
     def test_cleanup_includes_exited_emulator_containers(self):
         matching_container = Mock()
@@ -63,7 +84,9 @@ class DockerDriverTest(unittest.TestCase):
         client.containers.list.assert_called_once_with(all=True)
         client.containers.get.assert_called_once_with("joinmarket-distributor")
         matching_container.stop.assert_called_once_with()
+        matching_container.remove.assert_called_once_with(force=True)
         other_container.stop.assert_not_called()
+        other_container.remove.assert_not_called()
 
 
 if __name__ == "__main__":
