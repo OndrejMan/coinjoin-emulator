@@ -47,9 +47,12 @@ class EngineBase:
     def prepare_images(self):
         raise NotImplementedError
 
-    def prepare_image(self, name: str, path=None):
+    def prepare_image(self, name: str, path=None, local_build=False):
         prefixed_name = self.args.image_prefix + name
-        if self.driver.has_image(prefixed_name):
+        if local_build:
+            self.driver.build(prefixed_name, f"./containers/{name}" if path is None else path)
+            print(f"- image built {prefixed_name}")
+        elif self.driver.has_image(prefixed_name):
             if self.args.force_rebuild:
                 if self.args.image_prefix:
                     self.driver.pull(prefixed_name)

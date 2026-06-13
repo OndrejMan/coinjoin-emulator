@@ -74,7 +74,7 @@ class JoinmarketEngine(EngineBase):
     def prepare_images(self):
         print("Preparing images")
         self.prepare_image("btc-node")
-        self.prepare_image("joinmarket-client-server")
+        self.prepare_image("joinmarket-client-server", local_build=True)
         self.prepare_image("irc-server")
 
 
@@ -83,8 +83,7 @@ class JoinmarketEngine(EngineBase):
             raise RuntimeError("Bitcoin node is not initialized")
         self.node.create_wallet(
             "jm_wallet",
-            disable_private_keys=False,
-            allow_descriptor_fallback=False,
+            disable_private_keys=True,
         )
         print("- created jm_wallet in BitcoinCore")
         # Allow the wallet to be fully committed before the distributor

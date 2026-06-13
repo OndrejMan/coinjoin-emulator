@@ -14,8 +14,15 @@ from manager.engine.joinmarket_engine import JoinmarketEngine
 class FakeDriver:
     def __init__(self):
         self.calls = []
+        self.build_calls = []
         self.log_calls = []
         self.peek_calls = []
+
+    def has_image(self, name):
+        return True
+
+    def build(self, name, path):
+        self.build_calls.append({"name": name, "path": path})
 
     def run(self, name, image, env=None, ports=None, cpu=0.1, memory=768, **_kwargs):
         self.calls.append(
@@ -74,6 +81,7 @@ def engine_args(proxy=""):
         image_prefix="ghcr.io/ondrejman/",
         proxy=proxy,
         control_ip="host.docker.internal",
+        force_rebuild=False,
     )
 
 
@@ -116,7 +124,7 @@ class JoinmarketEngineTest(unittest.TestCase):
             [("joinmarket-distributor", "/home/joinmarket/jmwalletd.log")],
         )
 
-    def test_engine_creates_legacy_keyed_bitcoin_core_wallet_for_joinmarket(self):
+    def test_engine_creates_watch_only_bitcoin_core_wallet_for_joinmarket(self):
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
         engine.node = FakeBtcNode()
@@ -131,12 +139,28 @@ class JoinmarketEngineTest(unittest.TestCase):
             [
                 {
                     "wallet": "jm_wallet",
-                    "disable_private_keys": False,
-                    "allow_descriptor_fallback": False,
+                    "disable_private_keys": True,
+                    "allow_descriptor_fallback": True,
                 }
             ],
         )
         start_irc_server.assert_called_once_with()
+
+    def test_prepare_images_rebuilds_patched_joinmarket_client_server(self):
+        driver = FakeDriver()
+        engine = JoinmarketEngine(engine_args(), driver)
+
+        engine.prepare_images()
+
+        self.assertEqual(
+            driver.build_calls,
+            [
+                {
+                    "name": "ghcr.io/ondrejman/joinmarket-client-server",
+                    "path": "./containers/joinmarket-client-server",
+                }
+            ],
+        )
 
     def test_client_uses_driver_port_mapping_without_proxy(self):
         driver = FakeDriver()
