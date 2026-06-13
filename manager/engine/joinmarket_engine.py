@@ -206,6 +206,14 @@ class JoinmarketEngine(EngineBase):
         name = f"jcs-{idx:03}"
         self.driver.stop(name)
 
+    def validate_clients(self):
+        takers = [client for client in self.clients if client.type == "taker"]
+        makers = [client for client in self.clients if client.type == "maker"]
+        if not takers:
+            raise RuntimeError("JoinMarket scenario requires at least one started taker client")
+        if not makers:
+            raise RuntimeError("JoinMarket scenario requires at least one started maker client")
+
     def store_engine_logs(self, data_path):
         labels = self.match_joinmarket_rounds_to_blocks(data_path)
         with open(os.path.join(data_path, "joinmarket_round_events.json"), "w") as f:
@@ -252,6 +260,10 @@ class JoinmarketEngine(EngineBase):
         )
 
     def update_coinjoins_joinmarket(self):
+        total_started_rounds = len([
+            event for event in self.joinmarket_round_events
+            if event.get("status") in ("started", "stopped")
+        ])
         for client in self.clients:
             state = client.get_status()
             # print(state)
@@ -259,8 +271,8 @@ class JoinmarketEngine(EngineBase):
                 client.start_maker(0, 5000, 0.00004, "sw0reloffer", 30000)
                 print(f"Starting maker {client.name}")
 
-            if client.type == "taker" and not client.coinjoin_in_process and not client.delay[0] > self.current_block:
-                self.current_round += 1
+            can_start_more_rounds = self.scenario.rounds == 0 or total_started_rounds < self.scenario.rounds
+            if client.type == "taker" and not client.coinjoin_in_process and not client.delay[0] > self.current_block and can_start_more_rounds:
                 address = client.get_new_address()
                 maker_names = [
                     maker.name
@@ -269,8 +281,9 @@ class JoinmarketEngine(EngineBase):
                 ]
                 client.start_coinjoin(0, 40000, 4, address)
                 client.coinjoin_start = self.current_block
+                total_started_rounds += 1
                 self.joinmarket_round_events.append({
-                    "round_id": self.current_round,
+                    "round_id": total_started_rounds,
                     "engine": "joinmarket",
                     "status": "started",
                     "taker": client.name,
@@ -284,9 +297,9 @@ class JoinmarketEngine(EngineBase):
                 print(f"Starting coinjoin {client.name}")
 
             if client.type == "taker" and client.coinjoin_in_process and client.coinjoin_start + 4 < self.current_block:
-                self.current_round -= 1
                 client.stop_coinjoin()
                 client.coinjoin_in_process = False
+                self.current_round += 1
                 for event in reversed(self.joinmarket_round_events):
                     if event.get("taker") == client.name and event.get("status") == "started":
                         event["status"] = "stopped"

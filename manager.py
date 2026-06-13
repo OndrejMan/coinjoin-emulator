@@ -36,15 +36,17 @@ def run():
         raise RuntimeError("Engine is not initialized")
     if args is None:
         raise RuntimeError("Arguments are not initialized")
-    
+    exit_code = 0
     try:
         engine.run()
     except KeyboardInterrupt:
         print()
         print("KeyboardInterrupt received")
+        exit_code = 130
     except Exception as e:
         print(f"Terminating exception: {e}", file=sys.stderr)
         print_exception(e)
+        exit_code = 1
     finally:
         engine.stop_coinjoins()
         if not args.no_logs:
@@ -52,6 +54,8 @@ def run():
         if args.download_btc_data:
             download_btc_data(args.download_btc_data)
         driver.cleanup(args.image_prefix) # todo
+    if exit_code:
+        sys.exit(exit_code)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run coinjoin simulation setup")

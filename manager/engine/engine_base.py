@@ -156,6 +156,12 @@ class EngineBase:
                 print(f"- failed to start {len(wallets) - len(new_clients)} clients; continuing ...")
         self.clients.extend(new_clients)
 
+        if len(new_clients) == 0 and len(wallets) > 0:
+            raise RuntimeError("No emulator clients started successfully")
+
+    def validate_clients(self):
+        pass
+
     def fund_distributor(self, btc_amount):
         print("Funding distributor")
         if self.node is None:
@@ -305,6 +311,7 @@ class EngineBase:
         self.start_infrastructure()
         self.fund_distributor(500)
         self.start_clients(self.scenario.wallets)
+        self.validate_clients()
         self.prepare_invoices(self.scenario.wallets)
         print("Running simulation")
         self.run_engine()
