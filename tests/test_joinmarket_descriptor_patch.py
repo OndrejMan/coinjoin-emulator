@@ -16,6 +16,7 @@ class JoinMarketDescriptorPatchTest(unittest.TestCase):
             "    def __init__(self, jsonRpc, network):\n"
             "        super().__init__(jsonRpc, network)\n"
             '        self.destn_addr = self._rpc("getnewaddress", [])\n'
+            "\n"
             "    def estimate_fee_per_kb(self, tx_fees, tx_vsize):\n"
             "        return 1000\n"
         )

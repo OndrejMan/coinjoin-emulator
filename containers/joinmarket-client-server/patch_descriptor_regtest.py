@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import re
 from pathlib import Path
 
 
@@ -13,12 +14,14 @@ def patch_blockchaininterface(path: Path) -> None:
         print(f"{path} already has descriptor-regtest patch")
         return
 
-    old = (
-        '        self.destn_addr = self._rpc("getnewaddress", [])\n'
-        "    def estimate_fee_per_kb"
+    pattern = re.compile(
+        r"(class RegtestBitcoinCoreInterface\b[\s\S]*?"
+        r"        )self\.destn_addr = self\._rpc\(\"getnewaddress\", \[\]\)"
+        r"(\n\s*\n    def estimate_fee_per_kb\b)",
     )
-    new = (
-        "        self.destn_addr = self._get_regtest_mining_address()\n\n"
+    helper = (
+        r"\1self.destn_addr = self._get_regtest_mining_address()"
+        "\n\n"
         "    def _get_regtest_mining_address(self) -> str:\n"
         "        try:\n"
         '            return self._rpc("getnewaddress", [])\n'
@@ -35,17 +38,18 @@ def patch_blockchaininterface(path: Path) -> None:
         '                self.jsonRpc.setURL("/wallet/wallet")\n'
         '                return self._rpc("getnewaddress", [])\n'
         "            finally:\n"
-        "                self.jsonRpc.setURL(original_url)\n\n"
-        "    def estimate_fee_per_kb"
+        "                self.jsonRpc.setURL(original_url)"
+        r"\2"
     )
 
-    if old not in text:
+    text, count = pattern.subn(helper, text, count=1)
+    if count != 1:
         raise RuntimeError(
             f"Could not patch {path}; expected RegtestBitcoinCoreInterface "
             "getnewaddress block was not found"
         )
 
-    path.write_text(text.replace(old, new, 1))
+    path.write_text(text)
     print(f"patched {path} for descriptor-only regtest wallet startup")
 
 
