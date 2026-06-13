@@ -98,13 +98,7 @@ class BtcNode:
         sleep(20)
 
     def create_wallet(self, wallet):
-        request = {
-            "method": "createwallet",
-            "params": {"wallet_name": "jm_wallet", "descriptors": False},
-        }
-
-        request["jsonrpc"] = "2.0"
-        request["id"] = "1"
+        request = self._create_wallet_request(wallet, descriptors=False)
         try:
             response = requests.post(
                 f"http://{self.host}:{self.port}",
@@ -114,8 +108,32 @@ class BtcNode:
                 timeout=5,
             )
         except requests.exceptions.Timeout:
-            print("timeout")
+            raise TimeoutError(f"btc-node RPC at {self.host}:{self.port} timed out creating wallet {wallet}")
         if response.json()["error"] is not None:
+            error = response.json()["error"]
+            if (
+                error.get("code") == -4
+                and "BDB wallet creation is deprecated" in error.get("message", "")
+            ):
+                response = requests.post(
+                    f"http://{self.host}:{self.port}",
+                    data=json.dumps(self._create_wallet_request(wallet, descriptors=True)),
+                    auth=("user", "password"),
+                    proxies=dict(http=self.proxy),
+                    timeout=5,
+                )
+                response.raise_for_status()
+                if response.json()["error"] is None:
+                    print(response.json())
+                    return
             print(response.json())
             raise Exception(response.json()["error"])
         print(response.json())
+
+    def _create_wallet_request(self, wallet, descriptors):
+        return {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "createwallet",
+            "params": {"wallet_name": wallet, "descriptors": descriptors},
+        }

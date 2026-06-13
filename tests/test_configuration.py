@@ -88,6 +88,29 @@ class ScenarioConfigTest(unittest.TestCase):
         self.assertIsNotNone(wallet.joinmarket)
         self.assertEqual(wallet.joinmarket.role, JoinMarketRole.MAKER)
 
+    def test_to_dict_serializes_joinmarket_role_as_json_value(self):
+        scenario = {
+            "name": "joinmarket",
+            "rounds": 1,
+            "blocks": 0,
+            "default_version": "latest",
+            "wallets": [
+                {
+                    "funds": [1000],
+                    "joinmarket": {"role": "maker"},
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "scenario.json"
+            path.write_text(json.dumps(scenario), encoding="utf-8")
+            config = ScenarioConfig.from_json_config(path)
+
+        serialized = config.to_dict()
+        self.assertEqual(serialized["wallets"][0]["joinmarket"]["role"], "maker")
+        json.dumps(serialized)
+
 
 if __name__ == "__main__":
     unittest.main()

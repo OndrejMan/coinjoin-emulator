@@ -141,7 +141,17 @@ class ScenarioConfig:
     
     def to_dict(self) -> dict[str, Any]:
         """Convert the scenario configuration to a dictionary for JSON serialization."""
-        return asdict(self)
+        return self._json_safe(asdict(self))
+
+    @classmethod
+    def _json_safe(cls, value: Any) -> Any:
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, list):
+            return [cls._json_safe(item) for item in value]
+        if isinstance(value, dict):
+            return {key: cls._json_safe(item) for key, item in value.items()}
+        return value
 
 
 # Type aliases for convenience
