@@ -111,10 +111,7 @@ class BtcNode:
             raise TimeoutError(f"btc-node RPC at {self.host}:{self.port} timed out creating wallet {wallet}")
         if response.json()["error"] is not None:
             error = response.json()["error"]
-            if (
-                error.get("code") == -4
-                and "BDB wallet creation is deprecated" in error.get("message", "")
-            ):
+            if self._is_bdb_wallet_creation_error(error):
                 response = requests.post(
                     f"http://{self.host}:{self.port}",
                     data=json.dumps(self._create_wallet_request(wallet, descriptors=True)),
@@ -129,6 +126,16 @@ class BtcNode:
             print(response.json())
             raise Exception(response.json()["error"])
         print(response.json())
+
+    def _is_bdb_wallet_creation_error(self, error):
+        message = error.get("message", "")
+        return (
+            error.get("code") == -4
+            and (
+                "BDB wallet creation is deprecated" in message
+                or "Compiled without bdb support" in message
+            )
+        )
 
     def _create_wallet_request(self, wallet, descriptors):
         return {
