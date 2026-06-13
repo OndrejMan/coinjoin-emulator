@@ -83,6 +83,9 @@ class JoinmarketEngine(EngineBase):
             raise RuntimeError("Bitcoin node is not initialized")
         self.node.create_wallet("jm_wallet")
         print("- created jm_wallet in BitcoinCore")
+        # Allow the wallet to be fully committed before the distributor
+        # container tries to load it via Bitcoin Core RPC.
+        sleep(5)
 
         self.start_irc_server()
         print("- started irc-server")
@@ -104,6 +107,14 @@ class JoinmarketEngine(EngineBase):
             print(f"- could not start {name} ({e})")
             raise Exception("Could not start IRC server")
 
+
+    def _dump_container_log(self, container_name, log_path):
+        """Try to read a log file from a running container for diagnostics."""
+        try:
+            log_content = self.driver.peek(container_name, log_path)
+            print(f"- {container_name} log ({log_path}):\n{log_content}")
+        except Exception:
+            print(f"- could not retrieve {log_path} from {container_name}")
 
     def start_distributor(self):
         name = "joinmarket-distributor"
@@ -129,10 +140,12 @@ class JoinmarketEngine(EngineBase):
         )
 
         start = time()
-        if not self.distributor.wait_wallet(timeout=60):
-            print(f"- could not start {name} (application timeout)")
+        if not self.distributor.wait_wallet(timeout=180):
+            elapsed = time() - start
+            print(f"- could not start {name} (application timeout after {elapsed:.1f}s)")
+            self._dump_container_log(name, "/home/joinmarket/jmwalletd.log")
             raise Exception("Could not start distributor")
-        print(f"- started distributor")
+        print(f"- started distributor (wait took {time() - start:.1f}s)")
 
 
     def init_joinmarket_clientserver(
@@ -193,10 +206,12 @@ class JoinmarketEngine(EngineBase):
 
 
         start = time()
-        if not client.wait_wallet(timeout=60):
+        if not client.wait_wallet(timeout=120):
+            elapsed = time() - start
             print(
-                f"- could not start {name} (application timeout {time() - start} seconds)"
+                f"- could not start {name} (application timeout {elapsed:.1f}s)"
             )
+            self._dump_container_log(name, "/home/joinmarket/jmwalletd.log")
             return None
 
         print(f"- started {client.name} (wait took {time() - start} seconds)")
