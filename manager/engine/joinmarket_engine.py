@@ -1,4 +1,4 @@
-from manager.engine.engine_base import EngineBase
+from manager.engine.engine_base import EngineBase, BTC
 from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
 from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
 from time import sleep, time
@@ -251,6 +251,22 @@ class JoinmarketEngine(EngineBase):
         with open(os.path.join(data_path, "joinmarket_round_events.json"), "w") as f:
             json.dump(labels, f, indent=2)
             print("- stored JoinMarket round labels")
+
+    def pay_invoices(self, addressed_invoices):
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+
+        print(
+            f"- funding {len(addressed_invoices)} JoinMarket invoices directly "
+            f"(block {self.current_block}, round {self.current_round})"
+        )
+        for address, amount_sats in addressed_invoices:
+            self.node.fund_address(address, amount_sats / BTC)
+            print(f"- funded {amount_sats} sats to {address}")
+
+        if addressed_invoices:
+            self.node.mine_block()
+            print("- confirmed JoinMarket invoice funding")
 
     def match_joinmarket_rounds_to_blocks(self, data_path):
         labels_by_destination = {

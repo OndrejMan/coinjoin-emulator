@@ -108,6 +108,8 @@ class FakeBtcNode:
         self.create_wallet_calls = []
         self.blocks = blocks or {}
         self.block_count = block_count
+        self.fund_address_calls = []
+        self.mine_block_calls = []
 
     def create_wallet(self, wallet, disable_private_keys=False, allow_descriptor_fallback=True):
         self.create_wallet_calls.append(
@@ -129,6 +131,14 @@ class FakeBtcNode:
     def get_block_info(self, block_hash):
         height = int(block_hash.removeprefix("block-"))
         return self.blocks.get(height, {"height": height, "tx": []})
+
+    def fund_address(self, address, amount):
+        self.fund_address_calls.append({"address": address, "amount": amount})
+
+    def mine_block(self, count=1):
+        self.mine_block_calls.append(count)
+        self.block_count += count
+        return True
 
 
 def engine_args(proxy=""):
@@ -330,6 +340,25 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(engine.joinmarket_round_events[0]["status"], "confirmed")
         self.assertEqual(engine.joinmarket_round_events[0]["txid"], "joinmarket-tx")
         self.assertEqual(engine.joinmarket_round_events[0]["block_height"], 206)
+
+    def test_joinmarket_invoice_funding_uses_bitcoin_core_directly(self):
+        driver = FakeDriver()
+        engine = JoinmarketEngine(engine_args(), driver)
+        engine.node = FakeBtcNode()
+
+        engine.pay_invoices([
+            ("bcrt1maker", 1000000),
+            ("bcrt1taker", 200000),
+        ])
+
+        self.assertEqual(
+            engine.node.fund_address_calls,
+            [
+                {"address": "bcrt1maker", "amount": 0.01},
+                {"address": "bcrt1taker", "amount": 0.002},
+            ],
+        )
+        self.assertEqual(engine.node.mine_block_calls, [1])
 
 
 if __name__ == "__main__":

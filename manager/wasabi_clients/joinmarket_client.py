@@ -254,7 +254,8 @@ class JoinMarketClientServer:
         try:
             response = self._rpc(method, endpoint, json_data=json_data)
         except JoinmarketConflictException as e:
-            print("Could not start maker without confirmed balance")
+            detail = getattr(e.response, "text", "") or str(e)
+            print(f"Could not start maker: {detail}")
             response = e.response
 
         return response
