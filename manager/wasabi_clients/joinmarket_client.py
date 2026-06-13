@@ -129,19 +129,24 @@ class JoinMarketClientServer:
 
     def wait_wallet(self, timeout=None):
         start = time()
+        last_create_err = None
+        last_balance_err = None
         while timeout is None or time() - start < timeout:
             try:
                 self._create_wallet()
             except Exception as e:
-                pass
+                last_create_err = e
 
             try:
                 self.get_balance()
                 return True
             except Exception as e:
-                pass
+                last_balance_err = e
 
             sleep(0.1)
+        print(f"- {self.name} wait_wallet timed out after {timeout}s.")
+        print(f"  Last create error: {last_create_err}")
+        print(f"  Last balance error: {last_balance_err}")
         return False
 
 

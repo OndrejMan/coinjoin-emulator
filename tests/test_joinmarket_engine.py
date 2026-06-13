@@ -44,6 +44,19 @@ class FakeJoinMarketClientServer:
         return True
 
 
+class FakeBtcNode:
+    def __init__(self):
+        self.create_wallet_calls = []
+
+    def create_wallet(self, wallet, disable_private_keys=False):
+        self.create_wallet_calls.append(
+            {
+                "wallet": wallet,
+                "disable_private_keys": disable_private_keys,
+            }
+        )
+
+
 def engine_args(proxy=""):
     return SimpleNamespace(
         image_prefix="ghcr.io/ondrejman/",
@@ -71,6 +84,22 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(distributor.host, "host.docker.internal")
         self.assertEqual(distributor.port, 32083)
         self.assertEqual(distributor.proxy, "")
+
+    def test_engine_creates_watch_only_bitcoin_core_wallet_for_joinmarket(self):
+        driver = FakeDriver()
+        engine = JoinmarketEngine(engine_args(), driver)
+        engine.node = FakeBtcNode()
+
+        with patch.object(engine, "start_irc_server") as start_irc_server, patch(
+            "manager.engine.joinmarket_engine.sleep"
+        ):
+            engine.start_engine_infrastructure()
+
+        self.assertEqual(
+            engine.node.create_wallet_calls,
+            [{"wallet": "jm_wallet", "disable_private_keys": True}],
+        )
+        start_irc_server.assert_called_once_with()
 
     def test_client_uses_driver_port_mapping_without_proxy(self):
         driver = FakeDriver()

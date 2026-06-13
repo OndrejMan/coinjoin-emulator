@@ -22,6 +22,17 @@ class BtcNodeTest(unittest.TestCase):
         self.assertFalse(request["params"]["descriptors"])
         self.assertEqual(request["params"]["wallet_name"], "jm_wallet")
 
+    def test_create_wallet_can_disable_private_keys(self):
+        response = Mock()
+        response.json.return_value = {"result": {"name": "jm_wallet"}}
+
+        with patch("manager.btc_node.requests.post", return_value=response) as post:
+            BtcNode().create_wallet("jm_wallet", disable_private_keys=True)
+
+        request = json.loads(post.call_args.kwargs["data"])
+        self.assertTrue(request["params"]["disable_private_keys"])
+        self.assertEqual(request["params"]["wallet_name"], "jm_wallet")
+
     def test_create_wallet_rejects_unexpected_json_without_rpc_fields(self):
         response = Mock()
         response.json.return_value = {"message": "not a JSON-RPC response"}

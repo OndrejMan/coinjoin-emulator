@@ -97,11 +97,11 @@ class BtcNode:
         # wait for the fee-building transactions
         sleep(20)
 
-    def create_wallet(self, wallet):
-        response_body = self._post_create_wallet_request(wallet, descriptors=False)
+    def create_wallet(self, wallet, disable_private_keys=False):
+        response_body = self._post_create_wallet_request(wallet, descriptors=False, disable_private_keys=disable_private_keys)
         error = response_body.get("error")
         if error is not None and self._is_bdb_wallet_creation_error(error):
-            response_body = self._post_create_wallet_request(wallet, descriptors=True)
+            response_body = self._post_create_wallet_request(wallet, descriptors=True, disable_private_keys=disable_private_keys)
             error = response_body.get("error")
 
         if error is not None:
@@ -109,11 +109,11 @@ class BtcNode:
             raise Exception(error)
         print(response_body)
 
-    def _post_create_wallet_request(self, wallet, descriptors):
+    def _post_create_wallet_request(self, wallet, descriptors, disable_private_keys=False):
         try:
             response = requests.post(
                 f"http://{self.host}:{self.port}",
-                data=json.dumps(self._create_wallet_request(wallet, descriptors=descriptors)),
+                data=json.dumps(self._create_wallet_request(wallet, descriptors=descriptors, disable_private_keys=disable_private_keys)),
                 auth=("user", "password"),
                 proxies=dict(http=self.proxy),
                 timeout=5,
@@ -139,10 +139,10 @@ class BtcNode:
             )
         )
 
-    def _create_wallet_request(self, wallet, descriptors):
+    def _create_wallet_request(self, wallet, descriptors, disable_private_keys=False):
         return {
             "jsonrpc": "2.0",
             "id": "1",
             "method": "createwallet",
-            "params": {"wallet_name": wallet, "descriptors": descriptors},
+            "params": {"wallet_name": wallet, "descriptors": descriptors, "disable_private_keys": disable_private_keys},
         }
