@@ -247,7 +247,8 @@ class EngineBase:
     def update_invoice_payments(self):
         due = list(filter(lambda x: x[0] <= self.current_block and x[1] <= self.current_round, self.invoices.keys()))
         for i in due:
-            self.pay_invoices(self.invoices.pop(i, []))
+            self.pay_invoices(self.invoices.get(i, []))
+            self.invoices.pop(i, None)
             print(f"- paid invoices for block {i[0]} and round {i[1]}")
         print(f"- {len(self.invoices)} invoices still pending")
 
@@ -280,33 +281,27 @@ class EngineBase:
         print(
             f"- paying {len(addressed_invoices)} invoices (batch size {BATCH_SIZE}, block {self.current_block}, round {self.current_round})"
         )
-        try:
-            for batch in utils.batched(addressed_invoices, BATCH_SIZE):
-                for _ in range(3):
-                    try:
-                        if self.distributor is None:
-                            raise RuntimeError("Distributor is not initialized")
-                        result = self.distributor.send(batch)
-                        if str(result) == "timeout":
-                            print("- transaction timeout")
-                            continue
-                        print(f"- transaction sent with txid {result}")
-                        break
-                    except Exception as e:
-                        # https://github.com/zkSNACKs/WalletWasabi/issues/12764
-                        if "Bad Request" in str(e):
-                            print("- transaction error (bad request)")
-                        else:
-                            print(f"- transaction error ({e})")
-                else:
-                    print("- invoice payment failed")
-                    raise Exception("Invoice payment failed")
-                print(f"- paid batch of {len(batch)} invoices")
-
-        except Exception as e:
-            print("- invoice payment failed")
-            pass
-            sleep(360)
+        for batch in utils.batched(addressed_invoices, BATCH_SIZE):
+            for _ in range(3):
+                try:
+                    if self.distributor is None:
+                        raise RuntimeError("Distributor is not initialized")
+                    result = self.distributor.send(batch)
+                    if str(result) == "timeout" or result is False or result is None:
+                        print("- transaction timeout")
+                        continue
+                    print(f"- transaction sent with txid {result}")
+                    break
+                except Exception as e:
+                    # https://github.com/zkSNACKs/WalletWasabi/issues/12764
+                    if "Bad Request" in str(e):
+                        print("- transaction error (bad request)")
+                    else:
+                        print(f"- transaction error ({e})")
+            else:
+                print("- invoice payment failed")
+                raise Exception("Invoice payment failed")
+            print(f"- paid batch of {len(batch)} invoices")
 
     def run(self):
         print(f"=== Scenario {self.scenario.name} ===")

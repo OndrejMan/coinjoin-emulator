@@ -6,6 +6,14 @@ import sys
 import json
 import os
 
+JOINMARKET_COINJOIN_AMOUNT_SATS = 40000
+JOINMARKET_COUNTERPARTIES = 4
+JOINMARKET_MAKER_MIN_SIZE_SATS = 30000
+JOINMARKET_ROUND_TIMEOUT_BLOCKS = 45
+JOINMARKET_FINAL_SETTLE_BLOCKS = 1
+JOINMARKET_LOOP_SLEEP_SECONDS = 1
+
+
 class JoinmarketEngine(EngineBase):
 
     def __init__(self, args, driver):
@@ -283,27 +291,130 @@ class JoinmarketEngine(EngineBase):
             key=lambda event: (event.get("round_id", 0), event.get("taker", "")),
         )
 
-    def update_coinjoins_joinmarket(self):
-        total_started_rounds = len([
-            event for event in self.joinmarket_round_events
-            if event.get("status") in ("started", "stopped")
-        ])
-        for client in self.clients:
-            state = client.get_status()
-            # print(state)
-            if client.type == "maker" and not client.maker_running and not client.delay[0] > self.current_block:
-                client.start_maker(0, 5000, 0.00004, "sw0reloffer", 30000)
-                print(f"Starting maker {client.name}")
+    def _script_addresses(self, output):
+        script_pub_key = output.get("scriptPubKey") or {}
+        addresses = []
+        if script_pub_key.get("address"):
+            addresses.append(script_pub_key["address"])
+        addresses.extend(script_pub_key.get("addresses") or [])
+        return addresses
 
+    def _find_round_event_tx(self, event):
+        if event.get("txid"):
+            return {
+                "txid": event.get("txid"),
+                "block_height": event.get("block_height"),
+            }
+        if self.node is None or not event.get("destination_address"):
+            return None
+
+        start_height = max(0, int(event.get("start_chain_height") or 0))
+        tip_height = self.node.get_block_count()
+        for height in range(start_height, tip_height + 1):
+            block_hash = self.node.get_block_hash(height)
+            block = self.node.get_block_info(block_hash)
+            for tx in block.get("tx", []):
+                txid = tx.get("txid")
+                for output in tx.get("vout", []):
+                    if event["destination_address"] in self._script_addresses(output):
+                        return {
+                            "txid": txid,
+                            "block_height": block.get("height", height),
+                        }
+        return None
+
+    def _confirm_started_rounds(self):
+        confirmed = 0
+        for event in self.joinmarket_round_events:
+            if event.get("status") != "started":
+                continue
+
+            match = self._find_round_event_tx(event)
+            if not match:
+                continue
+
+            event["status"] = "confirmed"
+            event["txid"] = match.get("txid")
+            event["block_height"] = match.get("block_height")
+            event["confirmed_block"] = self.current_block
+            self.current_round += 1
+            confirmed += 1
+            print(f"Confirmed coinjoin {event.get('taker')} as {event.get('txid')}")
+        return confirmed
+
+    def _active_round_for_taker(self, taker_name):
+        return any(
+            event.get("status") == "started" and event.get("taker") == taker_name
+            for event in self.joinmarket_round_events
+        )
+
+    def _started_round_count(self):
+        return len([
+            event for event in self.joinmarket_round_events
+            if event.get("status") in ("started", "confirmed", "stopped")
+        ])
+
+    def _expire_stalled_rounds(self):
+        for event in self.joinmarket_round_events:
+            if event.get("status") != "started":
+                continue
+            age = self.current_block - int(event.get("start_block") or 0)
+            if age <= JOINMARKET_ROUND_TIMEOUT_BLOCKS:
+                continue
+            event["status"] = "failed"
+            event["stop_block"] = self.current_block
+            taker_name = event.get("taker")
+            for client in self.clients:
+                if client.name == taker_name:
+                    client.stop_coinjoin()
+                    client.coinjoin_in_process = False
+                    break
+            raise RuntimeError(
+                f"JoinMarket round for {taker_name} did not produce a mined "
+                f"destination output within {JOINMARKET_ROUND_TIMEOUT_BLOCKS} blocks"
+            )
+
+    def update_coinjoins_joinmarket(self):
+        self._confirm_started_rounds()
+        self._expire_stalled_rounds()
+
+        for client in self.clients:
+            client.get_status()
+
+        for client in self.clients:
+            if client.type == "maker" and not client.maker_running and client.delay[0] <= self.current_block:
+                client.start_maker(0, 5000, 0.00004, "sw0reloffer", JOINMARKET_MAKER_MIN_SIZE_SATS)
+                print(f"Starting maker {client.name}")
+                try:
+                    client.get_status()
+                except Exception:
+                    pass
+
+        running_makers = [
+            maker for maker in self.clients
+            if maker.type == "maker" and maker.maker_running
+        ]
+        if len(running_makers) < JOINMARKET_COUNTERPARTIES:
+            print(
+                f"- waiting for JoinMarket makers "
+                f"({len(running_makers)}/{JOINMARKET_COUNTERPARTIES} running)"
+            )
+            return
+
+        total_started_rounds = self._started_round_count()
+        for client in self.clients:
             can_start_more_rounds = self.scenario.rounds == 0 or total_started_rounds < self.scenario.rounds
-            if client.type == "taker" and not client.coinjoin_in_process and not client.delay[0] > self.current_block and can_start_more_rounds:
+            if (
+                client.type == "taker"
+                and not client.coinjoin_in_process
+                and client.delay[0] <= self.current_block
+                and can_start_more_rounds
+                and not self._active_round_for_taker(client.name)
+            ):
                 address = client.get_new_address()
-                maker_names = [
-                    maker.name
-                    for maker in self.clients
-                    if maker.type == "maker" and maker.maker_running
-                ]
-                client.start_coinjoin(0, 40000, 4, address)
+                maker_names = [maker.name for maker in running_makers]
+                client.start_coinjoin(0, JOINMARKET_COINJOIN_AMOUNT_SATS, JOINMARKET_COUNTERPARTIES, address)
+                client.coinjoin_in_process = True
                 client.coinjoin_start = self.current_block
                 total_started_rounds += 1
                 self.joinmarket_round_events.append({
@@ -312,24 +423,15 @@ class JoinmarketEngine(EngineBase):
                     "status": "started",
                     "taker": client.name,
                     "candidate_makers": maker_names,
-                    "counterparties": 4,
-                    "amount_sats": 40000,
+                    "counterparties": JOINMARKET_COUNTERPARTIES,
+                    "amount_sats": JOINMARKET_COINJOIN_AMOUNT_SATS,
                     "mixdepth": 0,
                     "destination_address": address,
                     "start_block": self.current_block,
+                    "start_chain_height": self.node.get_block_count() if self.node is not None else None,
                 })
                 print(f"Starting coinjoin {client.name}")
-
-            if client.type == "taker" and client.coinjoin_in_process and client.coinjoin_start + 4 < self.current_block:
-                client.stop_coinjoin()
-                client.coinjoin_in_process = False
-                self.current_round += 1
-                for event in reversed(self.joinmarket_round_events):
-                    if event.get("taker") == client.name and event.get("status") == "started":
-                        event["status"] = "stopped"
-                        event["stop_block"] = self.current_block
-                        break
-                print(f"Stopping coinjoin {client.name}")
+                break
 
 
     def run_engine(self):
@@ -344,6 +446,16 @@ class JoinmarketEngine(EngineBase):
 
         while (self.scenario.rounds == 0 or self.current_round < self.scenario.rounds) and (
                 self.scenario.blocks == 0 or self.current_block < self.scenario.blocks):
+            if (
+                self.scenario.blocks == 0
+                and self.scenario.rounds > 0
+                and self.current_block > (self.scenario.rounds * JOINMARKET_ROUND_TIMEOUT_BLOCKS) + 10
+            ):
+                raise RuntimeError(
+                    f"JoinMarket scenario did not complete {self.scenario.rounds} "
+                    f"round(s) within {self.current_block} simulated blocks"
+                )
+
             for _ in range(3):
                 try:
                     self.current_block = self.node.get_block_count() - initial_block  # type: ignore
@@ -359,9 +471,10 @@ class JoinmarketEngine(EngineBase):
                 f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60),
                 end="\r",
             )
-            sleep(1)
+            if self.scenario.blocks == 0 or self.current_block < self.scenario.blocks:
+                self.node.mine_block()
+            sleep(JOINMARKET_LOOP_SLEEP_SECONDS)
 
         print()
         print(f"- limit reached")
-        sleep(60)
-        self.node.mine_block()
+        self.node.mine_block(JOINMARKET_FINAL_SETTLE_BLOCKS)

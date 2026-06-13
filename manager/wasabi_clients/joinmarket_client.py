@@ -337,14 +337,19 @@ class JoinMarketClientServer:
         return response
 
     def send(self, addressed_fundings):
+        results = []
         try:
             for address, amount in addressed_fundings:
-                self.simple_send(destination_address=address, amount_sats=amount)
+                result = self.simple_send(destination_address=address, amount_sats=amount)
+                if not result:
+                    raise Exception(f"direct-send failed for {amount} sats to {address}")
+                results.append(result)
                 print(f"- sent {amount} sats to {address}")
                 sleep(5)  # The btc node needs time to process the transaction
         except Exception as e:
             print(f"- error during fund distribution: {e}")
             raise e
+        return results
 
 
     def simple_send(self, destination_address, amount_sats, mixdepth=0, txfee=5000):

@@ -100,6 +100,13 @@ class JoinMarketClientServerTest(unittest.TestCase):
         )
         self.assertEqual(request.call_args.kwargs["headers"], {})
 
+    def test_send_raises_when_direct_send_fails(self):
+        client = JoinMarketClientServer(host="dind")
+
+        with patch.object(client, "simple_send", return_value=False):
+            with self.assertRaisesRegex(Exception, "direct-send failed"):
+                client.send([("bcrt1destination", 100000)])
+
 
 if __name__ == "__main__":
     unittest.main()
