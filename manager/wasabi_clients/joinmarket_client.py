@@ -49,18 +49,45 @@ class JoinMarketClientServer:
         self.token = ""
         self.refresh_token = ""
 
-    def _rpc(self, method, endpoint, json_data=None, timeout=5, repeat=4) -> dict:
+    def _headers(self, auth_required=True):
         headers = {}
-        if self.token:
+        if auth_required and self.token:
             headers['Authorization'] = f'Bearer {self.token}'
+        return headers
+
+    def _store_tokens(self, response):
+        self.token = response.get("token", "")
+        self.refresh_token = response.get("refresh_token", "")
+
+    def _ensure_auth(self):
+        if not self.token:
+            self.unlock_wallet()
+        if not self.token:
+            raise Exception("Could not authenticate JoinMarket wallet")
+
+    def _raise_response_error(self, response):
+        if response.status_code == 409:
+            raise JoinmarketConflictException(f"Error {response.status_code}: {response.text}", response)
+        try:
+            print(response.json())
+            error_message = response.json().get("message", "Unknown error")
+        except json.JSONDecodeError:
+            error_message = response.text
+        raise Exception(f"Error {response.status_code}: {error_message}")
+
+    def _rpc(self, method, endpoint, json_data=None, timeout=5, repeat=4, auth_required=True) -> dict:
+        if auth_required:
+            self._ensure_auth()
+
         response = None
-        for _ in range(repeat):
+        refreshed_after_401 = False
+        for attempt in range(repeat):
             try:
                 response = requests.request(
                     method=method,
                     url=f"https://{self.host}:{self.port}/api/v1{endpoint}",
                     json=json_data or {},
-                    headers=headers,
+                    headers=self._headers(auth_required=auth_required),
                     proxies=dict(http=self.proxy),
                     timeout=timeout,
                     verify=False,
@@ -71,24 +98,27 @@ class JoinMarketClientServer:
                 continue
 
             if response.status_code == 401:
+                if not auth_required or refreshed_after_401 or attempt == repeat - 1:
+                    break
+                self.token = ""
+                self.refresh_token = ""
                 self.unlock_wallet()
-                headers['Authorization'] = f'Bearer {self.token}'
+                if not self.token:
+                    raise Exception("Could not authenticate JoinMarket wallet")
+                refreshed_after_401 = True
                 continue
 
             if response.status_code == 409:
                 raise JoinmarketConflictException(f"Error {response.status_code}: {response.text}", response)
 
             if response.status_code >= 400:
-                try:
-                    print(response.json())
-                    error_message = response.json().get("message", "Unknown error")
-                except json.JSONDecodeError:
-                    error_message = response.text
-                raise Exception(f"Error {response.status_code}: {error_message}")
+                self._raise_response_error(response)
 
             return response.json()
 
         if response is not None:
+            if response.status_code >= 400:
+                self._raise_response_error(response)
             return response.json()
 
         raise Exception("timeout")
@@ -96,7 +126,7 @@ class JoinMarketClientServer:
     def get_status(self):
         method = "GET"
         endpoint = "/session"
-        response = self._rpc(method, endpoint)
+        response = self._rpc(method, endpoint, auth_required=False)
         self.maker_running = response.get("maker_running", False)
         self.coinjoin_in_process = response.get("coinjoin_in_process", False)
         return response
@@ -111,9 +141,8 @@ class JoinMarketClientServer:
             "password": PASSWORD,
             "wallettype": WALLET_TYPE
         }
-        response = self._rpc(method, endpoint, json_data=data)
-        self.token = response.get("token", "")
-        self.refresh_token = response.get("refresh_token", "")
+        response = self._rpc(method, endpoint, json_data=data, auth_required=False)
+        self._store_tokens(response)
         return response
 
     def unlock_wallet(self, password=None):
@@ -121,9 +150,8 @@ class JoinMarketClientServer:
         method = "POST"
         endpoint = f"/wallet/{self.walletname}/unlock"
         json_data = {"password": password or PASSWORD}
-        response = self._rpc(method, endpoint, json_data=json_data)
-        self.token = response.get("token", "")
-        self.refresh_token = response.get("refresh_token", "")
+        response = self._rpc(method, endpoint, json_data=json_data, auth_required=False)
+        self._store_tokens(response)
         return response
 
 
