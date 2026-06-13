@@ -81,7 +81,11 @@ class JoinmarketEngine(EngineBase):
     def start_engine_infrastructure(self):
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
-        self.node.create_wallet("jm_wallet", disable_private_keys=True)
+        self.node.create_wallet(
+            "jm_wallet",
+            disable_private_keys=False,
+            allow_descriptor_fallback=False,
+        )
         print("- created jm_wallet in BitcoinCore")
         # Allow the wallet to be fully committed before the distributor
         # container tries to load it via Bitcoin Core RPC.

@@ -59,11 +59,12 @@ class FakeBtcNode:
     def __init__(self):
         self.create_wallet_calls = []
 
-    def create_wallet(self, wallet, disable_private_keys=False):
+    def create_wallet(self, wallet, disable_private_keys=False, allow_descriptor_fallback=True):
         self.create_wallet_calls.append(
             {
                 "wallet": wallet,
                 "disable_private_keys": disable_private_keys,
+                "allow_descriptor_fallback": allow_descriptor_fallback,
             }
         )
 
@@ -115,7 +116,7 @@ class JoinmarketEngineTest(unittest.TestCase):
             [("joinmarket-distributor", "/home/joinmarket/jmwalletd.log")],
         )
 
-    def test_engine_creates_watch_only_bitcoin_core_wallet_for_joinmarket(self):
+    def test_engine_creates_legacy_keyed_bitcoin_core_wallet_for_joinmarket(self):
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
         engine.node = FakeBtcNode()
@@ -127,7 +128,13 @@ class JoinmarketEngineTest(unittest.TestCase):
 
         self.assertEqual(
             engine.node.create_wallet_calls,
-            [{"wallet": "jm_wallet", "disable_private_keys": True}],
+            [
+                {
+                    "wallet": "jm_wallet",
+                    "disable_private_keys": False,
+                    "allow_descriptor_fallback": False,
+                }
+            ],
         )
         start_irc_server.assert_called_once_with()
 

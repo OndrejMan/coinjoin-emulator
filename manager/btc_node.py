@@ -97,10 +97,10 @@ class BtcNode:
         # wait for the fee-building transactions
         sleep(20)
 
-    def create_wallet(self, wallet, disable_private_keys=False):
+    def create_wallet(self, wallet, disable_private_keys=False, allow_descriptor_fallback=True):
         response_body = self._post_create_wallet_request(wallet, descriptors=False, disable_private_keys=disable_private_keys)
         error = response_body.get("error")
-        if error is not None and self._is_bdb_wallet_creation_error(error):
+        if error is not None and allow_descriptor_fallback and self._is_bdb_wallet_creation_error(error):
             response_body = self._post_create_wallet_request(wallet, descriptors=True, disable_private_keys=disable_private_keys)
             error = response_body.get("error")
 
