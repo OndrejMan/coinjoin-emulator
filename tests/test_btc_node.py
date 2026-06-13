@@ -66,6 +66,29 @@ class BtcNodeTest(unittest.TestCase):
         self.assertTrue(second_request["params"]["descriptors"])
         self.assertEqual(second_request["params"]["wallet_name"], "jm_wallet")
 
+    def test_create_wallet_preserves_disabled_private_keys_on_descriptor_retry(self):
+        legacy_response = Mock()
+        legacy_response.json.return_value = {
+            "error": {
+                "code": -4,
+                "message": "Compiled without bdb support (required for legacy wallets)",
+            }
+        }
+
+        descriptor_response = Mock()
+        descriptor_response.json.return_value = {"result": {"name": "jm_wallet"}}
+
+        with patch("manager.btc_node.requests.post", side_effect=[legacy_response, descriptor_response]) as post:
+            BtcNode().create_wallet("jm_wallet", disable_private_keys=True)
+
+        first_request = json.loads(post.call_args_list[0].kwargs["data"])
+        second_request = json.loads(post.call_args_list[1].kwargs["data"])
+        self.assertFalse(first_request["params"]["descriptors"])
+        self.assertTrue(first_request["params"]["disable_private_keys"])
+        self.assertTrue(second_request["params"]["descriptors"])
+        self.assertTrue(second_request["params"]["disable_private_keys"])
+        self.assertEqual(second_request["params"]["wallet_name"], "jm_wallet")
+
     def test_create_wallet_accepts_descriptor_success_without_error_field(self):
         legacy_response = Mock()
         legacy_response.json.return_value = {

@@ -115,7 +115,7 @@ class JoinmarketEngineTest(unittest.TestCase):
             [("joinmarket-distributor", "/home/joinmarket/jmwalletd.log")],
         )
 
-    def test_engine_creates_keyed_bitcoin_core_wallet_for_joinmarket(self):
+    def test_engine_creates_watch_only_bitcoin_core_wallet_for_joinmarket(self):
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
         engine.node = FakeBtcNode()
@@ -127,7 +127,7 @@ class JoinmarketEngineTest(unittest.TestCase):
 
         self.assertEqual(
             engine.node.create_wallet_calls,
-            [{"wallet": "jm_wallet", "disable_private_keys": False}],
+            [{"wallet": "jm_wallet", "disable_private_keys": True}],
         )
         start_irc_server.assert_called_once_with()
 
