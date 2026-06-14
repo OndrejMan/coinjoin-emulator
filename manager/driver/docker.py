@@ -56,6 +56,10 @@ class DockerDriver(Driver):
         volumes: dict[str, dict[str, str]] | None = None
     ) -> tuple[str, dict[int, int]]:
         self._remove_existing_container(name)
+        docker_ports = {
+            f"{container_port}/tcp": host_port
+            for container_port, host_port in (ports or {}).items()
+        }
 
         for attempt in range(2):
             try:
@@ -66,7 +70,7 @@ class DockerDriver(Driver):
                     name=name,
                     hostname=name,
                     network=self.network.id,
-                    ports=ports or {},
+                    ports=docker_ports,
                     environment={
                         key: value
                         for key, value in (env or {}).items()
