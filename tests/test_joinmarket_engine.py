@@ -326,6 +326,8 @@ class JoinmarketEngineTest(unittest.TestCase):
             ],
         )
         self.assertIs(client, FakeJoinMarketClientServer.instances[0])
+        self.assertIsNotNone(client)
+        assert client is not None
         self.assertEqual(client.host, "host.docker.internal")
         self.assertEqual(client.port, 32083)
         self.assertEqual(client.type, "taker")
@@ -345,6 +347,8 @@ class JoinmarketEngineTest(unittest.TestCase):
         ):
             client = engine.start_client(2, wallet)
 
+        self.assertIsNotNone(client)
+        assert client is not None
         self.assertEqual(driver.calls[0]["ports"], {28183: 28186})
         self.assertEqual(
             driver.calls[0]["env"],

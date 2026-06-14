@@ -3,6 +3,7 @@ import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -49,7 +50,7 @@ from manager.driver.docker import DockerDriver
 
 
 def docker_not_found() -> Exception:
-    return docker.errors.NotFound("not found")
+    return cast(Exception, docker.errors.NotFound("not found"))
 
 
 class DockerDriverTest(unittest.TestCase):

@@ -46,15 +46,15 @@ class DockerDriver(Driver):
 
     def run(
         self,
-        name,
-        image,
-        env=None,
-        ports=None,
-        skip_ip=False,
-        cpu=0.1,
-        memory=768,
-        volumes: dict | None = None
-    ):
+        name: str,
+        image: str,
+        env: dict[str, str | None] | None = None,
+        ports: dict[int, int] | None = None,
+        skip_ip: bool = False,
+        cpu: float = 0.1,
+        memory: int = 768,
+        volumes: dict[str, dict[str, str]] | None = None
+    ) -> tuple[str, dict[int, int]]:
         self._remove_existing_container(name)
 
         for attempt in range(2):

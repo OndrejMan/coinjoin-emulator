@@ -83,21 +83,21 @@ class JoinmarketEngine(EngineBase):
             ],
         )
 
-    def prepare_images(self):
+    def prepare_images(self) -> None:
         print("Preparing images")
         self.prepare_image("btc-node")
         self.prepare_image("joinmarket-client-server", local_build=True)
         self.prepare_image("irc-server")
 
 
-    def start_engine_infrastructure(self):
+    def start_engine_infrastructure(self) -> None:
         self.start_irc_server()
         print("- started irc-server")
 
-    def _core_wallet_name(self, client_name):
+    def _core_wallet_name(self, client_name: str) -> str:
         return f"jm_wallet_{client_name.replace('-', '_')}"
 
-    def _create_joinmarket_core_wallet(self, wallet_name):
+    def _create_joinmarket_core_wallet(self, wallet_name: str) -> None:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
 
@@ -109,7 +109,7 @@ class JoinmarketEngine(EngineBase):
         print(f"- created {wallet_name} in BitcoinCore")
 
 
-    def start_irc_server(self):
+    def start_irc_server(self) -> None:
         name = "irc-server"
 
         try:
@@ -126,7 +126,7 @@ class JoinmarketEngine(EngineBase):
             raise Exception("Could not start IRC server")
 
 
-    def _dump_container_log(self, container_name, log_path):
+    def _dump_container_log(self, container_name: str, log_path: str) -> None:
         """Try to read a log file from a running container for diagnostics."""
         try:
             log_content = self.driver.logs(container_name)
@@ -140,7 +140,7 @@ class JoinmarketEngine(EngineBase):
         except Exception:
             print(f"- could not retrieve {log_path} from {container_name}")
 
-    def start_distributor(self):
+    def start_distributor(self) -> None:
         name = "joinmarket-distributor"
         port = 28183  # Use a specific port for the distributor
         self._create_joinmarket_core_wallet(JOINMARKET_DISTRIBUTOR_RPC_WALLET)
@@ -175,14 +175,14 @@ class JoinmarketEngine(EngineBase):
 
     def init_joinmarket_clientserver(
         self,
-        name,
-        port,
-        host="localhost",
-        type="maker",
-        delay=(0, 0),
-        stop=(0, 0),
-        proxy="",
-    ):
+        name: str,
+        port: int,
+        host: str = "localhost",
+        type: str = "maker",
+        delay: tuple[int, int] = (0, 0),
+        stop: tuple[int, int] = (0, 0),
+        proxy: str = "",
+    ) -> JoinMarketClientServer:
         return JoinMarketClientServer(
             name=name,
             host=host,
@@ -194,7 +194,7 @@ class JoinmarketEngine(EngineBase):
         )
 
 
-    def start_client(self, idx: int, wallet: WalletConfig | None = None):
+    def start_client(self, idx: int, wallet: WalletConfig | None = None) -> JoinMarketClientServer | None:
         if wallet is None:
             raise ValueError("wallet configuration is required to start a JoinMarket client")
 
@@ -247,11 +247,11 @@ class JoinmarketEngine(EngineBase):
         print(f"- started {client.name} (wait took {time() - start} seconds)")
         return client
 
-    def stop_client(self, idx: int):
+    def stop_client(self, idx: int) -> None:
         name = f"jcs-{idx:03}"
         self.driver.stop(name)
 
-    def validate_clients(self):
+    def validate_clients(self) -> None:
         takers = [client for client in self.clients if client.type == "taker"]
         makers = [client for client in self.clients if client.type == "maker"]
         if not takers:
@@ -259,13 +259,13 @@ class JoinmarketEngine(EngineBase):
         if not makers:
             raise RuntimeError("JoinMarket scenario requires at least one started maker client")
 
-    def store_engine_logs(self, data_path):
+    def store_engine_logs(self, data_path: str) -> None:
         labels = self.match_joinmarket_rounds_to_blocks(data_path)
         with open(os.path.join(data_path, "joinmarket_round_events.json"), "w") as f:
             json.dump(labels, f, indent=2)
             print("- stored JoinMarket round labels")
 
-    def pay_invoices(self, addressed_invoices):
+    def pay_invoices(self, addressed_invoices: list[tuple[str, int]]) -> None:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
 
@@ -281,7 +281,7 @@ class JoinmarketEngine(EngineBase):
             self.node.mine_block()
             print("- confirmed JoinMarket invoice funding")
 
-    def match_joinmarket_rounds_to_blocks(self, data_path):
+    def match_joinmarket_rounds_to_blocks(self, data_path: str) -> list[dict[str, object]]:
         labels_by_destination = {
             event["destination_address"]: dict(event)
             for event in self.joinmarket_round_events
@@ -515,7 +515,7 @@ class JoinmarketEngine(EngineBase):
 
             for _ in range(3):
                 try:
-                    self.current_block = self.node.get_block_count() - initial_block  # type: ignore
+                    self.current_block = self.node.get_block_count() - initial_block
                     break
                 except Exception as e:
                     print(f"- could not get blocks".ljust(60), end="\r")

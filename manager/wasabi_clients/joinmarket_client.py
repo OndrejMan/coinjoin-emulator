@@ -1,4 +1,5 @@
 import json
+from typing import cast
 
 import requests
 from time import sleep, time
@@ -15,7 +16,7 @@ BTC = 100_000_000
 
 
 class JoinmarketConflictException(Exception):
-    def __init__(self, message, response):
+    def __init__(self, message: str, response: requests.Response) -> None:
         super().__init__(message)
         self.response = response
 
@@ -75,7 +76,15 @@ class JoinMarketClientServer:
             error_message = response.text
         raise Exception(f"Error {response.status_code}: {error_message}")
 
-    def _rpc(self, method, endpoint, json_data=None, timeout=5, repeat=4, auth_required=True) -> dict:
+    def _rpc(
+        self,
+        method: str,
+        endpoint: str,
+        json_data: dict[str, object] | None = None,
+        timeout: int = 5,
+        repeat: int = 4,
+        auth_required: bool = True,
+    ) -> dict[str, object]:
         if auth_required:
             self._ensure_auth()
 
@@ -114,12 +123,12 @@ class JoinMarketClientServer:
             if response.status_code >= 400:
                 self._raise_response_error(response)
 
-            return response.json()
+            return cast(dict[str, object], response.json())
 
         if response is not None:
             if response.status_code >= 400:
                 self._raise_response_error(response)
-            return response.json()
+            return cast(dict[str, object], response.json())
 
         raise Exception("timeout")
 
@@ -127,8 +136,8 @@ class JoinMarketClientServer:
         method = "GET"
         endpoint = "/session"
         response = self._rpc(method, endpoint, auth_required=False)
-        self.maker_running = response.get("maker_running", False)
-        self.coinjoin_in_process = response.get("coinjoin_in_process", False)
+        self.maker_running = bool(response.get("maker_running", False))
+        self.coinjoin_in_process = bool(response.get("coinjoin_in_process", False))
         return response
 
     def _create_wallet(self, walletname=None):

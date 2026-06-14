@@ -8,7 +8,7 @@ import random
 
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
 
-def create_backend_config(args):
+def create_backend_config(args: argparse.Namespace) -> dict[str, object]:
     """Create backend configuration dictionary."""
     return {
         "MaxInputCountByRound": args.max_coinjoin,
@@ -22,7 +22,7 @@ def create_backend_config(args):
     }
 
 
-def setup_parser(parser: argparse.ArgumentParser):
+def setup_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--name", type=str, help="scenario name")
     parser.add_argument(
         "--client-count", type=int, default=10, help="number of wallets"

@@ -55,7 +55,7 @@ class WasabiClientBase:
         }
         return self._rpc(request, wallet=False)
 
-    def _create_wallet(self, wallet_name: str | None = None):
+    def _create_wallet(self, wallet_name: str | None = None) -> object:
         request = {
             "method": "createwallet",
             "params": [wallet_name or WALLET_NAME, ""],
