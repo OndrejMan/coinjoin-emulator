@@ -425,6 +425,7 @@ disable = [
     "unnecessary-ellipsis",
     "protected-access",
     "bare-except",
+    "f-string-without-interpolation",
     "no-name-in-module" # TODO
 ]
 

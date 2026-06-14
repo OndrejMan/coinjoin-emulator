@@ -219,6 +219,9 @@ class WasabiEngine(EngineBase):
             stop=stop,
         )
 
+    def init_client(self) -> object:
+        raise NotImplementedError("Wasabi clients require init_wasabi_client()")
+
     def start_client(self, idx: int, wallet: WalletConfig | None = None) -> EmulatorClient | None:
         if wallet is None:
             raise ValueError("wallet parameter is required")

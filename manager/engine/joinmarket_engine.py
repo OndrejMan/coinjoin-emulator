@@ -193,6 +193,8 @@ class JoinmarketEngine(EngineBase):
             proxy=proxy,
         )
 
+    def init_client(self) -> object:
+        raise NotImplementedError("JoinMarket clients require init_joinmarket_clientserver()")
 
     def start_client(self, idx: int, wallet: WalletConfig | None = None) -> JoinMarketClientServer | None:
         if wallet is None:
