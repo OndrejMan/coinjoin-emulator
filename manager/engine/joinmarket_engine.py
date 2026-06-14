@@ -10,7 +10,7 @@ import threading
 JOINMARKET_COINJOIN_AMOUNT_SATS = 40000
 JOINMARKET_COUNTERPARTIES = 4
 JOINMARKET_MAKER_MIN_SIZE_SATS = 30000
-JOINMARKET_ROUND_TIMEOUT_BLOCKS = 45
+JOINMARKET_ROUND_TIMEOUT_BLOCKS = 180
 JOINMARKET_FINAL_SETTLE_BLOCKS = 1
 JOINMARKET_LOOP_SLEEP_SECONDS = 1
 JOINMARKET_DISTRIBUTOR_RPC_WALLET = "jm_wallet_distributor"
@@ -373,6 +373,12 @@ class JoinmarketEngine(EngineBase):
             for event in self.joinmarket_round_events
         )
 
+    def _has_active_round(self):
+        return any(
+            event.get("status") == "started"
+            for event in self.joinmarket_round_events
+        )
+
     def _started_round_count(self):
         return len([
             event for event in self.joinmarket_round_events
@@ -453,6 +459,7 @@ class JoinmarketEngine(EngineBase):
                 and not client.coinjoin_in_process
                 and client.delay[0] <= self.current_block
                 and can_start_more_rounds
+                and not self._has_active_round()
                 and not self._active_round_for_taker(client.name)
             ):
                 if not self._client_has_confirmed_balance(client, JOINMARKET_COINJOIN_AMOUNT_SATS, "taker"):

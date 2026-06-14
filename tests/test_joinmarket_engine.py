@@ -330,6 +330,38 @@ class JoinmarketEngineTest(unittest.TestCase):
             ["jcs-001", "jcs-002", "jcs-003", "jcs-004"],
         )
 
+    def test_update_does_not_start_parallel_taker_rounds(self):
+        driver = FakeDriver()
+        engine = JoinmarketEngine(engine_args(), driver)
+        engine.node = FakeBtcNode(block_count=205)
+        engine.scenario.rounds = 3
+        engine.current_block = 6
+        first_taker = FakeJoinMarketClientServer(name="jcs-000", type="taker", delay=(0, 0))
+        second_taker = FakeJoinMarketClientServer(name="jcs-001", type="taker", delay=(0, 0))
+        makers = [
+            FakeJoinMarketClientServer(name=f"jcs-{idx:03}", type="maker", delay=(0, 0))
+            for idx in range(2, 6)
+        ]
+        for maker in makers:
+            maker.maker_running = True
+        engine.clients = [first_taker, second_taker, *makers]
+        engine.joinmarket_round_events = [
+            {
+                "round_id": 1,
+                "status": "started",
+                "taker": "jcs-000",
+                "destination_address": "destination-address",
+                "start_block": 5,
+                "start_chain_height": 205,
+            }
+        ]
+
+        engine.update_coinjoins_joinmarket()
+
+        self.assertEqual(first_taker.started_coinjoins, [])
+        self.assertEqual(second_taker.started_coinjoins, [])
+        self.assertEqual(len(engine.joinmarket_round_events), 1)
+
     def test_update_waits_for_maker_confirmed_balance_before_starting(self):
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
