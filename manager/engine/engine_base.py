@@ -342,6 +342,8 @@ class EngineBase:
                     value = fund.value
                     block = fund.delay_blocks or 0
                     round = fund.delay_rounds or 0
+                else:
+                    raise TypeError(f"Unexpected fund config: {fund!r}")
                 addressed_invoice = (client.get_new_address(), value)
                 if (block, round) not in self.invoices:
                     self.invoices[(block, round)] = [addressed_invoice]

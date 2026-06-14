@@ -11,6 +11,7 @@ DEFAULT_IMAGE_PREFIX = "ghcr.io/ondrejman/"
 
 
 args: argparse.Namespace | None = None
+driver = None
 engine: EngineBase | None = None
 versions = set()
 
