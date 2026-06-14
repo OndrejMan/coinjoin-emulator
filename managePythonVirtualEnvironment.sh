@@ -37,5 +37,6 @@ else
     python3 -m pip install mypy
     pip install --upgrade pip
     python3 -m pip install --no-deps types-docker
+    python3 -m pip install --no-deps types-requests
 
 fi
