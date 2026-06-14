@@ -1,0 +1,3 @@
+from . import exceptions as exceptions
+
+def disable_warnings(category: type[Warning] | None = None) -> None: ...
