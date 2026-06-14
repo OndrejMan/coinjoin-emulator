@@ -5,6 +5,8 @@ import sys
 import numpy.random
 import copy
 import random
+from collections.abc import Iterable
+from typing import cast
 
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
 
@@ -165,16 +167,32 @@ def prepare_distribution(distribution):
     match dist_name:
         case "uniform":
             params = dist_params or [0.0, 10_000_000.0]
-            return lambda x: map(round, numpy.random.uniform(params[0], params[1], x))
+            return lambda x: [
+                round(value)
+                for value in cast(
+                    Iterable[float],
+                    numpy.random.uniform(params[0], params[1], size=x),
+                )
+            ]
         case "pareto":
             params = dist_params or [1.16]
-            return lambda x: map(
-                round, numpy.random.pareto(params[0], x) * 1_000_000
-            )
+            return lambda x: [
+                round(value)
+                for value in cast(
+                    Iterable[float],
+                    numpy.random.pareto(params[0], size=x) * 1_000_000,
+                )
+            ]
         case "lognorm":
             # parameters estimated from mainnet data of Wasabi 2.0 coinjoins
             params = dist_params or [14.1, 2.29]
-            return lambda x: map(round, numpy.random.lognormal(params[0], params[1], x))
+            return lambda x: [
+                round(value)
+                for value in cast(
+                    Iterable[float],
+                    numpy.random.lognormal(params[0], params[1], size=x),
+                )
+            ]
         case _:
             return None
 
