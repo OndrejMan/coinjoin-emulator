@@ -2,17 +2,17 @@ import os
 from traceback import print_exception
 from tracemalloc import stop
 
-from manager.engine.engine_base import (
+from .engine_base import (
     DriverProtocol,
     EmulatorClient,
     EngineArgs,
     EngineBase,
     InvoiceDistributor,
 )
-from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
-from manager.wasabi_backend_protocol import WasabiBackendProtocol
-from manager.wasabi_coordinator_protocol import WasabiCoordinatorProtocol
-from manager.wasabi_backend_factory import (
+from .configuration import ScenarioConfig, WalletConfig, WasabiConfig
+from ..wasabi_backend_protocol import WasabiBackendProtocol
+from ..wasabi_coordinator_protocol import WasabiCoordinatorProtocol
+from ..wasabi_backend_factory import (
     detect_backend_architecture,
     create_backend,
     create_coordinator,
@@ -20,8 +20,8 @@ from manager.wasabi_backend_factory import (
     get_backend_image_names,
     BackendArchitecture,
 )
-from manager.wasabi_clients import WasabiClient
-from manager.wasabi_clients.wasabi_client_base import WasabiClientBase
+from ..wasabi_clients import WasabiClient
+from ..wasabi_clients.wasabi_client_base import WasabiClientBase
 from time import sleep, time
 import sys
 import random

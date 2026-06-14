@@ -1,6 +1,6 @@
-from manager.btc_node import BtcNode
-from manager import utils
-from manager.engine.configuration import ScenarioConfig, WalletConfig, FundConfig
+from ..btc_node import BtcNode
+from ..utils import batched
+from .configuration import ScenarioConfig, WalletConfig, FundConfig
 from time import sleep
 from typing import Protocol
 import random
@@ -357,7 +357,7 @@ class EngineBase:
         print(
             f"- paying {len(addressed_invoices)} invoices (batch size {BATCH_SIZE}, block {self.current_block}, round {self.current_round})"
         )
-        for batch in utils.batched(addressed_invoices, BATCH_SIZE):
+        for batch in batched(addressed_invoices, BATCH_SIZE):
             for _ in range(3):
                 try:
                     if self.distributor is None:

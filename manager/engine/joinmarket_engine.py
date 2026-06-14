@@ -1,6 +1,6 @@
-from manager.engine.engine_base import DriverProtocol, EmulatorClient, EngineArgs, EngineBase, BTC
-from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
-from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
+from .engine_base import DriverProtocol, EmulatorClient, EngineArgs, EngineBase, BTC
+from .configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
+from ..wasabi_clients.joinmarket_client import JoinMarketClientServer
 from time import sleep, time
 import sys
 import json

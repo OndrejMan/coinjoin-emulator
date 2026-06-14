@@ -8,7 +8,7 @@ import random
 from collections.abc import Iterable
 from typing import Callable, cast
 
-from manager.engine.configuration import FundConfig, ScenarioConfig, WalletConfig, WasabiConfig
+from ..engine.configuration import FundConfig, ScenarioConfig, WalletConfig, WasabiConfig
 
 Distribution = Callable[[int], list[int]]
 SkipRounds = Callable[[int], list[int]]
