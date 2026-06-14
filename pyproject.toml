@@ -413,7 +413,6 @@ disable = [
     "redefined-outer-name",
     "redefined-builtin",
     "useless-import-alias",
-    "import-self",
     "invalid-name",
     "fixme",
     "raise-missing-from",

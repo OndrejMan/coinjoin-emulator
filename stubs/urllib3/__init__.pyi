@@ -1,3 +1,3 @@
-from . import exceptions as exceptions
+from urllib3 import exceptions as exceptions
 
 def disable_warnings(category: type[Warning] | None = None) -> None: ...
