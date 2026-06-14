@@ -5,6 +5,7 @@ from time import sleep, time
 import sys
 import json
 import os
+import threading
 
 JOINMARKET_COINJOIN_AMOUNT_SATS = 40000
 JOINMARKET_COUNTERPARTIES = 4
@@ -12,6 +13,7 @@ JOINMARKET_MAKER_MIN_SIZE_SATS = 30000
 JOINMARKET_ROUND_TIMEOUT_BLOCKS = 45
 JOINMARKET_FINAL_SETTLE_BLOCKS = 1
 JOINMARKET_LOOP_SLEEP_SECONDS = 1
+JOINMARKET_DISTRIBUTOR_RPC_WALLET = "jm_wallet_distributor"
 
 
 class JoinmarketEngine(EngineBase):
@@ -19,6 +21,7 @@ class JoinmarketEngine(EngineBase):
     def __init__(self, args, driver):
         super().__init__(args, driver, "/home/joinmarket")
         self.joinmarket_round_events = []
+        self._core_wallet_lock = threading.Lock()
 
     def default_scenario(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -87,19 +90,22 @@ class JoinmarketEngine(EngineBase):
 
 
     def start_engine_infrastructure(self):
-        if self.node is None:
-            raise RuntimeError("Bitcoin node is not initialized")
-        self.node.create_wallet(
-            "jm_wallet",
-            disable_private_keys=True,
-        )
-        print("- created jm_wallet in BitcoinCore")
-        # Allow the wallet to be fully committed before the distributor
-        # container tries to load it via Bitcoin Core RPC.
-        sleep(5)
-
         self.start_irc_server()
         print("- started irc-server")
+
+    def _core_wallet_name(self, client_name):
+        return f"jm_wallet_{client_name.replace('-', '_')}"
+
+    def _create_joinmarket_core_wallet(self, wallet_name):
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+
+        with self._core_wallet_lock:
+            self.node.create_wallet(
+                wallet_name,
+                disable_private_keys=True,
+            )
+        print(f"- created {wallet_name} in BitcoinCore")
 
 
     def start_irc_server(self):
@@ -136,11 +142,12 @@ class JoinmarketEngine(EngineBase):
     def start_distributor(self):
         name = "joinmarket-distributor"
         port = 28183  # Use a specific port for the distributor
+        self._create_joinmarket_core_wallet(JOINMARKET_DISTRIBUTOR_RPC_WALLET)
         try:
             ip, manager_ports = self.driver.run(
                 name,
                 f"{self.args.image_prefix}joinmarket-client-server",
-                env={},  # Add any necessary environment variables
+                env={"JM_RPC_WALLET_FILE": JOINMARKET_DISTRIBUTOR_RPC_WALLET},
                 ports={28183: port},
                 cpu=1.0,
                 memory=2048,
@@ -189,11 +196,13 @@ class JoinmarketEngine(EngineBase):
     def start_client(self, idx: int, wallet: WalletConfig):
         name = f"jcs-{idx:03}"
         port = 28184 + idx
+        core_wallet = self._core_wallet_name(name)
+        self._create_joinmarket_core_wallet(core_wallet)
         try:
             ip, manager_ports = self.driver.run(
                 name,
                 f"{self.args.image_prefix}joinmarket-client-server",
-                env={},
+                env={"JM_RPC_WALLET_FILE": core_wallet},
                 ports={28183: port},
                 cpu=(0.1),
                 memory=(768),
@@ -390,6 +399,23 @@ class JoinmarketEngine(EngineBase):
                 f"destination output within {JOINMARKET_ROUND_TIMEOUT_BLOCKS} blocks"
             )
 
+    def _client_confirmed_balance(self, client):
+        try:
+            return client.get_balance()
+        except Exception as e:
+            print(f"- waiting for {client.name} wallet balance ({e})")
+            return 0
+
+    def _client_has_confirmed_balance(self, client, required_sats, role):
+        balance = self._client_confirmed_balance(client)
+        if balance < required_sats:
+            print(
+                f"- waiting for JoinMarket {role} {client.name} balance "
+                f"({balance}/{required_sats} sats)"
+            )
+            return False
+        return True
+
     def update_coinjoins_joinmarket(self):
         self._confirm_started_rounds()
         self._expire_stalled_rounds()
@@ -399,8 +425,10 @@ class JoinmarketEngine(EngineBase):
 
         for client in self.clients:
             if client.type == "maker" and not client.maker_running and client.delay[0] <= self.current_block:
-                client.start_maker(0, 5000, 0.00004, "sw0reloffer", JOINMARKET_MAKER_MIN_SIZE_SATS)
+                if not self._client_has_confirmed_balance(client, JOINMARKET_MAKER_MIN_SIZE_SATS, "maker"):
+                    continue
                 print(f"Starting maker {client.name}")
+                client.start_maker(0, 5000, 0.00004, "sw0reloffer", JOINMARKET_MAKER_MIN_SIZE_SATS)
                 try:
                     client.get_status()
                 except Exception:
@@ -427,6 +455,8 @@ class JoinmarketEngine(EngineBase):
                 and can_start_more_rounds
                 and not self._active_round_for_taker(client.name)
             ):
+                if not self._client_has_confirmed_balance(client, JOINMARKET_COINJOIN_AMOUNT_SATS, "taker"):
+                    continue
                 address = client.get_new_address()
                 maker_names = [maker.name for maker in running_makers]
                 client.start_coinjoin(0, JOINMARKET_COINJOIN_AMOUNT_SATS, JOINMARKET_COUNTERPARTIES, address)

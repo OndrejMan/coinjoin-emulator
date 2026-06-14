@@ -15,8 +15,9 @@ class BtcNode:
     def _rpc(self, request, wallet=None):
         request["jsonrpc"] = "1.0"
         request["id"] = "1"
+        wallet_path = f"/wallet/{wallet}" if wallet else ""
         response = requests.post(
-            f"http://{self.host}:{self.port}" + ("/wallet/" + WALLET if wallet else ""),
+            f"http://{self.host}:{self.port}{wallet_path}",
             data=json.dumps(request),
             auth=("user", "password"),
             proxies=dict(http=self.proxy),

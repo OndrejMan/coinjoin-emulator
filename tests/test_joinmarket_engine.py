@@ -58,6 +58,7 @@ class FakeJoinMarketClientServer:
         self.started_maker = False
         self.started_coinjoins = []
         self.address_counter = 0
+        self.balance = 1000000
         FakeJoinMarketClientServer.instances.append(self)
 
     def wait_wallet(self, timeout):
@@ -69,6 +70,9 @@ class FakeJoinMarketClientServer:
             "maker_running": self.maker_running,
             "coinjoin_in_process": self.coinjoin_in_process,
         }
+
+    def get_balance(self):
+        return self.balance
 
     def start_maker(self, txfee, cjfee_a, cjfee_r, ordertype, minsize):
         self.started_maker = True
@@ -158,6 +162,7 @@ class JoinmarketEngineTest(unittest.TestCase):
     def test_distributor_uses_driver_port_mapping_without_proxy(self):
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
+        engine.node = FakeBtcNode()
 
         with patch(
             "manager.engine.joinmarket_engine.JoinMarketClientServer",
@@ -166,6 +171,20 @@ class JoinmarketEngineTest(unittest.TestCase):
             engine.start_distributor()
 
         self.assertEqual(driver.calls[0]["ports"], {28183: 28183})
+        self.assertEqual(
+            driver.calls[0]["env"],
+            {"JM_RPC_WALLET_FILE": "jm_wallet_distributor"},
+        )
+        self.assertEqual(
+            engine.node.create_wallet_calls,
+            [
+                {
+                    "wallet": "jm_wallet_distributor",
+                    "disable_private_keys": True,
+                    "allow_descriptor_fallback": True,
+                }
+            ],
+        )
         distributor = FakeJoinMarketClientServer.instances[0]
         self.assertEqual(distributor.host, "host.docker.internal")
         self.assertEqual(distributor.port, 32083)
@@ -174,6 +193,7 @@ class JoinmarketEngineTest(unittest.TestCase):
     def test_distributor_timeout_dumps_container_logs(self):
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
+        engine.node = FakeBtcNode()
         FakeJoinMarketClientServer.wait_wallet_result = False
 
         with patch(
@@ -189,7 +209,7 @@ class JoinmarketEngineTest(unittest.TestCase):
             [("joinmarket-distributor", "/home/joinmarket/jmwalletd.log")],
         )
 
-    def test_engine_creates_watch_only_bitcoin_core_wallet_for_joinmarket(self):
+    def test_engine_starts_irc_without_shared_joinmarket_core_wallet(self):
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
         engine.node = FakeBtcNode()
@@ -199,16 +219,7 @@ class JoinmarketEngineTest(unittest.TestCase):
         ):
             engine.start_engine_infrastructure()
 
-        self.assertEqual(
-            engine.node.create_wallet_calls,
-            [
-                {
-                    "wallet": "jm_wallet",
-                    "disable_private_keys": True,
-                    "allow_descriptor_fallback": True,
-                }
-            ],
-        )
+        self.assertEqual(engine.node.create_wallet_calls, [])
         start_irc_server.assert_called_once_with()
 
     def test_prepare_images_rebuilds_patched_joinmarket_client_server(self):
@@ -230,6 +241,7 @@ class JoinmarketEngineTest(unittest.TestCase):
     def test_client_uses_driver_port_mapping_without_proxy(self):
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
+        engine.node = FakeBtcNode()
         wallet = WalletConfig(
             funds=[1000],
             joinmarket=JoinMarketConfig(role=JoinMarketRole.TAKER),
@@ -242,6 +254,20 @@ class JoinmarketEngineTest(unittest.TestCase):
             client = engine.start_client(0, wallet)
 
         self.assertEqual(driver.calls[0]["ports"], {28183: 28184})
+        self.assertEqual(
+            driver.calls[0]["env"],
+            {"JM_RPC_WALLET_FILE": "jm_wallet_jcs_000"},
+        )
+        self.assertEqual(
+            engine.node.create_wallet_calls,
+            [
+                {
+                    "wallet": "jm_wallet_jcs_000",
+                    "disable_private_keys": True,
+                    "allow_descriptor_fallback": True,
+                }
+            ],
+        )
         self.assertIs(client, FakeJoinMarketClientServer.instances[0])
         self.assertEqual(client.host, "host.docker.internal")
         self.assertEqual(client.port, 32083)
@@ -250,6 +276,7 @@ class JoinmarketEngineTest(unittest.TestCase):
     def test_client_uses_pod_ip_and_container_port_with_proxy(self):
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(proxy="http://proxy:8080"), driver)
+        engine.node = FakeBtcNode()
         wallet = WalletConfig(
             funds=[1000],
             joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER),
@@ -262,6 +289,10 @@ class JoinmarketEngineTest(unittest.TestCase):
             client = engine.start_client(2, wallet)
 
         self.assertEqual(driver.calls[0]["ports"], {28183: 28186})
+        self.assertEqual(
+            driver.calls[0]["env"],
+            {"JM_RPC_WALLET_FILE": "jm_wallet_jcs_002"},
+        )
         self.assertEqual(client.host, "jcs-002.pod")
         self.assertEqual(client.port, 28183)
         self.assertEqual(client.proxy, "http://proxy:8080")
@@ -298,6 +329,21 @@ class JoinmarketEngineTest(unittest.TestCase):
             engine.joinmarket_round_events[0]["candidate_makers"],
             ["jcs-001", "jcs-002", "jcs-003", "jcs-004"],
         )
+
+    def test_update_waits_for_maker_confirmed_balance_before_starting(self):
+        driver = FakeDriver()
+        engine = JoinmarketEngine(engine_args(), driver)
+        engine.node = FakeBtcNode(block_count=205)
+        engine.scenario.rounds = 1
+        engine.current_block = 5
+        taker = FakeJoinMarketClientServer(name="jcs-000", type="taker", delay=(0, 0))
+        maker = FakeJoinMarketClientServer(name="jcs-001", type="maker", delay=(0, 0))
+        maker.balance = 0
+        engine.clients = [taker, maker]
+
+        engine.update_coinjoins_joinmarket()
+
+        self.assertFalse(maker.started_maker)
 
     def test_started_round_is_confirmed_by_mined_destination_output(self):
         driver = FakeDriver()
