@@ -1,6 +1,6 @@
 """Protocol definition for Wasabi coordinator implementations."""
 
-from typing import Protocol, Any
+from typing import Protocol
 
 
 class WasabiCoordinatorProtocol(Protocol):
@@ -11,7 +11,7 @@ class WasabiCoordinatorProtocol(Protocol):
     internal_ip: str
     proxy: str
     
-    def _get_status(self) -> dict[str, Any] | None:
+    def _get_status(self) -> dict[str, object] | None:
         """Get coordinator status.
         
         Returns:
@@ -19,7 +19,7 @@ class WasabiCoordinatorProtocol(Protocol):
         """
         ...
     
-    def _get_rounds(self) -> dict[str, Any] | None:
+    def _get_rounds(self) -> dict[str, object] | None:
         """Get active coinjoin rounds.
         
         Returns:

@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -36,9 +37,11 @@ class ScenarioConfigTest(unittest.TestCase):
 
         wallet = config.wallets[0]
         self.assertIsNotNone(wallet.wasabi)
-        self.assertEqual(wallet.wasabi.anon_score_target, 42)
-        self.assertTrue(wallet.wasabi.redcoin_isolation)
-        self.assertEqual(wallet.wasabi.skip_rounds, [0, 2])
+        wasabi = wallet.wasabi
+        assert wasabi is not None
+        self.assertEqual(wasabi.anon_score_target, 42)
+        self.assertTrue(wasabi.redcoin_isolation)
+        self.assertEqual(wasabi.skip_rounds, [0, 2])
 
     def test_flat_wasabi_wallet_config_still_works(self):
         scenario = {
@@ -62,8 +65,10 @@ class ScenarioConfigTest(unittest.TestCase):
 
         wallet = config.wallets[0]
         self.assertIsNotNone(wallet.wasabi)
-        self.assertEqual(wallet.wasabi.anon_score_target, 7)
-        self.assertFalse(wallet.wasabi.redcoin_isolation)
+        wasabi = wallet.wasabi
+        assert wasabi is not None
+        self.assertEqual(wasabi.anon_score_target, 7)
+        self.assertFalse(wasabi.redcoin_isolation)
 
     def test_nested_joinmarket_wallet_config_is_parsed(self):
         scenario = {
@@ -86,7 +91,9 @@ class ScenarioConfigTest(unittest.TestCase):
 
         wallet = config.wallets[0]
         self.assertIsNotNone(wallet.joinmarket)
-        self.assertEqual(wallet.joinmarket.role, JoinMarketRole.MAKER)
+        joinmarket = wallet.joinmarket
+        assert joinmarket is not None
+        self.assertEqual(joinmarket.role, JoinMarketRole.MAKER)
 
     def test_to_dict_serializes_joinmarket_role_as_json_value(self):
         scenario = {
@@ -108,7 +115,9 @@ class ScenarioConfigTest(unittest.TestCase):
             config = ScenarioConfig.from_json_config(path)
 
         serialized = config.to_dict()
-        self.assertEqual(serialized["wallets"][0]["joinmarket"]["role"], "maker")
+        wallets = cast(list[dict[str, object]], serialized["wallets"])
+        joinmarket = cast(dict[str, object], wallets[0]["joinmarket"])
+        self.assertEqual(joinmarket["role"], "maker")
         json.dumps(serialized)
 
 

@@ -2,7 +2,7 @@ import os
 from traceback import print_exception
 from tracemalloc import stop
 
-from manager.engine.engine_base import EngineBase
+from manager.engine.engine_base import DriverProtocol, EngineArgs, EngineBase
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
 from manager.wasabi_backend_protocol import WasabiBackendProtocol
 from manager.wasabi_coordinator_protocol import WasabiCoordinatorProtocol
@@ -22,10 +22,11 @@ import json
 import tempfile
 import multiprocessing
 import multiprocessing.pool
+from typing import cast
 
 
 class WasabiEngine(EngineBase):
-    def __init__(self, args, driver):
+    def __init__(self, args: EngineArgs, driver: DriverProtocol) -> None:
         self.coordinator: WasabiCoordinatorProtocol | None = None
         self.backend: WasabiBackendProtocol | None = None
         self.backend_architecture: BackendArchitecture | None = None
@@ -389,7 +390,8 @@ class WasabiEngine(EngineBase):
         if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
             resp = self.coordinator._get_status()
             if resp is not None:
-                for round_state in resp["RoundStates"]:
+                round_states = cast(list[dict[str, str]], resp["RoundStates"])
+                for round_state in round_states:
                     if round_state["Phase"] == "TransactionSigning":
                         self.round_ids.add(round_state["RoundId"])
                 return len(self.round_ids)
@@ -404,4 +406,3 @@ class WasabiEngine(EngineBase):
                     "/home/wasabi/.walletwasabi/backend/WabiSabi/CoinJoinIdStore.txt",
                 ).split("\n")[:-1]
             )
-

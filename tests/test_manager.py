@@ -19,6 +19,7 @@ def load_manager_entrypoint():
         "emulator_manager_entrypoint",
         PROJECT_ROOT / "manager.py",
     )
+    assert spec is not None
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)

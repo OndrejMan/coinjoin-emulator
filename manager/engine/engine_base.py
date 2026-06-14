@@ -2,6 +2,7 @@ from manager.btc_node import BtcNode
 from manager import utils
 from manager.engine.configuration import ScenarioConfig, WalletConfig, FundConfig
 from time import sleep
+from typing import Protocol
 import random
 import os
 import json
@@ -16,17 +17,92 @@ BATCH_SIZE = 20
 BTC = 100_000_000
 
 
+class EngineArgs(Protocol):
+    command: str
+    scenario: str | None
+    image_prefix: str
+    force_rebuild: bool
+    btcFolder: str | None
+    proxy: str
+    control_ip: str
+    btc_node_ip: str
+    wasabi_backend_ip: str
+
+
+class DriverProtocol(Protocol):
+    def has_image(self, name: str) -> bool: ...
+    def build(self, name: str, path: str) -> object: ...
+    def pull(self, name: str) -> object: ...
+    def run(
+        self,
+        name: str,
+        image: str,
+        env: dict[str, str | None] | None = None,
+        ports: dict[int, int] | None = None,
+        skip_ip: bool = False,
+        cpu: float = 0.1,
+        memory: int = 768,
+        volumes: dict[str, dict[str, str]] | None = None,
+    ) -> tuple[str, dict[int, int]]: ...
+    def stop(self, name: str) -> object: ...
+    def download(self, name: str, src_path: str, dst_path: str) -> object: ...
+    def peek(self, name: str, path: str) -> str: ...
+    def logs(self, name: str) -> str: ...
+    def upload(self, name: str, src_path: str, dst_path: str) -> object: ...
+    def cleanup(self, image_prefix: str = "") -> object: ...
+
+
+class EmulatorClient(Protocol):
+    name: str
+    type: str
+    maker_running: bool
+    coinjoin_in_process: bool
+    coinjoin_start: int
+    delay: tuple[int, int]
+    stop: tuple[int, int]
+
+    def get_new_address(self) -> str: ...
+    def get_status(self) -> object: ...
+    def get_balance(self) -> int: ...
+    def start_maker(
+        self,
+        txfee: int,
+        cjfee_a: int,
+        cjfee_r: float,
+        ordertype: str,
+        minsize: int,
+    ) -> object: ...
+    def start_coinjoin(
+        self,
+        mixdepth: int,
+        amount_sats: int,
+        counterparties: int,
+        destination: str,
+    ) -> object: ...
+    def list_coins(self) -> object: ...
+    def list_unspent_coins(self) -> object: ...
+    def list_keys(self) -> object: ...
+    def stop_coinjoin(self) -> object: ...
+
+
+class InvoiceDistributor(Protocol):
+    def get_new_address(self) -> str: ...
+    def get_balance(self) -> int: ...
+    def wait_wallet(self, timeout: int | None = None) -> bool: ...
+    def send(self, invoices: list[tuple[str, int]]) -> object: ...
+
+
 class EngineBase:
-    def __init__(self, args, driver, log_src_path):
+    def __init__(self, args: EngineArgs, driver: DriverProtocol, log_src_path: str) -> None:
         self.args = args
         self.driver = driver
         self.log_src_path = log_src_path
         self.scenario: ScenarioConfig = self.default_scenario()
-        self.versions = set()
+        self.versions: set[str] = set()
         self.node: BtcNode | None = None
-        self.distributor = None
-        self.clients = []
-        self.invoices = {}
+        self.distributor: InvoiceDistributor | None = None
+        self.clients: list[EmulatorClient] = []
+        self.invoices: dict[tuple[int, int], list[tuple[str, int]]] = {}
         self.current_block = 0
         self.current_round = 0
 
@@ -119,13 +195,13 @@ class EngineBase:
     def init_client(self):
         raise NotImplementedError
 
-    def start_client(self, idx: int, wallet=None):
+    def start_client(self, idx: int, wallet: WalletConfig | None = None) -> EmulatorClient | None:
         raise NotImplementedError
 
     def stop_client(self, idx: int):
         raise NotImplementedError
 
-    def start_clients(self, wallets):
+    def start_clients(self, wallets: list[WalletConfig]) -> None:
         print("Starting clients")
         with multiprocessing.pool.ThreadPool() as pool:
             new_clients = pool.starmap(self.start_client, enumerate(wallets, start=len(self.clients)))
@@ -155,9 +231,9 @@ class EngineBase:
                     if client is not None:
                         new_clients[restart_idx[idx]] = client
             else:
-                new_clients = list(filter(lambda x: x is not None, new_clients))
+                new_clients = [client for client in new_clients if client is not None]
                 print(f"- failed to start {len(wallets) - len(new_clients)} clients; continuing ...")
-        self.clients.extend(new_clients)
+        self.clients.extend(client for client in new_clients if client is not None)
 
         if len(new_clients) == 0 and len(wallets) > 0:
             raise RuntimeError("No emulator clients started successfully")

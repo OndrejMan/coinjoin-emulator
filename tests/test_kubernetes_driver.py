@@ -16,14 +16,14 @@ except ModuleNotFoundError:
     class ApiException(Exception):
         pass
 
-    client_module.CoreV1Api = object
-    client_module.V1DeleteOptions = object
-    config_module.load_kube_config = lambda: None
-    stream_module.stream = lambda *args, **kwargs: None
-    exceptions_module.ApiException = ApiException
+    setattr(client_module, "CoreV1Api", object)
+    setattr(client_module, "V1DeleteOptions", object)
+    setattr(config_module, "load_kube_config", lambda: None)
+    setattr(stream_module, "stream", lambda *args, **kwargs: None)
+    setattr(exceptions_module, "ApiException", ApiException)
 
-    kubernetes_module.client = client_module
-    kubernetes_module.config = config_module
+    setattr(kubernetes_module, "client", client_module)
+    setattr(kubernetes_module, "config", config_module)
 
     sys.modules["kubernetes"] = kubernetes_module
     sys.modules["kubernetes.client"] = client_module

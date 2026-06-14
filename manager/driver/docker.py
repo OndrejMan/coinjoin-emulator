@@ -10,7 +10,7 @@ import docker
 
 
 class DockerDriver(Driver):
-    def __init__(self, namespace="coinjoin"):
+    def __init__(self, namespace: str = "coinjoin") -> None:
         self.client: docker.DockerClient = docker.from_env()
         self._namespace = namespace
 
@@ -114,7 +114,10 @@ class DockerDriver(Driver):
             fo.write(d)
         fo.seek(0)
         with tarfile.open(fileobj=fo) as tar:
-            return tar.extractfile(os.path.basename(path)).read().decode()
+            extracted = tar.extractfile(os.path.basename(path))
+            if extracted is None:
+                raise FileNotFoundError(path)
+            return extracted.read().decode()
 
     def logs(self, name):
         return self.client.containers.get(name).logs(stdout=True, stderr=True).decode()

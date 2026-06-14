@@ -27,13 +27,17 @@ except ModuleNotFoundError:
             self.response = response
             self.explanation = explanation
 
-    docker_module.from_env = lambda: None
-    docker_module.errors = SimpleNamespace(
-        ImageNotFound=ImageNotFound,
-        NotFound=NotFound,
-        APIError=APIError,
+    setattr(docker_module, "from_env", lambda: None)
+    setattr(
+        docker_module,
+        "errors",
+        SimpleNamespace(
+            ImageNotFound=ImageNotFound,
+            NotFound=NotFound,
+            APIError=APIError,
+        ),
     )
-    docker_containers_module.Container = object
+    setattr(docker_containers_module, "Container", object)
 
     sys.modules["docker"] = docker_module
     sys.modules["docker.models"] = docker_models_module
@@ -44,12 +48,16 @@ import docker
 from manager.driver.docker import DockerDriver
 
 
+def docker_not_found() -> Exception:
+    return docker.errors.NotFound("not found")
+
+
 class DockerDriverTest(unittest.TestCase):
     def test_run_keeps_container_until_cleanup_for_log_inspection(self):
         client = Mock()
         client.networks.create.return_value = SimpleNamespace(id="coinjoin-network-id")
         client.containers.run.return_value = None
-        client.containers.get.side_effect = docker.errors.NotFound()
+        client.containers.get.side_effect = docker_not_found()
 
         with patch("manager.driver.docker.docker.from_env", return_value=client):
             driver = DockerDriver(namespace="coinjoin-test")
@@ -80,7 +88,7 @@ class DockerDriverTest(unittest.TestCase):
         )
         client = Mock()
         client.networks.create.return_value = SimpleNamespace(id="coinjoin-network-id")
-        client.containers.get.side_effect = [docker.errors.NotFound(), stale_container]
+        client.containers.get.side_effect = [docker_not_found(), stale_container]
         client.containers.run.side_effect = [conflict, None]
 
         with patch("manager.driver.docker.docker.from_env", return_value=client):

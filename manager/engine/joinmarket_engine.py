@@ -1,4 +1,4 @@
-from manager.engine.engine_base import EngineBase, BTC
+from manager.engine.engine_base import DriverProtocol, EngineArgs, EngineBase, BTC
 from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
 from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
 from time import sleep, time
@@ -6,6 +6,7 @@ import sys
 import json
 import os
 import threading
+from typing import cast
 
 JOINMARKET_COINJOIN_AMOUNT_SATS = 40000
 JOINMARKET_COUNTERPARTIES = 4
@@ -18,9 +19,9 @@ JOINMARKET_DISTRIBUTOR_RPC_WALLET = "jm_wallet_distributor"
 
 class JoinmarketEngine(EngineBase):
 
-    def __init__(self, args, driver):
+    def __init__(self, args: EngineArgs, driver: DriverProtocol) -> None:
         super().__init__(args, driver, "/home/joinmarket")
-        self.joinmarket_round_events = []
+        self.joinmarket_round_events: list[dict[str, object]] = []
         self._core_wallet_lock = threading.Lock()
 
     def default_scenario(self) -> ScenarioConfig:
@@ -193,7 +194,10 @@ class JoinmarketEngine(EngineBase):
         )
 
 
-    def start_client(self, idx: int, wallet: WalletConfig):
+    def start_client(self, idx: int, wallet: WalletConfig | None = None):
+        if wallet is None:
+            raise ValueError("wallet configuration is required to start a JoinMarket client")
+
         name = f"jcs-{idx:03}"
         port = 28184 + idx
         core_wallet = self._core_wallet_name(name)
@@ -389,7 +393,7 @@ class JoinmarketEngine(EngineBase):
         for event in self.joinmarket_round_events:
             if event.get("status") != "started":
                 continue
-            age = self.current_block - int(event.get("start_block") or 0)
+            age = self.current_block - int(cast(int, event.get("start_block") or 0))
             if age <= JOINMARKET_ROUND_TIMEOUT_BLOCKS:
                 continue
             event["status"] = "failed"
