@@ -30,6 +30,7 @@ class PodmanDriver(Driver):
     def network(self) -> str:
         exists = subprocess.run(
             ["podman", "network", "exists", self._namespace],
+            check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -42,6 +43,7 @@ class PodmanDriver(Driver):
     def has_image(self, name: str) -> bool:
         result = subprocess.run(
             ["podman", "image", "exists", name],
+            check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -97,6 +99,7 @@ class PodmanDriver(Driver):
     def stop(self, name: str) -> None:
         exists = subprocess.run(
             ["podman", "container", "exists", name],
+            check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -157,6 +160,7 @@ class PodmanDriver(Driver):
         self.stop_many(containers)
         subprocess.run(
             ["podman", "network", "rm", self._namespace],
+            check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
