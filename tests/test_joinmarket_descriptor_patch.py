@@ -10,7 +10,7 @@ PATCH_SCRIPT = PROJECT_ROOT / "containers" / "joinmarket-client-server" / "patch
 
 
 class JoinMarketDescriptorPatchTest(unittest.TestCase):
-    def test_patch_redirects_regtest_mining_address_to_funding_wallet(self):
+    def test_patch_redirects_regtest_mining_address_to_funding_wallet(self) -> None:
         source = (
             "class RegtestBitcoinCoreInterface(BitcoinCoreInterface):\n"
             "    def __init__(self, jsonRpc, network):\n"

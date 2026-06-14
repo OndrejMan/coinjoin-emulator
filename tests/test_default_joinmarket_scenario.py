@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 class DefaultJoinMarketScenarioTest(unittest.TestCase):
-    def test_default_joinmarket_scenario_has_surplus_makers_and_rounds(self):
+    def test_default_joinmarket_scenario_has_surplus_makers_and_rounds(self) -> None:
         scenario_path = (
             Path(__file__).resolve().parents[2]
             / "bitcoinAnalysis"

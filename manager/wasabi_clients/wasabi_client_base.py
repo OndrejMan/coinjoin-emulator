@@ -2,6 +2,7 @@ import json
 import random
 import requests
 from time import sleep, time
+from typing import cast
 
 WALLET_NAME = "wallet"
 
@@ -9,14 +10,14 @@ WALLET_NAME = "wallet"
 class WasabiClientBase:
     def __init__(
         self,
-        host="localhost",
-        port=37128,
-        name="wasabi-client",
-        proxy="",
-        version="2.0.4",
-        delay=(0, 0),
-        stop=(0, 0),
-    ):
+        host: str = "localhost",
+        port: int = 37128,
+        name: str = "wasabi-client",
+        proxy: str = "",
+        version: str = "2.0.4",
+        delay: tuple[int, int] = (0, 0),
+        stop: tuple[int, int] = (0, 0),
+    ) -> None:
         self.host = host
         self.port = port
         self.name = name
@@ -25,7 +26,14 @@ class WasabiClientBase:
         self.delay = delay
         self.stop = stop
 
-    def _rpc(self, request, wallet=True, timeout=5, repeat=1, wallet_name=None):
+    def _rpc(
+        self,
+        request: dict[str, object],
+        wallet: bool | str = True,
+        timeout: int | None = 5,
+        repeat: int = 1,
+        wallet_name: str | None = None,
+    ) -> object:
         request["jsonrpc"] = "2.0"
         request["id"] = "1"
 
@@ -49,34 +57,39 @@ class WasabiClientBase:
             return None
         return "timeout"
 
-    def get_status(self):
-        request = {
+    def get_status(self) -> object:
+        request: dict[str, object] = {
             "method": "getstatus",
         }
         return self._rpc(request, wallet=False)
 
     def _create_wallet(self, wallet_name: str | None = None) -> object:
-        request = {
+        request: dict[str, object] = {
             "method": "createwallet",
             "params": [wallet_name or WALLET_NAME, ""],
         }
         return self._rpc(request)
 
-    def get_new_address(self):
-        request = {
+    def get_new_address(self) -> str:
+        request: dict[str, object] = {
             "method": "getnewaddress",
             "params": ["label"],
         }
-        res = self._rpc(request)["address"]
+        res = cast(dict[str, object], self._rpc(request))["address"]
+        if not isinstance(res, str):
+            raise TypeError(f"Unexpected address response: {res}")
         return res
 
-    def get_balance(self, timeout=None, wallet_name=None):
-        request = {
+    def get_balance(self, timeout: int | None = None, wallet_name: str | None = None) -> int:
+        request: dict[str, object] = {
             "method": "getwalletinfo",
         }
-        return self._rpc(request, timeout=timeout, wallet_name=wallet_name)["balance"]
+        balance = cast(dict[str, object], self._rpc(request, timeout=timeout, wallet_name=wallet_name))["balance"]
+        if not isinstance(balance, int):
+            raise TypeError(f"Unexpected balance response: {balance}")
+        return balance
 
-    def wait_wallet(self, timeout=None):
+    def wait_wallet(self, timeout: int | None = None) -> bool:
         start = time()
         while timeout is None or time() - start < timeout:
             try:
@@ -93,21 +106,21 @@ class WasabiClientBase:
             sleep(0.1)
         return False
 
-    def _list_unspent_coins(self):
-        request = {
+    def _list_unspent_coins(self) -> list[dict[str, object]]:
+        request: dict[str, object] = {
             "method": "listunspentcoins",
         }
-        return self._rpc(request)
+        return cast(list[dict[str, object]], self._rpc(request))
 
-    def send(self, invoices):
+    def send(self, invoices: list[tuple[str, int]]) -> object:
         unspent_coins = self._list_unspent_coins()
         random.shuffle(unspent_coins)
 
         cost = sum(map(lambda x: x[1], invoices))
-        coins = []
+        coins: list[dict[str, object]] = []
         for coin in unspent_coins:
             coins.append({"transactionid": coin["txid"], "index": coin["index"]})
-            cost -= coin["amount"]
+            cost -= int(str(coin["amount"]))
             if cost < 0:
                 break
         else:
@@ -115,7 +128,7 @@ class WasabiClientBase:
 
         payments = list(map(lambda x: {"sendto": x[0], "amount": x[1]}, invoices))
 
-        request = {
+        request: dict[str, object] = {
             "method": "send",
             "params": {
                 "payments": payments,
@@ -126,38 +139,38 @@ class WasabiClientBase:
         }
         return self._rpc(request, timeout=None)
 
-    def start_coinjoin(self):
-        request = {
+    def start_coinjoin(self) -> object:
+        request: dict[str, object] = {
             "method": "startcoinjoin",
             "params": ["", "True", "True"],
         }
         return self._rpc(request, timeout=None)
 
-    def stop_coinjoin(self):
-        request = {
+    def stop_coinjoin(self) -> object:
+        request: dict[str, object] = {
             "method": "stopcoinjoin",
         }
         return self._rpc(request, "wallet")
 
-    def list_coins(self):
-        request = {
+    def list_coins(self) -> object:
+        request: dict[str, object] = {
             "method": "listcoins",
         }
         return self._rpc(request, timeout=10, repeat=3)
 
-    def list_unspent_coins(self):
-        request = {
+    def list_unspent_coins(self) -> object:
+        request: dict[str, object] = {
             "method": "listunspentcoins",
         }
         return self._rpc(request, timeout=10, repeat=3)
 
-    def list_keys(self):
-        request = {
+    def list_keys(self) -> object:
+        request: dict[str, object] = {
             "method": "listkeys",
         }
         return self._rpc(request, timeout=10, repeat=3)
 
-    def wait_ready(self):
+    def wait_ready(self) -> None:
         while True:
             try:
                 self.get_status()

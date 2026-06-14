@@ -1,16 +1,23 @@
 from traceback import print_exception
 import requests
 from time import sleep
+from typing import cast
 
 
 class WasabiCoordinator:
-    def __init__(self, host="localhost", port=37128, internal_ip="", proxy=""):
+    def __init__(
+        self,
+        host: str = "localhost",
+        port: int = 37128,
+        internal_ip: str = "",
+        proxy: str = "",
+    ) -> None:
         self.host = host
         self.port = port
         self.internal_ip = internal_ip
         self.proxy = proxy
 
-    def _get_status(self):
+    def _get_status(self) -> dict[str, object] | None:
         """Get coordinator status"""
         try:
             response = requests.get(
@@ -18,11 +25,11 @@ class WasabiCoordinator:
                 proxies=dict(http=self.proxy),
                 timeout=5,
             )
-            return response.json()
+            return cast(dict[str, object], response.json())
         except Exception:
             return None
 
-    def _get_rounds(self):
+    def _get_rounds(self) -> dict[str, object] | None:
         """Get active coinjoin rounds"""
         try:
             print(self.host, self.port, self.proxy)
@@ -31,12 +38,12 @@ class WasabiCoordinator:
                 proxies=dict(http=self.proxy),
                 timeout=5,
             )
-            return response.json()
+            return cast(dict[str, object], response.json())
         except Exception as e:
             print_exception(e)
             return None
 
-    def wait_ready(self):
+    def wait_ready(self) -> None:
         """Wait for coordinator to be ready"""
         print("Waiting for coordinator to be ready...")
         while True:

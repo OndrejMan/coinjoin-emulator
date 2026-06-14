@@ -12,7 +12,7 @@ from manager.engine.configuration import JoinMarketRole, ScenarioConfig
 
 
 class ScenarioConfigTest(unittest.TestCase):
-    def test_nested_wasabi_wallet_config_is_parsed(self):
+    def test_nested_wasabi_wallet_config_is_parsed(self) -> None:
         scenario = {
             "name": "nested",
             "rounds": 1,
@@ -43,7 +43,7 @@ class ScenarioConfigTest(unittest.TestCase):
         self.assertTrue(wasabi.redcoin_isolation)
         self.assertEqual(wasabi.skip_rounds, [0, 2])
 
-    def test_flat_wasabi_wallet_config_still_works(self):
+    def test_flat_wasabi_wallet_config_still_works(self) -> None:
         scenario = {
             "name": "flat",
             "rounds": 1,
@@ -70,7 +70,7 @@ class ScenarioConfigTest(unittest.TestCase):
         self.assertEqual(wasabi.anon_score_target, 7)
         self.assertFalse(wasabi.redcoin_isolation)
 
-    def test_nested_joinmarket_wallet_config_is_parsed(self):
+    def test_nested_joinmarket_wallet_config_is_parsed(self) -> None:
         scenario = {
             "name": "joinmarket",
             "rounds": 1,
@@ -95,7 +95,7 @@ class ScenarioConfigTest(unittest.TestCase):
         assert joinmarket is not None
         self.assertEqual(joinmarket.role, JoinMarketRole.MAKER)
 
-    def test_to_dict_serializes_joinmarket_role_as_json_value(self):
+    def test_to_dict_serializes_joinmarket_role_as_json_value(self) -> None:
         scenario = {
             "name": "joinmarket",
             "rounds": 1,

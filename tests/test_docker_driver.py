@@ -23,7 +23,12 @@ except ModuleNotFoundError:
         pass
 
     class APIError(Exception):
-        def __init__(self, message="", response=None, explanation=None):
+        def __init__(
+            self,
+            message: str = "",
+            response: object | None = None,
+            explanation: str | None = None,
+        ) -> None:
             super().__init__(message)
             self.response = response
             self.explanation = explanation
@@ -54,7 +59,7 @@ def docker_not_found() -> Exception:
 
 
 class DockerDriverTest(unittest.TestCase):
-    def test_run_keeps_container_until_cleanup_for_log_inspection(self):
+    def test_run_keeps_container_until_cleanup_for_log_inspection(self) -> None:
         client = Mock()
         client.networks.create.return_value = SimpleNamespace(id="coinjoin-network-id")
         client.containers.run.return_value = None
@@ -66,7 +71,7 @@ class DockerDriverTest(unittest.TestCase):
 
         self.assertFalse(client.containers.run.call_args.kwargs["auto_remove"])
 
-    def test_run_removes_stale_container_before_reusing_name(self):
+    def test_run_removes_stale_container_before_reusing_name(self) -> None:
         stale_container = Mock()
         client = Mock()
         client.networks.create.return_value = SimpleNamespace(id="coinjoin-network-id")
@@ -81,7 +86,7 @@ class DockerDriverTest(unittest.TestCase):
         stale_container.remove.assert_called_once_with(force=True)
         client.containers.run.assert_called_once()
 
-    def test_run_retries_after_docker_name_conflict(self):
+    def test_run_retries_after_docker_name_conflict(self) -> None:
         stale_container = Mock()
         conflict = docker.errors.APIError(
             "conflict",
@@ -100,7 +105,7 @@ class DockerDriverTest(unittest.TestCase):
         stale_container.remove.assert_called_once_with(force=True)
         self.assertEqual(client.containers.run.call_count, 2)
 
-    def test_cleanup_includes_exited_emulator_containers(self):
+    def test_cleanup_includes_exited_emulator_containers(self) -> None:
         matching_container = Mock()
         matching_container.name = "joinmarket-distributor"
         matching_container.attrs = {

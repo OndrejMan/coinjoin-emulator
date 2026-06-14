@@ -1,4 +1,4 @@
-from manager.engine.engine_base import DriverProtocol, EngineArgs, EngineBase, BTC
+from manager.engine.engine_base import DriverProtocol, EmulatorClient, EngineArgs, EngineBase, BTC
 from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
 from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
 from time import sleep, time
@@ -298,16 +298,16 @@ class JoinmarketEngine(EngineBase):
             if not filename.startswith("block_") or not filename.endswith(".json"):
                 continue
             with open(os.path.join(node_path, filename), "r") as f:
-                block = json.load(f)
+                block = cast(dict[str, object], json.load(f))
             block_height = block.get("height")
-            for tx in block.get("tx", []):
+            for tx in cast(list[dict[str, object]], block.get("tx", [])):
                 txid = tx.get("txid")
-                for output in tx.get("vout", []):
-                    script_pub_key = output.get("scriptPubKey") or {}
-                    addresses = []
+                for output in cast(list[dict[str, object]], tx.get("vout", [])):
+                    script_pub_key = cast(dict[str, object], output.get("scriptPubKey") or {})
+                    addresses: list[object] = []
                     if script_pub_key.get("address"):
                         addresses.append(script_pub_key["address"])
-                    addresses.extend(script_pub_key.get("addresses") or [])
+                    addresses.extend(cast(list[object], script_pub_key.get("addresses") or []))
                     for address in addresses:
                         event = labels_by_destination.get(address)
                         if event is not None and txid:
@@ -320,15 +320,15 @@ class JoinmarketEngine(EngineBase):
             key=lambda event: (event.get("round_id", 0), event.get("taker", "")),
         )
 
-    def _script_addresses(self, output):
-        script_pub_key = output.get("scriptPubKey") or {}
-        addresses = []
+    def _script_addresses(self, output: dict[str, object]) -> list[object]:
+        script_pub_key = cast(dict[str, object], output.get("scriptPubKey") or {})
+        addresses: list[object] = []
         if script_pub_key.get("address"):
             addresses.append(script_pub_key["address"])
-        addresses.extend(script_pub_key.get("addresses") or [])
+        addresses.extend(cast(list[object], script_pub_key.get("addresses") or []))
         return addresses
 
-    def _find_round_event_tx(self, event):
+    def _find_round_event_tx(self, event: dict[str, object]) -> dict[str, object] | None:
         if event.get("txid"):
             return {
                 "txid": event.get("txid"),
@@ -337,14 +337,14 @@ class JoinmarketEngine(EngineBase):
         if self.node is None or not event.get("destination_address"):
             return None
 
-        start_height = max(0, int(event.get("start_chain_height") or 0))
+        start_height = max(0, int(str(event.get("start_chain_height") or 0)))
         tip_height = self.node.get_block_count()
         for height in range(start_height, tip_height + 1):
             block_hash = self.node.get_block_hash(height)
             block = self.node.get_block_info(block_hash)
-            for tx in block.get("tx", []):
+            for tx in cast(list[dict[str, object]], block.get("tx", [])):
                 txid = tx.get("txid")
-                for output in tx.get("vout", []):
+                for output in cast(list[dict[str, object]], tx.get("vout", [])):
                     if event["destination_address"] in self._script_addresses(output):
                         return {
                             "txid": txid,
@@ -352,7 +352,7 @@ class JoinmarketEngine(EngineBase):
                         }
         return None
 
-    def _confirm_started_rounds(self):
+    def _confirm_started_rounds(self) -> int:
         confirmed = 0
         for event in self.joinmarket_round_events:
             if event.get("status") != "started":
@@ -371,25 +371,25 @@ class JoinmarketEngine(EngineBase):
             print(f"Confirmed coinjoin {event.get('taker')} as {event.get('txid')}")
         return confirmed
 
-    def _active_round_for_taker(self, taker_name):
+    def _active_round_for_taker(self, taker_name: str) -> bool:
         return any(
             event.get("status") == "started" and event.get("taker") == taker_name
             for event in self.joinmarket_round_events
         )
 
-    def _has_active_round(self):
+    def _has_active_round(self) -> bool:
         return any(
             event.get("status") == "started"
             for event in self.joinmarket_round_events
         )
 
-    def _started_round_count(self):
+    def _started_round_count(self) -> int:
         return len([
             event for event in self.joinmarket_round_events
             if event.get("status") in ("started", "confirmed", "stopped")
         ])
 
-    def _expire_stalled_rounds(self):
+    def _expire_stalled_rounds(self) -> None:
         for event in self.joinmarket_round_events:
             if event.get("status") != "started":
                 continue
@@ -409,14 +409,16 @@ class JoinmarketEngine(EngineBase):
                 f"destination output within {JOINMARKET_ROUND_TIMEOUT_BLOCKS} blocks"
             )
 
-    def _client_confirmed_balance(self, client):
+    def _client_confirmed_balance(self, client: EmulatorClient) -> int:
         try:
             return client.get_balance()
         except Exception as e:
             print(f"- waiting for {client.name} wallet balance ({e})")
             return 0
 
-    def _client_has_confirmed_balance(self, client, required_sats, role):
+    def _client_has_confirmed_balance(
+        self, client: EmulatorClient, required_sats: int, role: str
+    ) -> bool:
         balance = self._client_confirmed_balance(client)
         if balance < required_sats:
             print(
@@ -426,7 +428,7 @@ class JoinmarketEngine(EngineBase):
             return False
         return True
 
-    def update_coinjoins_joinmarket(self):
+    def update_coinjoins_joinmarket(self) -> None:
         self._confirm_started_rounds()
         self._expire_stalled_rounds()
 
@@ -491,7 +493,7 @@ class JoinmarketEngine(EngineBase):
                 break
 
 
-    def run_engine(self):
+    def run_engine(self) -> None:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
             

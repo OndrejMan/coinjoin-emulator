@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def load_manager_entrypoint():
+def load_manager_entrypoint() -> types.ModuleType:
     sys.modules.setdefault("numpy", types.ModuleType("numpy"))
     sys.modules.setdefault("numpy.random", types.ModuleType("numpy.random"))
     spec = importlib.util.spec_from_file_location(
@@ -27,7 +27,7 @@ def load_manager_entrypoint():
 
 
 class ManagerRunTest(unittest.TestCase):
-    def test_run_skips_log_storage_when_btc_node_never_initialized(self):
+    def test_run_skips_log_storage_when_btc_node_never_initialized(self) -> None:
         manager_entrypoint = load_manager_entrypoint()
         engine = Mock()
         engine.node = None
@@ -35,9 +35,9 @@ class ManagerRunTest(unittest.TestCase):
         args = SimpleNamespace(no_logs=False, download_btc_data="", image_prefix="")
         driver = Mock()
 
-        manager_entrypoint.engine = engine
-        manager_entrypoint.args = args
-        manager_entrypoint.driver = driver
+        setattr(manager_entrypoint, "engine", engine)
+        setattr(manager_entrypoint, "args", args)
+        setattr(manager_entrypoint, "driver", driver)
 
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):

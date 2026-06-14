@@ -1,6 +1,7 @@
 import sys
 import types
 from types import SimpleNamespace
+from typing import cast
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -35,7 +36,7 @@ from manager.driver.kubernetes import KubernetesDriver
 
 
 class KubernetesDriverTest(TestCase):
-    def test_run_accepts_and_maps_docker_style_volumes(self):
+    def test_run_accepts_and_maps_docker_style_volumes(self) -> None:
         kube_client = SimpleNamespace(
             create_namespaced_pod=lambda **kwargs: None,
             read_namespaced_pod_status=lambda **kwargs: SimpleNamespace(
@@ -58,14 +59,14 @@ class KubernetesDriverTest(TestCase):
             ),
         ):
             driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
-            pod_bodies = []
-            service_bodies = []
+            pod_bodies: list[dict[str, object]] = []
+            service_bodies: list[dict[str, object]] = []
 
-            def create_pod(**kwargs):
-                pod_bodies.append(kwargs["body"])
+            def create_pod(**kwargs: object) -> None:
+                pod_bodies.append(cast(dict[str, object], kwargs["body"]))
 
-            def create_service(**kwargs):
-                service_bodies.append(kwargs["body"])
+            def create_service(**kwargs: object) -> SimpleNamespace:
+                service_bodies.append(cast(dict[str, object], kwargs["body"]))
                 return SimpleNamespace(
                     spec=SimpleNamespace(
                         ports=[
@@ -91,10 +92,13 @@ class KubernetesDriverTest(TestCase):
 
         self.assertEqual(pod_ip, "10.42.0.10")
         self.assertEqual(ports, {18443: 31843})
-        self.assertNotIn("nodePort", service_bodies[0]["spec"]["ports"][0])
+        service_spec = cast(dict[str, object], service_bodies[0]["spec"])
+        service_ports = cast(list[dict[str, object]], service_spec["ports"])
+        self.assertNotIn("nodePort", service_ports[0])
 
-        pod_spec = pod_bodies[0]["spec"]
-        container = pod_spec["containers"][0]
+        pod_spec = cast(dict[str, object], pod_bodies[0]["spec"])
+        containers = cast(list[dict[str, object]], pod_spec["containers"])
+        container = containers[0]
         self.assertEqual(
             container["volumeMounts"],
             [

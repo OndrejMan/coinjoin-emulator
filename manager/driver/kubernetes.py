@@ -10,14 +10,14 @@ from kubernetes.client.exceptions import ApiException
 
 
 class KubernetesDriver(Driver):
-    def __init__(self, namespace="coinjoin", reuse_namespace=False):
+    def __init__(self, namespace: str = "coinjoin", reuse_namespace: bool = False) -> None:
         config.load_kube_config()
         self.client = client.CoreV1Api()
         self._namespace = namespace
         self.reuse_namespace = reuse_namespace
 
     @cached_property
-    def namespace(self):
+    def namespace(self) -> str:
         namespace_manifest = {
             "apiVersion": "v1",
             "kind": "Namespace",
@@ -27,13 +27,13 @@ class KubernetesDriver(Driver):
             self.client.create_namespace(body=namespace_manifest)
         return self._namespace
 
-    def has_image(self, name):
+    def has_image(self, name: str) -> bool:
         return True
 
-    def build(self, name, path):
+    def build(self, name: str, path: str) -> None:
         pass
 
-    def pull(self, name):
+    def pull(self, name: str) -> None:
         pass
 
     def run(
@@ -162,7 +162,7 @@ class KubernetesDriver(Driver):
         )
         return pod_ip or "", port_mapping
 
-    def stop(self, name):
+    def stop(self, name: str) -> None:
         try:
             self.client.delete_namespaced_pod(name=name, namespace=self.namespace)
             self.client.delete_namespaced_service(
@@ -171,7 +171,7 @@ class KubernetesDriver(Driver):
         except:
             pass
 
-    def download(self, name, src_path, dst_path):
+    def download(self, name: str, src_path: str, dst_path: str) -> None:
         if src_path[-1] == "/":
             src_path = src_path[:-1]
         src_parent, src_target = os.path.split(src_path)
@@ -198,7 +198,7 @@ class KubernetesDriver(Driver):
             tar.extractall(dst_path)
         resp.close()
 
-    def peek(self, name, path):
+    def peek(self, name: str, path: str) -> str:
         exec_command = ["cat", path]
         resp = stream(
             self.client.connect_get_namespaced_pod_exec,
@@ -220,10 +220,10 @@ class KubernetesDriver(Driver):
         resp.close()
         return output
 
-    def logs(self, name):
+    def logs(self, name: str) -> str:
         return self.client.read_namespaced_pod_log(name=name, namespace=self.namespace)
 
-    def upload(self, name, src_path, dst_path):
+    def upload(self, name: str, src_path: str, dst_path: str) -> None:
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:tar") as tar:
             tar.add(src_path, arcname=dst_path)
@@ -255,7 +255,7 @@ class KubernetesDriver(Driver):
                 break
         resp.close()
 
-    def cleanup(self, image_prefix=""):
+    def cleanup(self, image_prefix: str = "") -> None:
         pods = self.client.list_namespaced_pod(namespace=self._namespace)
         for pod in pods.items:
             if any(

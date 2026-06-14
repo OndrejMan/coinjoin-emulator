@@ -209,7 +209,7 @@ class WasabiEngine(EngineBase):
         delay: tuple[int, int],
         stop: tuple[int, int],
     ) -> WasabiClientBase:
-        return cast(WasabiClientBase, WasabiClient(version)(
+        return WasabiClient(version)(
             host=ip,
             port=port,
             name=name,
@@ -217,7 +217,7 @@ class WasabiEngine(EngineBase):
             version=version,
             delay=delay,
             stop=stop,
-        ))
+        )
 
     def start_client(self, idx: int, wallet: WalletConfig | None = None) -> EmulatorClient | None:
         if wallet is None:
