@@ -524,7 +524,7 @@ class JoinmarketEngine(EngineBase):
                     self.current_block = self.node.get_block_count() - initial_block
                     break
                 except Exception as e:
-                    print(f"- could not get blocks".ljust(60), end="\r")
+                    print("- could not get blocks".ljust(60), end="\r")
                     print(f"Block exception: {e}", file=sys.stderr)
 
             self.update_invoice_payments()
@@ -539,5 +539,5 @@ class JoinmarketEngine(EngineBase):
             sleep(JOINMARKET_LOOP_SLEEP_SECONDS)
 
         print()
-        print(f"- limit reached")
+        print("- limit reached")
         self.node.mine_block(JOINMARKET_FINAL_SETTLE_BLOCKS)

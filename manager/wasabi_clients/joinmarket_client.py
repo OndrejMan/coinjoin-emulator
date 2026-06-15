@@ -410,7 +410,7 @@ class JoinMarketClientServer:
     def list_transactions_maker(self) -> dict[str, object]:
         """List all transactions in the wallet."""
         method = "GET"
-        endpoint = f"/wallet/yieldgen/report"
+        endpoint = "/wallet/yieldgen/report"
         response = self._rpc(method, endpoint)
         return response
 
