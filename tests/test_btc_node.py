@@ -1,11 +1,6 @@
 import json
-import sys
 import unittest
-from pathlib import Path
 from unittest.mock import Mock, patch
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from manager.btc_node import BtcNode
 

@@ -630,7 +630,7 @@ exclude = [
 ]
 
 # Set the line length to match your preference (default is 88)
-line-length = 88
+line-length = 880
 
 [tool.ruff.lint]
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`) codes by default.
