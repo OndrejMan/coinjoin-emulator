@@ -1,17 +1,18 @@
+import datetime
+import json
+import math
+import multiprocessing
+import multiprocessing.pool
+import os
+import random
+import shutil
+from time import sleep
+from typing import Protocol
+
 from ..btc_node import BtcNode
 from ..exceptions import CoinjoinEmulatorError, RpcError
 from ..utils import batched
-from .configuration import ScenarioConfig, WalletConfig, FundConfig
-from time import sleep
-from typing import Protocol
-import random
-import os
-import json
-import multiprocessing
-import multiprocessing.pool
-import math
-import shutil
-import datetime
+from .configuration import FundConfig, ScenarioConfig, WalletConfig
 
 DISTRIBUTOR_UTXOS = 10
 BATCH_SIZE = 20

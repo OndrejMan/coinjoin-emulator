@@ -1,13 +1,19 @@
-from .engine_base import DriverProtocol, EmulatorClient, EngineArgs, EngineBase, BTC
-from .configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
-from ..exceptions import CoinjoinEmulatorError, StartupError
-from ..wasabi_clients.joinmarket_client import JoinMarketClientServer
-from time import sleep, time
-import sys
 import json
 import os
+import sys
 import threading
+from time import sleep, time
 from typing import cast
+
+from ..exceptions import CoinjoinEmulatorError, StartupError
+from ..wasabi_clients.joinmarket_client import JoinMarketClientServer
+from .configuration import (
+    JoinMarketConfig,
+    JoinMarketRole,
+    ScenarioConfig,
+    WalletConfig,
+)
+from .engine_base import BTC, DriverProtocol, EmulatorClient, EngineArgs, EngineBase
 
 JOINMARKET_COINJOIN_AMOUNT_SATS = 40000
 JOINMARKET_COUNTERPARTIES = 4

@@ -1,8 +1,9 @@
 import json
 import random
-import requests
 from time import sleep, time
 from typing import cast
+
+import requests
 
 from ..exceptions import RpcError
 
