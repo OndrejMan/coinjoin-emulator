@@ -409,7 +409,6 @@ disable = [
     "too-many-locals",
     "too-many-return-statements",
     "unused-import",
-    "unused-variable",
     "redefined-outer-name",
     "redefined-builtin",
     "useless-import-alias",

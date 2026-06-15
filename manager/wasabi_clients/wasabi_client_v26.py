@@ -20,17 +20,16 @@ class WasabiClientV26(WasabiClientBase):
 
     def wait_wallet(self, timeout: int | None = None) -> bool:
         start = time()
-        counter = 0
         while timeout is None or time() - start < timeout:
             try:
                 self._create_wallet()
-            except Exception as e:
+            except Exception:
                 pass
 
             try:
                 self.get_balance(timeout=5)
                 return True
-            except Exception as e:
+            except Exception:
                 pass
 
             sleep(1)

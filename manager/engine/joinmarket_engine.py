@@ -113,7 +113,7 @@ class JoinmarketEngine(EngineBase):
         name = "irc-server"
 
         try:
-            ip, manager_ports = self.driver.run(
+            self.driver.run(
                 name,
                 f"{self.args.image_prefix}irc-server",
                 env={},  # Add any necessary environment variables
@@ -503,7 +503,7 @@ class JoinmarketEngine(EngineBase):
             
         self.update_invoice_payments()
         initial_block = self.node.get_block_count()
-        for i in range(5):
+        for _ in range(5):
             # Takers need 3 confirmations of transactions for the sourcing commitments
             self.node.mine_block()
 
