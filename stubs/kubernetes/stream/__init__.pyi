@@ -1,8 +1,9 @@
+# pylint: disable=unused-argument
 from collections.abc import Sequence
 
 class WSClient:
     def is_open(self) -> bool: ...
-    def update(self, *, _timeout: int) -> None: ...
+    def update(self, *, timeout: int) -> None: ...
     def peek_stdout(self) -> bool: ...
     def read_stdout(self) -> str: ...
     def peek_stderr(self) -> bool: ...
@@ -15,10 +16,10 @@ def stream(
     _name: str,
     _namespace: str,
     *,
-    _command: Sequence[str],
-    _stderr: bool,
-    _stdin: bool,
-    _stdout: bool,
-    _tty: bool,
+    command: Sequence[str],
+    stderr: bool,
+    stdin: bool,
+    stdout: bool,
+    tty: bool,
     _preload_content: bool,
 ) -> WSClient: ...
