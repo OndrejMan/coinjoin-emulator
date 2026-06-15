@@ -6,6 +6,8 @@ from typing import cast
 from unittest import TestCase
 from unittest.mock import patch
 
+from manager.driver.kubernetes import KubernetesDriver
+
 if importlib.util.find_spec("kubernetes") is None:
     kubernetes_module = types.ModuleType("kubernetes")
     client_module = types.ModuleType("kubernetes.client")
@@ -30,8 +32,6 @@ if importlib.util.find_spec("kubernetes") is None:
     sys.modules["kubernetes.config"] = config_module
     sys.modules["kubernetes.stream"] = stream_module
     sys.modules["kubernetes.client.exceptions"] = exceptions_module
-
-from manager.driver.kubernetes import KubernetesDriver
 
 
 class KubernetesDriverTest(TestCase):

@@ -72,8 +72,6 @@ disable = [
     "missing-docstring",
     "line-too-long",
     "trailing-whitespace",
-    "wrong-import-order",
-    "wrong-import-position",
     "too-many-arguments",
     "too-few-public-methods",
     "too-many-positional-arguments",
