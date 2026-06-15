@@ -8,6 +8,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from manager.engine.configuration import ScenarioConfig, WalletConfig
 from manager.engine.engine_base import EngineBase
+from manager.exceptions import RpcError
 
 
 class MinimalEngine(EngineBase):
@@ -46,7 +47,7 @@ class EngineBaseTest(unittest.TestCase):
         engine.current_round = 0
         engine.invoices = {(0, 0): [("bcrt1destination", 100000)]}
         engine.distributor = Mock()
-        engine.distributor.send.side_effect = Exception("direct-send failed")
+        engine.distributor.send.side_effect = RpcError("direct-send failed")
 
         with self.assertRaisesRegex(Exception, "Invoice payment failed"):
             engine.update_invoice_payments()

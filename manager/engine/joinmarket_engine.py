@@ -1,5 +1,6 @@
 from .engine_base import DriverProtocol, EmulatorClient, EngineArgs, EngineBase, BTC
 from .configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
+from ..exceptions import CoinjoinEmulatorError, StartupError
 from ..wasabi_clients.joinmarket_client import JoinMarketClientServer
 from time import sleep, time
 import sys
@@ -121,9 +122,9 @@ class JoinmarketEngine(EngineBase):
                 cpu=1.0,
                 memory=2048,
             )
-        except Exception as e:
+        except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             print(f"- could not start {name} ({e})")
-            raise Exception("Could not start IRC server")
+            raise StartupError("Could not start IRC server") from e
 
 
     def _dump_container_log(self, container_name: str, log_path: str) -> None:
@@ -131,13 +132,13 @@ class JoinmarketEngine(EngineBase):
         try:
             log_content = self.driver.logs(container_name)
             print(f"- {container_name} container logs:\n{log_content}")
-        except Exception:
+        except (CoinjoinEmulatorError, RuntimeError, OSError):
             print(f"- could not retrieve container logs from {container_name}")
 
         try:
             log_content = self.driver.peek(container_name, log_path)
             print(f"- {container_name} log ({log_path}):\n{log_content}")
-        except Exception:
+        except (CoinjoinEmulatorError, RuntimeError, OSError):
             print(f"- could not retrieve {log_path} from {container_name}")
 
     def start_distributor(self) -> None:
@@ -153,9 +154,9 @@ class JoinmarketEngine(EngineBase):
                 cpu=1.0,
                 memory=2048,
             )
-        except Exception as e:
+        except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             print(f"- could not start {name} ({e})")
-            raise Exception("Could not start distributor")
+            raise StartupError("Could not start distributor") from e
 
         self.distributor = self.init_joinmarket_clientserver(
             name=name,
@@ -169,7 +170,7 @@ class JoinmarketEngine(EngineBase):
             elapsed = time() - start
             print(f"- could not start {name} (application timeout after {elapsed:.1f}s)")
             self._dump_container_log(name, "/home/joinmarket/jmwalletd.log")
-            raise Exception("Could not start distributor")
+            raise StartupError("Could not start distributor")
         print(f"- started distributor (wait took {time() - start:.1f}s)")
 
 
@@ -213,7 +214,7 @@ class JoinmarketEngine(EngineBase):
                 cpu=(0.1),
                 memory=(768),
             )
-        except Exception as e:
+        except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             print(f"- could not start {name} ({e})")
             return None
 
@@ -416,7 +417,7 @@ class JoinmarketEngine(EngineBase):
     def _client_confirmed_balance(self, client: EmulatorClient) -> int:
         try:
             return client.get_balance()
-        except Exception as e:
+        except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError) as e:
             print(f"- waiting for {client.name} wallet balance ({e})")
             return 0
 
@@ -447,7 +448,7 @@ class JoinmarketEngine(EngineBase):
                 client.start_maker(0, 5000, 0.00004, "sw0reloffer", JOINMARKET_MAKER_MIN_SIZE_SATS)
                 try:
                     client.get_status()
-                except Exception:
+                except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError):
                     pass
 
         running_makers = [
@@ -523,7 +524,7 @@ class JoinmarketEngine(EngineBase):
                 try:
                     self.current_block = self.node.get_block_count() - initial_block
                     break
-                except Exception as e:
+                except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
                     print("- could not get blocks".ljust(60), end="\r")
                     print(f"Block exception: {e}", file=sys.stderr)
 

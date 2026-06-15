@@ -1,5 +1,8 @@
 from time import time, sleep
 
+import requests
+
+from ..exceptions import RpcError
 from .wasabi_client_base import WasabiClientBase
 
 
@@ -22,13 +25,13 @@ class WasabiClientV26(WasabiClientBase):
         while timeout is None or time() - start < timeout:
             try:
                 self._create_wallet()
-            except Exception:
+            except (requests.exceptions.RequestException, RpcError, KeyError, TypeError, ValueError):
                 pass
 
             try:
                 self.get_balance(timeout=5)
                 return True
-            except Exception:
+            except (requests.exceptions.RequestException, RpcError, KeyError, TypeError, ValueError):
                 pass
 
             sleep(1)

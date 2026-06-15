@@ -27,7 +27,7 @@ def download_btc_data(dest_path: str):
     try:
         driver.download("btc-node", "/home/bitcoin/data/", dest_path)
         print(f"- btc-node data downloaded to {dest_path}")
-    except Exception as e:
+    except (RuntimeError, OSError, ValueError, TypeError) as e:
         print(f"- failed to download btc-node data: {e}", file=sys.stderr)
         raise
 
@@ -44,7 +44,7 @@ def run():
         print()
         print("KeyboardInterrupt received")
         exit_code = 130
-    except Exception as e:
+    except (RuntimeError, OSError, ValueError, TypeError) as e:
         print(f"Terminating exception: {e}", file=sys.stderr)
         print_exception(e)
         exit_code = 1

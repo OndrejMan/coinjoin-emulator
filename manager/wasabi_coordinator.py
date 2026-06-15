@@ -26,7 +26,7 @@ class WasabiCoordinator:
                 timeout=5,
             )
             return cast(dict[str, object], response.json())
-        except Exception:
+        except (requests.exceptions.RequestException, ValueError):
             return None
 
     def _get_rounds(self) -> dict[str, object] | None:
@@ -39,7 +39,7 @@ class WasabiCoordinator:
                 timeout=5,
             )
             return cast(dict[str, object], response.json())
-        except Exception as e:
+        except (requests.exceptions.RequestException, ValueError) as e:
             print_exception(e)
             return None
 
@@ -52,6 +52,6 @@ class WasabiCoordinator:
                 if status:
                     print(f"Coordinator ready: {status}")
                     break
-            except:
+            except (requests.exceptions.RequestException, ValueError):
                 pass
             sleep(0.1)

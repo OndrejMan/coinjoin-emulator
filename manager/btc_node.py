@@ -3,6 +3,8 @@ import json
 from time import monotonic, sleep
 from typing import cast
 
+from .exceptions import RpcError
+
 WALLET = "wallet"
 
 
@@ -32,7 +34,7 @@ class BtcNode:
         )
         response.raise_for_status()
         if response.json()["error"] is not None:
-            raise Exception(response.json()["error"])
+            raise RpcError(str(response.json()["error"]))
         return response.json()["result"]
 
     def get_block_count(self) -> int:
@@ -91,7 +93,7 @@ class BtcNode:
                 last_block_count = block_count
                 if block_count > 200:
                     break
-            except Exception as exc:
+            except (requests.exceptions.RequestException, RpcError) as exc:
                 last_error = exc
             sleep(0.1)
         else:
@@ -119,7 +121,7 @@ class BtcNode:
 
         if error is not None:
             print(response_body)
-            raise Exception(error)
+            raise RpcError(str(error))
         print(response_body)
 
     def _post_create_wallet_request(
@@ -139,9 +141,9 @@ class BtcNode:
         response.raise_for_status()
         response_body = response.json()
         if not isinstance(response_body, dict):
-            raise Exception(f"Unexpected btc-node RPC response creating wallet {wallet}: {response_body}")
+            raise RpcError(f"Unexpected btc-node RPC response creating wallet {wallet}: {response_body}")
         if "error" not in response_body and "result" not in response_body:
-            raise Exception(f"Unexpected btc-node RPC response creating wallet {wallet}: {response_body}")
+            raise RpcError(f"Unexpected btc-node RPC response creating wallet {wallet}: {response_body}")
         return response_body
 
     def _is_bdb_wallet_creation_error(self, error: object) -> bool:

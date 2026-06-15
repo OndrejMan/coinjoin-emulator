@@ -10,6 +10,7 @@ from .engine_base import (
     InvoiceDistributor,
 )
 from .configuration import ScenarioConfig, WalletConfig, WasabiConfig
+from ..exceptions import CoinjoinEmulatorError, StartupError
 from ..wasabi_backend_protocol import WasabiBackendProtocol
 from ..wasabi_coordinator_protocol import WasabiCoordinatorProtocol
 from ..wasabi_backend_factory import (
@@ -123,7 +124,7 @@ class WasabiEngine(EngineBase):
                 scenario_file,
                 "/home/wasabi/.walletwasabi/backend/WabiSabiConfig.json",
             )
-        except Exception as e:
+        except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             print_exception(e)
             raise
 
@@ -197,7 +198,7 @@ class WasabiEngine(EngineBase):
         ))
         if not self.distributor.wait_wallet(timeout=360):
             print("- could not start distributor (application timeout)")
-            raise Exception("Could not start distributor")
+            raise StartupError("Could not start distributor")
         print("- started distributor")
 
     def init_wasabi_client(
@@ -275,7 +276,7 @@ class WasabiEngine(EngineBase):
                 cpu=(0.3 if version < "2.0.4" else 0.1),
                 memory=(1024 if version < "2.0.4" else 768),
             )
-        except Exception as e:
+        except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             print(f"- could not start {name} ({e})")
             return None
 
@@ -317,7 +318,7 @@ class WasabiEngine(EngineBase):
                         os.path.join(data_path, "wasabi-coordinator"),
                     )
                     print("- stored coordinator logs")
-                except:
+                except (CoinjoinEmulatorError, RuntimeError, OSError):
                     print("- could not store coordinator logs")
             else:
                 # Store logs from legacy backend
@@ -327,7 +328,7 @@ class WasabiEngine(EngineBase):
                     os.path.join(data_path, "wasabi-backend"),
                 )
                 print("- stored backend logs")
-        except:
+        except (CoinjoinEmulatorError, RuntimeError, OSError):
             print("- could not store backend logs")
 
     def start_coinjoin(self, client: EmulatorClient) -> None:
@@ -382,7 +383,7 @@ class WasabiEngine(EngineBase):
                 try:
                     self.current_round = self._get_current_round()
                     break
-                except Exception as e:
+                except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError) as e:
                     print("- could not get rounds".ljust(60), end="\r")
                     print(f"Round exception: {e}", file=sys.stderr)
 
@@ -390,7 +391,7 @@ class WasabiEngine(EngineBase):
                 try:
                     self.current_block = self.node.get_block_count() - initial_block
                     break
-                except Exception as e:
+                except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
                     print("- could not get blocks".ljust(60), end="\r")
                     print(f"Block exception: {e}", file=sys.stderr)
 

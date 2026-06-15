@@ -6,6 +6,8 @@ from time import sleep, time
 from urllib3.exceptions import InsecureRequestWarning
 import urllib3
 
+from ..exceptions import RpcError
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
@@ -64,7 +66,7 @@ class JoinMarketClientServer:
         if not self.token:
             self.unlock_wallet()
         if not self.token:
-            raise Exception("Could not authenticate JoinMarket wallet")
+            raise RpcError("Could not authenticate JoinMarket wallet")
 
     def _raise_response_error(self, response: requests.Response) -> None:
         if response.status_code == 409:
@@ -74,7 +76,7 @@ class JoinMarketClientServer:
             error_message = response.json().get("message", "Unknown error")
         except json.JSONDecodeError:
             error_message = response.text
-        raise Exception(f"Error {response.status_code}: {error_message}")
+        raise RpcError(f"Error {response.status_code}: {error_message}")
 
     def _rpc(
         self,
@@ -113,7 +115,7 @@ class JoinMarketClientServer:
                 self.refresh_token = ""
                 self.unlock_wallet()
                 if not self.token:
-                    raise Exception("Could not authenticate JoinMarket wallet")
+                    raise RpcError("Could not authenticate JoinMarket wallet")
                 refreshed_after_401 = True
                 continue
 
@@ -130,7 +132,7 @@ class JoinMarketClientServer:
                 self._raise_response_error(response)
             return cast(dict[str, object], response.json())
 
-        raise Exception("timeout")
+        raise TimeoutError("timeout")
 
     def get_status(self) -> dict[str, object]:
         method = "GET"
@@ -171,13 +173,13 @@ class JoinMarketClientServer:
         while timeout is None or time() - start < timeout:
             try:
                 self._create_wallet()
-            except Exception as e:
+            except (requests.exceptions.RequestException, RpcError, TimeoutError, KeyError, TypeError, ValueError) as e:
                 last_create_err = e
 
             try:
                 self.get_balance()
                 return True
-            except Exception as e:
+            except (requests.exceptions.RequestException, RpcError, TimeoutError, KeyError, TypeError, ValueError) as e:
                 last_balance_err = e
 
             sleep(0.1)
@@ -205,7 +207,7 @@ class JoinMarketClientServer:
             available_balance = walletinfo["available_balance"]
             return int(float(str(available_balance)) * BTC)
         except KeyError as e:
-            raise Exception(f"Could not retrieve available balance: {e}")
+            raise RpcError(f"Could not retrieve available balance: {e}") from e
 
     def get_yieldgen_report(self) -> dict[str, object]:
         """Get the latest report on yield-generating activity."""
@@ -354,13 +356,13 @@ class JoinMarketClientServer:
             for address, amount in addressed_fundings:
                 result = self.simple_send(destination_address=address, amount_sats=amount)
                 if result is False:
-                    raise Exception(f"direct-send failed for {amount} sats to {address}")
+                    raise RpcError(f"direct-send failed for {amount} sats to {address}")
                 results.append(cast(dict[str, object], result))
                 print(f"- sent {amount} sats to {address}")
                 sleep(5)  # The btc node needs time to process the transaction
-        except Exception as e:
+        except (requests.exceptions.RequestException, RpcError, TimeoutError, KeyError, TypeError, ValueError) as e:
             print(f"- error during fund distribution: {e}")
-            raise e
+            raise
         return results
 
 
@@ -391,7 +393,7 @@ class JoinMarketClientServer:
             try:
                 response = self._rpc(method, endpoint, json_data=json_data)
                 return response
-            except Exception as e:
+            except (requests.exceptions.RequestException, RpcError, TimeoutError, KeyError, TypeError, ValueError) as e:
                 print(e)
                 sleep(2)
 

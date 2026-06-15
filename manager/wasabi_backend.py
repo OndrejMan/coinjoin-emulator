@@ -3,6 +3,8 @@ import requests
 from time import sleep
 from typing import cast
 
+from .exceptions import RpcError
+
 WALLET_NAME = "wallet"
 
 
@@ -32,7 +34,7 @@ class WasabiBackend:
         except requests.exceptions.Timeout:
             return "timeout"
         if "error" in response.json():
-            raise Exception(response.json()["error"])
+            raise RpcError(str(response.json()["error"]))
         if "result" in response.json():
             return response.json()["result"]
         return None
@@ -50,6 +52,6 @@ class WasabiBackend:
             try:
                 self._get_status()
                 break
-            except:
+            except (requests.exceptions.RequestException, ValueError):
                 pass
             sleep(0.1)

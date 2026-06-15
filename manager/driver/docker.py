@@ -111,7 +111,7 @@ class DockerDriver(Driver):
             fo.seek(0)
             with tarfile.open(fileobj=fo) as tar:
                 tar.extractall(dst_path)
-        except:
+        except (docker.errors.APIError, docker.errors.NotFound, tarfile.TarError, OSError):
             pass
 
     def peek(self, name: str, path: str) -> str:

@@ -400,9 +400,7 @@ disable = [
     "too-many-arguments",
     "too-few-public-methods",
     "too-many-positional-arguments",
-    "broad-exception-raised",
     "too-many-public-methods",
-    "broad-exception-caught",
     "too-many-boolean-expressions",
     "duplicate-code",
     "too-many-instance-attributes",
@@ -417,7 +415,6 @@ disable = [
     "chained-comparison",
     "use-dict-literal",
     "protected-access",
-    "bare-except",
     "no-name-in-module" # TODO
 ]
 

@@ -4,6 +4,8 @@ import requests
 from time import sleep, time
 from typing import cast
 
+from ..exceptions import RpcError
+
 WALLET_NAME = "wallet"
 
 
@@ -51,7 +53,7 @@ class WasabiClientBase:
             except requests.exceptions.Timeout:
                 continue
             if "error" in response.json():
-                raise Exception(response.json()["error"])
+                raise RpcError(str(response.json()["error"]))
             if "result" in response.json():
                 return response.json()["result"]
             return None
@@ -94,13 +96,13 @@ class WasabiClientBase:
         while timeout is None or time() - start < timeout:
             try:
                 self._create_wallet()
-            except:
+            except (requests.exceptions.RequestException, RpcError, KeyError, TypeError, ValueError):
                 pass
 
             try:
                 self.get_balance(timeout=5)
                 return True
-            except:
+            except (requests.exceptions.RequestException, RpcError, KeyError, TypeError, ValueError):
                 pass
 
             sleep(0.1)
@@ -124,7 +126,7 @@ class WasabiClientBase:
             if cost < 0:
                 break
         else:
-            raise Exception("Not enough BTC")
+            raise RpcError("Not enough BTC")
 
         payments = list(map(lambda x: {"sendto": x[0], "amount": x[1]}, invoices))
 
@@ -175,6 +177,6 @@ class WasabiClientBase:
             try:
                 self.get_status()
                 break
-            except:
+            except (requests.exceptions.RequestException, RpcError, ValueError):
                 pass
             sleep(0.1)

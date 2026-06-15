@@ -1,4 +1,5 @@
 from ..btc_node import BtcNode
+from ..exceptions import CoinjoinEmulatorError, RpcError
 from ..utils import batched
 from .configuration import ScenarioConfig, WalletConfig, FundConfig
 from time import sleep
@@ -277,7 +278,7 @@ class EngineBase:
             self.driver.download(client.name, self.log_src_path, client_path)
 
             print(f"- stored {client.name} logs")
-        except:
+        except (CoinjoinEmulatorError, OSError):
             print(f"- could not store {client.name} logs")
 
     def store_logs(self) -> None:
@@ -378,7 +379,7 @@ class EngineBase:
                         continue
                     print(f"- transaction sent with txid {result}")
                     break
-                except Exception as e:
+                except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
                     # https://github.com/zkSNACKs/WalletWasabi/issues/12764
                     if "Bad Request" in str(e):
                         print("- transaction error (bad request)")
@@ -386,7 +387,7 @@ class EngineBase:
                         print(f"- transaction error ({e})")
             else:
                 print("- invoice payment failed")
-                raise Exception("Invoice payment failed")
+                raise RpcError("Invoice payment failed")
             print(f"- paid batch of {len(batch)} invoices")
 
     def run(self) -> None:
