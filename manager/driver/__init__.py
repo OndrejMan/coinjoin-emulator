@@ -36,7 +36,7 @@ class Driver(ABC):
 
     def stop_many(self, names: Iterable[str]) -> None:
         with ThreadPool() as p:
-            p.map(lambda x: self.stop(x), names)
+            p.map(self.stop, names)
 
     @abstractmethod
     def download(self, name: str, src_path: str, dst_path: str) -> object:

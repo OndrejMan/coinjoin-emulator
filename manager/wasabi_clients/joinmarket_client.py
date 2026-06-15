@@ -336,11 +336,10 @@ class JoinMarketClientServer:
         """Stop a running coinjoin attempt."""
         if self.type == "taker" and self.coinjoin_in_process:
             return self.stop_taker()
-        elif self.type == "maker" and self.maker_running:
+        if self.type == "maker" and self.maker_running:
             return self.stop_maker()
-        else:
-            print("No coinjoin in process")
-            return True
+        print("No coinjoin in process")
+        return True
 
     def stop_taker(self) -> dict[str, object]:
         method = "GET"

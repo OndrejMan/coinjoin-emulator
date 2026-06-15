@@ -418,9 +418,7 @@ disable = [
     "raise-missing-from",
     "too-many-branches",
     "chained-comparison",
-    "no-else-return",
     "use-dict-literal",
-    "unnecessary-lambda",
     "protected-access",
     "bare-except",
     "no-name-in-module" # TODO

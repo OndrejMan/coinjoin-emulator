@@ -53,8 +53,7 @@ def create_backend(
     """
     if architecture == BackendArchitecture.SPLIT:
         return WasabiBackend26(host=host, port=port, internal_ip=internal_ip, proxy=proxy)
-    else:
-        return WasabiBackend(host=host, port=port, internal_ip=internal_ip, proxy=proxy)
+    return WasabiBackend(host=host, port=port, internal_ip=internal_ip, proxy=proxy)
 
 
 def create_coordinator(

@@ -149,16 +149,15 @@ def prepare_skip_rounds(args: argparse.Namespace) -> SkipRounds | None:
                 ),
             )
         )
-    else:
-        try:
-            return lambda idx: (
-                sorted(map(int, args.skip_rounds.split(",")))
-                if idx < args.client_count // 2
-                else []
-            )
-        except ValueError:
-            print("- invalid skip rounds list")
-            sys.exit(1)
+    try:
+        return lambda idx: (
+            sorted(map(int, args.skip_rounds.split(",")))
+            if idx < args.client_count // 2
+            else []
+        )
+    except ValueError:
+        print("- invalid skip rounds list")
+        sys.exit(1)
 
 
 def prepare_distribution(distribution: str) -> Distribution | None:
