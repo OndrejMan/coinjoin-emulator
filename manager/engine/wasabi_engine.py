@@ -238,13 +238,15 @@ class WasabiEngine(EngineBase):
         if anon_score_target is not None and version < "2.0.3":
             anon_score_target = None
             print(
-                f"Anon Score Target is ignored for wallet {idx} as it is curently supported only for version 2.0.3 and newer"
+                f"Anon Score Target is ignored for wallet {idx} as it is curently supported only for "
+                "version 2.0.3 and newer"
             )
 
         if redcoin_isolation is not None and version < "2.0.3":
             redcoin_isolation = None
             print(
-                f"Redcoin isolation is ignored for wallet {idx} as it is curently supported only for version 2.0.3 and newer"
+                f"Redcoin isolation is ignored for wallet {idx} as it is curently supported only for "
+                "version 2.0.3 and newer"
             )
 
         if self.node is None:
@@ -341,7 +343,10 @@ class WasabiEngine(EngineBase):
     def update_coinjoins(self) -> None:
         print("- updating coinjoins...".ljust(60), end="\r")
         def start_condition(client: EmulatorClient) -> bool:
-            print(f"Checking client {client.name} with delay {client.delay} and stop {client.stop} against current block {self.current_block} and round {self.current_round}")
+            print(
+                f"Checking client {client.name} with delay {client.delay} and stop {client.stop} "
+                f"against current block {self.current_block} and round {self.current_round}"
+            )
             if client.stop[0] > 0 and self.current_block >= client.stop[0]:
                 return False
             if client.stop[1] > 0 and self.current_round >= client.stop[1]:

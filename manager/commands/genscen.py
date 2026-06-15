@@ -75,7 +75,10 @@ def setup_parser(arg_parser: argparse.ArgumentParser) -> None:
         "--skip-rounds",
         type=str,
         required=False,
-        help="skip rounds ('random[fraction]' for randomly sampled fraction of rounds, or comma-separated list of rounds to skip)",
+        help=(
+            "skip rounds ('random[fraction]' for randomly sampled fraction of rounds, "
+            "or comma-separated list of rounds to skip)"
+        ),
     )
     arg_parser.add_argument("--force", action="store_true", help="overwrite existing files")
     arg_parser.add_argument(

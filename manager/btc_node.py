@@ -114,10 +114,14 @@ class BtcNode:
         disable_private_keys: bool = False,
         allow_descriptor_fallback: bool = True,
     ) -> None:
-        response_body = self._post_create_wallet_request(wallet, descriptors=False, disable_private_keys=disable_private_keys)
+        response_body = self._post_create_wallet_request(
+            wallet, descriptors=False, disable_private_keys=disable_private_keys
+        )
         error = response_body.get("error")
         if error is not None and allow_descriptor_fallback and self._is_bdb_wallet_creation_error(error):
-            response_body = self._post_create_wallet_request(wallet, descriptors=True, disable_private_keys=disable_private_keys)
+            response_body = self._post_create_wallet_request(
+                wallet, descriptors=True, disable_private_keys=disable_private_keys
+            )
             error = response_body.get("error")
 
         if error is not None:
@@ -131,7 +135,11 @@ class BtcNode:
         try:
             response = requests.post(
                 f"http://{self.host}:{self.port}",
-                data=json.dumps(self._create_wallet_request(wallet, descriptors=descriptors, disable_private_keys=disable_private_keys)),
+                data=json.dumps(
+                    self._create_wallet_request(
+                        wallet, descriptors=descriptors, disable_private_keys=disable_private_keys
+                    )
+                ),
                 auth=("user", "password"),
                 proxies={"http": self.proxy},
                 timeout=5,

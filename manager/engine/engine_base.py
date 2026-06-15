@@ -367,7 +367,8 @@ class EngineBase:
 
     def pay_invoices(self, addressed_invoices: list[tuple[str, int]]) -> None:
         print(
-            f"- paying {len(addressed_invoices)} invoices (batch size {BATCH_SIZE}, block {self.current_block}, round {self.current_round})"
+            f"- paying {len(addressed_invoices)} invoices "
+            f"(batch size {BATCH_SIZE}, block {self.current_block}, round {self.current_round})"
         )
         for batch in batched(addressed_invoices, BATCH_SIZE):
             for _ in range(3):
