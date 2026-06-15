@@ -20,7 +20,7 @@ class FakeDriver:
         self.log_calls: list[str] = []
         self.peek_calls: list[tuple[str, str]] = []
 
-    def has_image(self, name: str) -> bool:
+    def has_image(self, _name: str) -> bool:
         return True
 
     def build(self, name: str, path: str) -> None:
@@ -35,10 +35,10 @@ class FakeDriver:
         image: str,
         env: dict[str, str | None] | None = None,
         ports: dict[int, int] | None = None,
-        skip_ip: bool = False,
+        _skip_ip: bool = False,
         cpu: float = 0.1,
         memory: int = 768,
-        volumes: dict[str, dict[str, str]] | None = None,
+        _volumes: dict[str, dict[str, str]] | None = None,
     ) -> tuple[str, dict[int, int]]:
         self.calls.append(
             {

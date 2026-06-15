@@ -29,7 +29,7 @@ class BtcNode:
             f"http://{self.host}:{self.port}{wallet_path}",
             data=json.dumps(request),
             auth=("user", "password"),
-            proxies=dict(http=self.proxy),
+            proxies={"http": self.proxy},
             timeout=5,
         )
         response.raise_for_status()
@@ -132,7 +132,7 @@ class BtcNode:
                 f"http://{self.host}:{self.port}",
                 data=json.dumps(self._create_wallet_request(wallet, descriptors=descriptors, disable_private_keys=disable_private_keys)),
                 auth=("user", "password"),
-                proxies=dict(http=self.proxy),
+                proxies={"http": self.proxy},
                 timeout=5,
             )
         except requests.exceptions.Timeout:

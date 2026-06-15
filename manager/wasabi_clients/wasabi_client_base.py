@@ -47,7 +47,7 @@ class WasabiClientBase:
                 response = requests.post(
                     f"http://{self.host}:{self.port}/{(wallet_name or WALLET_NAME) if wallet else ''}",
                     data=json.dumps(request),
-                    proxies=dict(http=self.proxy),
+                    proxies={"http": self.proxy},
                     timeout=timeout,
                 )
             except requests.exceptions.Timeout:

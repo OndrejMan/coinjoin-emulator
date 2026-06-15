@@ -22,7 +22,7 @@ class WasabiCoordinator:
         try:
             response = requests.get(
                 f"http://{self.host}:{self.port}/wabisabi/human-monitor",
-                proxies=dict(http=self.proxy),
+                proxies={"http": self.proxy},
                 timeout=5,
             )
             return cast(dict[str, object], response.json())
@@ -35,7 +35,7 @@ class WasabiCoordinator:
             print(self.host, self.port, self.proxy)
             response = requests.get(
                 f"http://{self.host}:{self.port}/wabisabi/human-monitor",
-                proxies=dict(http=self.proxy),
+                proxies={"http": self.proxy},
                 timeout=5,
             )
             return cast(dict[str, object], response.json())

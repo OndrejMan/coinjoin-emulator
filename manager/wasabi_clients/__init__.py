@@ -8,8 +8,8 @@ from .wasabi_client_base import WasabiClientBase
 def WasabiClient(version: str) -> type[WasabiClientBase]:
     if version < "2.0.0":
         return WasabiClientV1
-    if version >= "2.0.0" and version < "2.0.4":
+    if "2.0.0" <= version < "2.0.4":
         return WasabiClientV2
-    if version >= "2.0.4" and version < "2.6.0":
+    if "2.0.4" <= version < "2.6.0":
         return WasabiClientV204
     return WasabiClientV26

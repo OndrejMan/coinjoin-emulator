@@ -396,7 +396,6 @@ disable = [
     "wrong-import-order",       # C0411
     "wrong-import-position",    # C0413
     "import-outside-toplevel",   # C0415
-    "unused-argument",
     "too-many-arguments",
     "too-few-public-methods",
     "too-many-positional-arguments",
@@ -412,8 +411,6 @@ disable = [
     "fixme",
     "raise-missing-from",
     "too-many-branches",
-    "chained-comparison",
-    "use-dict-literal",
     "protected-access",
     "no-name-in-module" # TODO
 ]

@@ -28,7 +28,7 @@ class WasabiBackend26:
             response = requests.post(
                 f"http://{self.host}:{self.port}/{WALLET_NAME}",
                 data=json.dumps(request),
-                proxies=dict(http=self.proxy),
+                proxies={"http": self.proxy},
                 timeout=5,
             )
         except requests.exceptions.Timeout:
@@ -43,7 +43,7 @@ class WasabiBackend26:
         # just to see whether the container is ready
         response = requests.get(
             f"http://{self.host}:{self.port}/api/software/versions",
-            proxies=dict(http=self.proxy),
+            proxies={"http": self.proxy},
             timeout=5,
         )
         return cast(dict[str, object], response.json())

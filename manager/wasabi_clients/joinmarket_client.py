@@ -99,7 +99,7 @@ class JoinMarketClientServer:
                     url=f"https://{self.host}:{self.port}/api/v1{endpoint}",
                     json=json_data or {},
                     headers=self._headers(auth_required=auth_required),
-                    proxies=dict(http=self.proxy),
+                    proxies={"http": self.proxy},
                     timeout=timeout,
                     verify=False,
                 )
