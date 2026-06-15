@@ -1,8 +1,7 @@
+import requests
 import json
 from time import monotonic, sleep
 from typing import cast
-
-import requests
 
 from .exceptions import RpcError
 

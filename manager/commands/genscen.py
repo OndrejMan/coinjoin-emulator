@@ -1,19 +1,13 @@
 import argparse
 import json
 import os
-import random
 import sys
+import numpy.random
+import random
 from collections.abc import Iterable
 from typing import Callable, cast
 
-import numpy.random
-
-from ..engine.configuration import (
-    FundConfig,
-    ScenarioConfig,
-    WalletConfig,
-    WasabiConfig,
-)
+from ..engine.configuration import FundConfig, ScenarioConfig, WalletConfig, WasabiConfig
 
 Distribution = Callable[[int], list[int]]
 SkipRounds = Callable[[int], list[int]]

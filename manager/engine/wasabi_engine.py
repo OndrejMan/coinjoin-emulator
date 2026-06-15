@@ -1,28 +1,6 @@
-import json
-import multiprocessing
-import multiprocessing.pool
 import os
-import random
-import sys
-import tempfile
-from time import sleep, time
 from traceback import print_exception
-from typing import cast
 
-from ..exceptions import CoinjoinEmulatorError, StartupError
-from ..wasabi_backend_factory import (
-    BackendArchitecture,
-    create_backend,
-    create_coordinator,
-    detect_backend_architecture,
-    get_backend_image_names,
-    get_backend_version,
-)
-from ..wasabi_backend_protocol import WasabiBackendProtocol
-from ..wasabi_clients import WasabiClient
-from ..wasabi_clients.wasabi_client_base import WasabiClientBase
-from ..wasabi_coordinator_protocol import WasabiCoordinatorProtocol
-from .configuration import ScenarioConfig, WalletConfig, WasabiConfig
 from .engine_base import (
     DriverProtocol,
     EmulatorClient,
@@ -30,6 +8,28 @@ from .engine_base import (
     EngineBase,
     InvoiceDistributor,
 )
+from .configuration import ScenarioConfig, WalletConfig, WasabiConfig
+from ..exceptions import CoinjoinEmulatorError, StartupError
+from ..wasabi_backend_protocol import WasabiBackendProtocol
+from ..wasabi_coordinator_protocol import WasabiCoordinatorProtocol
+from ..wasabi_backend_factory import (
+    detect_backend_architecture,
+    create_backend,
+    create_coordinator,
+    get_backend_version,
+    get_backend_image_names,
+    BackendArchitecture,
+)
+from ..wasabi_clients import WasabiClient
+from ..wasabi_clients.wasabi_client_base import WasabiClientBase
+from time import sleep, time
+import sys
+import random
+import json
+import tempfile
+import multiprocessing
+import multiprocessing.pool
+from typing import cast
 
 
 class WasabiEngine(EngineBase):

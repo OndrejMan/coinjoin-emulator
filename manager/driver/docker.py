@@ -1,13 +1,12 @@
+from functools import cached_property
+from io import BytesIO
 import os
 import tarfile
 import time
-from functools import cached_property
-from io import BytesIO
 from typing import Protocol, cast
 
-import docker
-
 from . import Driver
+import docker
 
 
 class DockerNetwork(Protocol):

@@ -1,11 +1,10 @@
 """Factory for creating appropriate Wasabi backend and coordinator instances."""
 
 from enum import Enum
-
 from .wasabi_backend import WasabiBackend
 from .wasabi_backend_26 import WasabiBackend26
-from .wasabi_backend_protocol import WasabiBackendProtocol
 from .wasabi_coordinator import WasabiCoordinator
+from .wasabi_backend_protocol import WasabiBackendProtocol
 from .wasabi_coordinator_protocol import WasabiCoordinatorProtocol
 
 

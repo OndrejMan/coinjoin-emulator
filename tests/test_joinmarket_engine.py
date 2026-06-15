@@ -8,10 +8,11 @@ from unittest.mock import patch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# pylint: disable=protected-access
-from manager.btc_node import BtcNode
 from manager.engine.configuration import JoinMarketConfig, JoinMarketRole, WalletConfig
 from manager.engine.joinmarket_engine import JoinmarketEngine
+
+# pylint: disable=protected-access
+from manager.btc_node import BtcNode
 
 
 class FakeDriver:

@@ -1,10 +1,10 @@
 import json
-from time import sleep, time
 from typing import cast
 
 import requests
-import urllib3
+from time import sleep, time
 from urllib3.exceptions import InsecureRequestWarning
+import urllib3
 
 from ..exceptions import RpcError
 

@@ -1,8 +1,7 @@
-from time import sleep
 from traceback import print_exception
-from typing import cast
-
 import requests
+from time import sleep
+from typing import cast
 
 
 class WasabiCoordinator:

@@ -1,10 +1,10 @@
+from .wasabi_client_base import WasabiClientBase, WALLET_NAME
 from time import sleep, time
 from typing import cast
 
 import requests
 
 from ..exceptions import RpcError
-from .wasabi_client_base import WALLET_NAME, WasabiClientBase
 
 
 class WasabiClientV1(WasabiClientBase):

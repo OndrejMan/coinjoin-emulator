@@ -1,9 +1,9 @@
+from .wasabi_client_base import WasabiClientBase, WALLET_NAME
 from time import sleep, time
 
 import requests
 
 from ..exceptions import RpcError
-from .wasabi_client_base import WALLET_NAME, WasabiClientBase
 
 
 class WasabiClientV2(WasabiClientBase):

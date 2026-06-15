@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-import re
 import sys
+import re
 from pathlib import Path
+
 
 DEFAULT_TARGET = Path("/jm/clientserver/src/jmclient/blockchaininterface.py")
 

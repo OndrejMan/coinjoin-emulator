@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PATCH_SCRIPT = PROJECT_ROOT / "containers" / "joinmarket-client-server" / "patch_descriptor_regtest.py"
 

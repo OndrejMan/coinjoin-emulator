@@ -1,14 +1,12 @@
-import os
-import tarfile
 from functools import cached_property
 from io import BytesIO
+import os
+import tarfile
 from time import sleep
-
-from kubernetes import client, config
-from kubernetes.client.exceptions import ApiException
-from kubernetes.stream import stream
-
 from . import Driver
+from kubernetes import client, config
+from kubernetes.stream import stream
+from kubernetes.client.exceptions import ApiException
 
 
 class KubernetesDriver(Driver):

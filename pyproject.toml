@@ -19,7 +19,6 @@ dev = [
     "mypy",
     "pylint",
     "pytest",
-    "ruff>=0.15.17",
     "types-docker",
     "types-requests",
 ]
@@ -618,25 +617,3 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 # List of qualified module names which can have objects that can redefine
 # builtins.
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
-
-[tool.ruff]
-# Exclude a variety of commonly ignored directories.
-exclude = [
-    ".git",
-    ".venv",
-    "__pycache__",
-    "build",
-    "dist",
-]
-
-# Set the line length to match your preference (default is 88)
-line-length = 88
-
-[tool.ruff.lint]
-# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`) codes by default.
-select = ["E", "F", "I"]  # "I" enables isort imports sorting
-ignore = []
-
-# Allow autofix for all enabled rules (when `--fix` is passed).
-fixable = ["ALL"]
-unfixable = []
