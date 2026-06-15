@@ -83,7 +83,7 @@ class FakeJoinMarketClientServer:
         host: str = "",
         port: int = 0,
         proxy: str = "",
-        type: str = "maker",
+        role: str = "maker",
         delay: tuple[int, int] = (0, 0),
         stop: tuple[int, int] = (0, 0),
     ) -> None:
@@ -91,7 +91,7 @@ class FakeJoinMarketClientServer:
         self.host = host
         self.port = port
         self.proxy = proxy
-        self.type = type
+        self.type = role
         self.delay = delay
         self.stop = stop
         self.maker_running = False
@@ -385,9 +385,9 @@ class JoinmarketEngineTest(unittest.TestCase):
         set_fake_node(engine, FakeBtcNode(block_count=205))
         engine.scenario.rounds = 1
         engine.current_block = 5
-        taker = FakeJoinMarketClientServer(name="jcs-000", type="taker", delay=(0, 0))
+        taker = FakeJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
         makers = [
-            FakeJoinMarketClientServer(name=f"jcs-{idx:03}", type="maker", delay=(0, 0))
+            FakeJoinMarketClientServer(name=f"jcs-{idx:03}", role="maker", delay=(0, 0))
             for idx in range(1, 5)
         ]
         engine.clients = [taker, *makers]
@@ -417,10 +417,10 @@ class JoinmarketEngineTest(unittest.TestCase):
         set_fake_node(engine, FakeBtcNode(block_count=205))
         engine.scenario.rounds = 3
         engine.current_block = 6
-        first_taker = FakeJoinMarketClientServer(name="jcs-000", type="taker", delay=(0, 0))
-        second_taker = FakeJoinMarketClientServer(name="jcs-001", type="taker", delay=(0, 0))
+        first_taker = FakeJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
+        second_taker = FakeJoinMarketClientServer(name="jcs-001", role="taker", delay=(0, 0))
         makers = [
-            FakeJoinMarketClientServer(name=f"jcs-{idx:03}", type="maker", delay=(0, 0))
+            FakeJoinMarketClientServer(name=f"jcs-{idx:03}", role="maker", delay=(0, 0))
             for idx in range(2, 6)
         ]
         for maker in makers:
@@ -449,8 +449,8 @@ class JoinmarketEngineTest(unittest.TestCase):
         set_fake_node(engine, FakeBtcNode(block_count=205))
         engine.scenario.rounds = 1
         engine.current_block = 5
-        taker = FakeJoinMarketClientServer(name="jcs-000", type="taker", delay=(0, 0))
-        maker = FakeJoinMarketClientServer(name="jcs-001", type="maker", delay=(0, 0))
+        taker = FakeJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
+        maker = FakeJoinMarketClientServer(name="jcs-001", role="maker", delay=(0, 0))
         maker.balance = 0
         engine.clients = [taker, maker]
 

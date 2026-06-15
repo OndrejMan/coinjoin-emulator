@@ -405,8 +405,6 @@ disable = [
     "too-many-instance-attributes",
     "too-many-locals",
     "too-many-return-statements",
-    "redefined-outer-name",
-    "redefined-builtin",
     "invalid-name",
     "fixme",
     "raise-missing-from",

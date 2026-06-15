@@ -344,20 +344,20 @@ class EngineBase:
         for client, funds in client_invoices:
             for fund in funds:
                 block = 0
-                round = 0
+                round_number = 0
                 if isinstance(fund, int):
                     value = fund
                 elif isinstance(fund, FundConfig):
                     value = fund.value
                     block = fund.delay_blocks or 0
-                    round = fund.delay_rounds or 0
+                    round_number = fund.delay_rounds or 0
                 else:
                     raise TypeError(f"Unexpected fund config: {fund!r}")
                 addressed_invoice = (client.get_new_address(), value)
-                if (block, round) not in self.invoices:
-                    self.invoices[(block, round)] = [addressed_invoice]
+                if (block, round_number) not in self.invoices:
+                    self.invoices[(block, round_number)] = [addressed_invoice]
                 else:
-                    self.invoices[(block, round)].append(addressed_invoice)
+                    self.invoices[(block, round_number)].append(addressed_invoice)
 
         for addressed_invoices in self.invoices.values():
             random.shuffle(addressed_invoices)

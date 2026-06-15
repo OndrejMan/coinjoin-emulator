@@ -1,6 +1,5 @@
 import os
 from traceback import print_exception
-from tracemalloc import stop
 
 from .engine_base import (
     DriverProtocol,

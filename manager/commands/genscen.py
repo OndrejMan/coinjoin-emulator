@@ -26,74 +26,74 @@ def create_backend_config(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
-def setup_parser(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--name", type=str, help="scenario name")
-    parser.add_argument(
+def setup_parser(arg_parser: argparse.ArgumentParser) -> None:
+    arg_parser.add_argument("--name", type=str, help="scenario name")
+    arg_parser.add_argument(
         "--client-count", type=int, default=10, help="number of wallets"
     )
-    parser.add_argument("--type", type=str, default="static", help="scenario type")
-    parser.add_argument(
+    arg_parser.add_argument("--type", type=str, default="static", help="scenario type")
+    arg_parser.add_argument(
         "--distribution",
         type=str,
         default="lognorm",
         help="fund distribution strategy",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--utxo-count", type=int, default=30, help="number of UTXOs per wallet"
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--max-coinjoin",
         type=int,
         default=400,
         help="maximal number of inputs to a coinjoin",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--min-coinjoin",
         type=int,
         default=4,
         help="minimal number of inputs to a coinjoin",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--stop-round",
         type=int,
         default=0,
         help="terminate after N coinjoin rounds, 0 for no limit",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--stop-block",
         type=int,
         default=0,
         help="terminate after N blocks, 0 for no limit",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--skip-rounds",
         type=str,
         required=False,
         help="skip rounds ('random[fraction]' for randomly sampled fraction of rounds, or comma-separated list of rounds to skip)",
     )
-    parser.add_argument("--force", action="store_true", help="overwrite existing files")
-    parser.add_argument(
+    arg_parser.add_argument("--force", action="store_true", help="overwrite existing files")
+    arg_parser.add_argument(
         "--out-dir", type=str, default="scenarios", help="output directory"
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--distributor-version",
         type=str,
         required=False,
         help="version of the distibutor wallet",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--client-version",
         type=str,
         required=False,
         help="version of the client wallet",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--anon-score-target",
         type=int,
         required=False,
         help="default anon score target used for wallets",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--redcoin-isolation",
         type=bool,
         required=False,

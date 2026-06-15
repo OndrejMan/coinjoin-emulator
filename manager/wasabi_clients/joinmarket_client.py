@@ -33,7 +33,7 @@ class JoinMarketClientServer:
         name: str = "joinmarket-client-server",
         proxy: str = "",
         version: str = "",
-        type: str = "maker",
+        role: str = "maker",
         delay: tuple[int, int] = (0, 0),
         stop: tuple[int, int] = (0, 0),
     ) -> None:
@@ -43,7 +43,7 @@ class JoinMarketClientServer:
         self.name = name
         self.proxy = proxy
         self.version = version
-        self.type = type
+        self.type = role
         self.maker_running = False
         self.coinjoin_in_process = False
         self.coinjoin_start = 0
