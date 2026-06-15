@@ -3,7 +3,6 @@ import json
 import os
 import sys
 import numpy.random
-import copy
 import random
 from collections.abc import Iterable
 from typing import Callable, cast

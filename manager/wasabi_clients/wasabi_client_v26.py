@@ -1,7 +1,6 @@
 from time import time, sleep
-from traceback import print_exception
 
-from .wasabi_client_base import WALLET_NAME, WasabiClientBase
+from .wasabi_client_base import WasabiClientBase
 
 
 class WasabiClientV26(WasabiClientBase):

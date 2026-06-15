@@ -1,3 +1,4 @@
+import importlib.util
 import sys
 import types
 from types import SimpleNamespace
@@ -5,9 +6,7 @@ from typing import cast
 from unittest import TestCase
 from unittest.mock import patch
 
-try:
-    import kubernetes  # noqa: F401
-except ModuleNotFoundError:
+if importlib.util.find_spec("kubernetes") is None:
     kubernetes_module = types.ModuleType("kubernetes")
     client_module = types.ModuleType("kubernetes.client")
     config_module = types.ModuleType("kubernetes.config")

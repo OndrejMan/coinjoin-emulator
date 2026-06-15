@@ -5,7 +5,6 @@ import tarfile
 import time
 from typing import Protocol, cast
 
-from docker.models.containers import Container
 from . import Driver
 import docker
 

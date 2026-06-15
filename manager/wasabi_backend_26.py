@@ -1,5 +1,4 @@
 import json
-from traceback import print_exception
 import requests
 from time import sleep
 from typing import cast
