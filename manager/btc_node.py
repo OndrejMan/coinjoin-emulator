@@ -144,8 +144,10 @@ class BtcNode:
                 proxies={"http": self.proxy},
                 timeout=5,
             )
-        except requests.exceptions.Timeout:
-            raise TimeoutError(f"btc-node RPC at {self.host}:{self.port} timed out creating wallet {wallet}")
+        except requests.exceptions.Timeout as exc:
+            raise TimeoutError(
+                f"btc-node RPC at {self.host}:{self.port} timed out creating wallet {wallet}"
+            ) from exc
 
         response.raise_for_status()
         response_body = response.json()

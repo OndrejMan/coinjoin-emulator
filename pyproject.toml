@@ -59,16 +59,6 @@ max-module-lines = 1000
 [tool.pylint."messages control"]
 confidence = ["HIGH", "CONTROL_FLOW", "INFERENCE", "INFERENCE_FAILURE", "UNDEFINED"]
 disable = [
-    "raw-checker-failed",
-    "bad-inline-option",
-    "locally-disabled",
-    "file-ignored",
-    "suppressed-message",
-    "useless-suppression",
-    "deprecated-pragma",
-    "use-symbolic-message-instead",
-    "use-implicit-booleaness-not-comparison-to-string",
-    "use-implicit-booleaness-not-comparison-to-zero",
     "missing-docstring",
     "line-too-long",
     "trailing-whitespace",
@@ -83,7 +73,6 @@ disable = [
     "too-many-return-statements",
     "invalid-name",
     "fixme",
-    "raise-missing-from",
     "too-many-branches",
     "no-name-in-module",
 ]
