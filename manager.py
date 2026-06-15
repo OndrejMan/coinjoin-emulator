@@ -1,12 +1,12 @@
-from traceback import print_exception
+import argparse
 import os
+import sys
+from traceback import print_exception
+
+import manager.commands.genscen
+from manager.engine.engine_base import EngineBase
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
-from manager.engine.engine_base import EngineBase
-import manager.commands.genscen
-import sys
-import argparse
-
 
 DEFAULT_IMAGE_PREFIX = "ghcr.io/ondrejman/"
 

@@ -1,8 +1,8 @@
-from dataclasses import dataclass, asdict
-from enum import Enum
-from typing import cast
 import json
+from dataclasses import asdict, dataclass
+from enum import Enum
 from pathlib import Path
+from typing import cast
 
 
 class JoinMarketRole(Enum):
