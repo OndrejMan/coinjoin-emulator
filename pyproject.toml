@@ -421,7 +421,6 @@ disable = [
     "no-else-return",
     "use-dict-literal",
     "unnecessary-lambda",
-    "unnecessary-ellipsis",
     "protected-access",
     "bare-except",
     "no-name-in-module" # TODO
