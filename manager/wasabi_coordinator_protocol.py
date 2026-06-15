@@ -11,7 +11,7 @@ class WasabiCoordinatorProtocol(Protocol):
     internal_ip: str
     proxy: str
     
-    def _get_status(self) -> dict[str, object] | None:
+    def get_status(self) -> dict[str, object] | None:
         """Get coordinator status.
         
         Returns:

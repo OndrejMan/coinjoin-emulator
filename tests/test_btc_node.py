@@ -9,6 +9,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from manager.btc_node import BtcNode
 
+# pylint: disable=protected-access
+
 
 def response(body: dict[str, object] | None = None) -> Mock:
     mock_response = Mock()

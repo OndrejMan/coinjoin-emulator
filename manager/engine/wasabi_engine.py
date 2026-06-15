@@ -406,7 +406,7 @@ class WasabiEngine(EngineBase):
 
     def _get_current_round(self) -> int:
         if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
-            resp = self.coordinator._get_status()
+            resp = self.coordinator.get_status()
             if resp is not None:
                 round_states = cast(list[dict[str, str]], resp["RoundStates"])
                 for round_state in round_states:

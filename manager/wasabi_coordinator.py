@@ -29,6 +29,10 @@ class WasabiCoordinator:
         except (requests.exceptions.RequestException, ValueError):
             return None
 
+    def get_status(self) -> dict[str, object] | None:
+        """Get coordinator status."""
+        return self._get_status()
+
     def _get_rounds(self) -> dict[str, object] | None:
         """Get active coinjoin rounds"""
         try:

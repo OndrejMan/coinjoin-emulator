@@ -10,6 +10,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from manager.engine.configuration import JoinMarketConfig, JoinMarketRole, WalletConfig
 from manager.engine.joinmarket_engine import JoinmarketEngine
+
+# pylint: disable=protected-access
 from manager.btc_node import BtcNode
 
 

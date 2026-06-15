@@ -1,4 +1,5 @@
 from traceback import print_exception
+import os
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
 from manager.engine.engine_base import EngineBase
@@ -21,7 +22,6 @@ def download_btc_data(dest_path: str):
     This is used in the Kubernetes flow: after emulation finishes on k8s,
     the raw chain data is downloaded locally so blocksci can analyze it.
     """
-    import os
     os.makedirs(dest_path, exist_ok=True)
     print(f"Downloading btc-node data to {dest_path}")
     try:

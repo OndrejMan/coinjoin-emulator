@@ -8,6 +8,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
 
+# pylint: disable=protected-access
+
 
 def response(
     status_code: int = 200, body: dict[str, object] | None = None, text: str = ""

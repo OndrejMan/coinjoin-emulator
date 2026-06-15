@@ -391,11 +391,10 @@ disable = [
     "use-implicit-booleaness-not-comparison-to-string", 
     "use-implicit-booleaness-not-comparison-to-zero", # here default ends
     "missing-docstring",
-    "line-too-long",            # C0301
-    "trailing-whitespace",      # C0303
-    "wrong-import-order",       # C0411
-    "wrong-import-position",    # C0413
-    "import-outside-toplevel",   # C0415
+    "line-too-long",
+    "trailing-whitespace",
+    "wrong-import-order",
+    "wrong-import-position",
     "too-many-arguments",
     "too-few-public-methods",
     "too-many-positional-arguments",
@@ -409,7 +408,6 @@ disable = [
     "fixme",
     "raise-missing-from",
     "too-many-branches",
-    "protected-access",
     "no-name-in-module" # TODO
 ]
 
