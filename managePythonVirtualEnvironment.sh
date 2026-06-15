@@ -31,11 +31,7 @@ else
     # Standard operations when no venv is active
     echo "No virtual environment active. Running standard operations..."
     
-    python3 -m venv env  
-    source env/bin/activate
-
-    python -m pip install --upgrade pip
-    python -m pip install -r requirements-dev.txt
-    python -m pip install --no-deps types-docker types-requests
+    uv sync
+    source .venv/bin/activate
 
 fi

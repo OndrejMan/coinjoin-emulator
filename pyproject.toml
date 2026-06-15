@@ -1,3 +1,34 @@
+[project]
+name = "emucoinjoin"
+version = "0.1.0"
+description = "Container-based emulator for CoinJoin transactions on RegTest."
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "docker==6.1",
+    "kubernetes==28.1.0",
+    "numpy==1.26.4",
+    "podman==4.7",
+    "PySocks==1.7.1",
+    "requests==2.31",
+    "urllib3<2",
+]
+
+[dependency-groups]
+dev = [
+    "mypy",
+    "pylint",
+    "pytest",
+    "types-docker",
+    "types-requests",
+]
+
+[tool.uv]
+package = false
+override-dependencies = [
+    "urllib3<2",
+]
+
 [tool.pylint.main]
 # Analyse import fallback blocks. This can be used to support both Python 2 and 3
 # compatible code, which means that the block might have code that exists only in
@@ -36,7 +67,7 @@ fail-under = 10
 # from-stdin =
 
 # Files or directories to be skipped. They should be base names, not paths.
-ignore = ["CVS", ".venv-k3d", "env"]
+ignore = ["CVS", ".venv", ".venv-k3d", "env"]
 
 # Add files or directories matching the regular expressions patterns to the
 # ignore-list. The regex matches against paths and can be in Posix or Windows
@@ -586,4 +617,3 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 # List of qualified module names which can have objects that can redefine
 # builtins.
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
-
