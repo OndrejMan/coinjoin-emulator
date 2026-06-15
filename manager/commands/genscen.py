@@ -311,7 +311,7 @@ def handler(args: argparse.Namespace) -> None:
         print(f"- file {args.out_dir}/{scenario.name}.json already exists")
         sys.exit(1)
 
-    with open(f"{args.out_dir}/{scenario.name}.json", "w") as f:
+    with open(f"{args.out_dir}/{scenario.name}.json", "w", encoding="utf-8") as f:
         json.dump(scenario.to_dict(), f, indent=2)
 
     print(f"- saved to {args.out_dir}/{scenario.name}.json")

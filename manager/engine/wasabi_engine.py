@@ -109,7 +109,7 @@ class WasabiEngine(EngineBase):
         sleep(1)
 
         config_path = f"./containers/wasabi-backend/{version}/WabiSabiConfig.json"
-        with open(config_path, "r") as config_file:
+        with open(config_path, encoding="utf-8") as config_file:
             backend_config = json.load(config_file)
         backend_config.update(self.scenario.backend or {})
 

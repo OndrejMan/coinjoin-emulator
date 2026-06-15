@@ -69,7 +69,7 @@ class ScenarioConfig:
     @classmethod
     def from_json_config(cls, filepath: str | Path) -> "ScenarioConfig":
         """Load scenario configuration from JSON file."""
-        with open(filepath) as f:
+        with open(filepath, encoding="utf-8") as f:
             data = cast(dict[str, object], json.load(f))
         
         # Parse wallets with engine-specific configurations

@@ -263,7 +263,9 @@ class JoinmarketEngine(EngineBase):
 
     def store_engine_logs(self, data_path: str) -> None:
         labels = self.match_joinmarket_rounds_to_blocks(data_path)
-        with open(os.path.join(data_path, "joinmarket_round_events.json"), "w") as f:
+        with open(
+            os.path.join(data_path, "joinmarket_round_events.json"), "w", encoding="utf-8"
+        ) as f:
             json.dump(labels, f, indent=2)
             print("- stored JoinMarket round labels")
 
@@ -299,7 +301,7 @@ class JoinmarketEngine(EngineBase):
         for filename in sorted(os.listdir(node_path)):
             if not filename.startswith("block_") or not filename.endswith(".json"):
                 continue
-            with open(os.path.join(node_path, filename), "r") as f:
+            with open(os.path.join(node_path, filename), encoding="utf-8") as f:
                 block = cast(dict[str, object], json.load(f))
             block_height = block.get("height")
             for tx in cast(list[dict[str, object]], block.get("tx", [])):

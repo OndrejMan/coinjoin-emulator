@@ -101,6 +101,8 @@ class FakeJoinMarketClientServer:
         self.started_coinjoins: list[dict[str, object]] = []
         self.address_counter = 0
         self.balance = 1000000
+        self.wait_wallet_timeout: int | None = None
+        self.maker_config: dict[str, int | str | float] = {}
         FakeJoinMarketClientServer.instances.append(self)
 
     def wait_wallet(self, timeout: int | None) -> bool:
