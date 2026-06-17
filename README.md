@@ -104,3 +104,13 @@ Running the simulation on a remote cluster using pre-existing namespace and a pr
 ```bash
 uv run python manager.py run --driver kubernetes --namespace custom-coinjoin-ns --reuse-namespace --image-prefix "crocsmuni/" --proxy "socks5://127.0.0.1:8123" --scenario "scenarios/uniform-dynamic-500-30utxo.json"
 ```
+
+### Exporting raw Bitcoin node data
+
+The emulator normally stores scenario, block, client, and wallet data in the log archive. If you need the raw Bitcoin Core data directory for external analysis tools, use `--download-btc-data` to choose a local destination path. The data is copied before containers or pods are cleaned up.
+
+By default, the source is `btc-node:/home/bitcoin/data/`. To export a different container or pod path, pass `--download-path` in `name:/path` format:
+
+```bash
+uv run python manager.py run --download-btc-data ./btc-data --download-path btc-node:/home/bitcoin/data/
+```
