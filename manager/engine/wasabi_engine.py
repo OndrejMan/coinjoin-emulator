@@ -1,31 +1,39 @@
-import os
-from traceback import print_exception
-from tracemalloc import stop
-
-from manager.engine.engine_base import EngineBase
-from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
-from manager.wasabi_backend_protocol import WasabiBackendProtocol
-from manager.wasabi_coordinator_protocol import WasabiCoordinatorProtocol
-from manager.wasabi_backend_factory import (
-    detect_backend_architecture,
-    create_backend,
-    create_coordinator,
-    get_backend_version,
-    get_backend_image_names,
-    BackendArchitecture,
-)
-from manager.wasabi_clients import WasabiClient
-from time import sleep, time
-import sys
-import random
 import json
-import tempfile
 import multiprocessing
 import multiprocessing.pool
+import os
+import random
+import sys
+import tempfile
+from time import sleep, time
+from traceback import print_exception
+from typing import cast
+
+from ..exceptions import CoinjoinEmulatorError, StartupError
+from ..wasabi_backend_factory import (
+    BackendArchitecture,
+    create_backend,
+    create_coordinator,
+    detect_backend_architecture,
+    get_backend_image_names,
+    get_backend_version,
+)
+from ..wasabi_backend_protocol import WasabiBackendProtocol
+from ..wasabi_clients import WasabiClient
+from ..wasabi_clients.wasabi_client_base import WasabiClientBase
+from ..wasabi_coordinator_protocol import WasabiCoordinatorProtocol
+from .configuration import ScenarioConfig, WalletConfig, WasabiConfig
+from .engine_base import (
+    DriverProtocol,
+    EmulatorClient,
+    EngineArgs,
+    EngineBase,
+    InvoiceDistributor,
+)
 
 
 class WasabiEngine(EngineBase):
-    def __init__(self, args, driver):
+    def __init__(self, args: EngineArgs, driver: DriverProtocol) -> None:
         self.coordinator: WasabiCoordinatorProtocol | None = None
         self.backend: WasabiBackendProtocol | None = None
         self.backend_architecture: BackendArchitecture | None = None
@@ -52,7 +60,7 @@ class WasabiEngine(EngineBase):
         """Determine which backend architecture to use based on scenario versions."""
         return detect_backend_architecture(self.versions)
 
-    def prepare_images(self):
+    def prepare_images(self) -> None:
         print("Preparing images")
         self.prepare_image("btc-node")
         self.prepare_client_images()
@@ -63,13 +71,13 @@ class WasabiEngine(EngineBase):
             path = f"./containers/{base}/{version}"
             self.prepare_image(image_name, path)
 
-    def prepare_client_images(self):
+    def prepare_client_images(self) -> None:
         for version in self.versions:
             name = f"wasabi-client:{version}"
             path = f"./containers/wasabi-clients/{version}"
             self.prepare_image(name, path)
 
-    def start_engine_infrastructure(self):
+    def start_engine_infrastructure(self) -> None:
         if self.backend_architecture is None:
             self.backend_architecture = self.determine_backend_architecture()
 
@@ -78,7 +86,7 @@ class WasabiEngine(EngineBase):
         if self.backend_architecture == BackendArchitecture.SPLIT:
             self.start_wasabi_coordinator()
 
-    def start_wasabi_backend(self):
+    def start_wasabi_backend(self) -> None:
         """Start the Wasabi backend with the appropriate version."""
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
@@ -101,7 +109,7 @@ class WasabiEngine(EngineBase):
         sleep(1)
 
         config_path = f"./containers/wasabi-backend/{version}/WabiSabiConfig.json"
-        with open(config_path, "r") as config_file:
+        with open(config_path, encoding="utf-8") as config_file:
             backend_config = json.load(config_file)
         backend_config.update(self.scenario.backend or {})
 
@@ -115,7 +123,7 @@ class WasabiEngine(EngineBase):
                 scenario_file,
                 "/home/wasabi/.walletwasabi/backend/WabiSabiConfig.json",
             )
-        except Exception as e:
+        except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             print_exception(e)
             raise
 
@@ -129,7 +137,7 @@ class WasabiEngine(EngineBase):
         self.backend.wait_ready()
         print(f"- started wasabi-backend ({self.backend_architecture.value} architecture)")
 
-    def start_wasabi_coordinator(self):
+    def start_wasabi_coordinator(self) -> None:
         """Start the Wasabi coordinator (only for split architecture)."""
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
@@ -158,7 +166,7 @@ class WasabiEngine(EngineBase):
         self.coordinator.wait_ready()
         print("- started wasabi-coordinator")
 
-    def start_distributor(self):
+    def start_distributor(self) -> None:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         if self.backend is None:
@@ -179,20 +187,28 @@ class WasabiEngine(EngineBase):
             memory=2048,
         )
 
-        self.distributor = self.init_wasabi_client(
+        self.distributor = cast(InvoiceDistributor, self.init_wasabi_client(
             distributor_version,
             wasabi_client_distributor_ip if self.args.proxy else self.args.control_ip,
             port=37128 if self.args.proxy else wasabi_client_distributor_ports[37128],
             name="wasabi-client-distributor",
             delay=(0, 0),
             stop=(0, 0),
-        )
+        ))
         if not self.distributor.wait_wallet(timeout=360):
-            print(f"- could not start distributor (application timeout)")
-            raise Exception("Could not start distributor")
+            print("- could not start distributor (application timeout)")
+            raise StartupError("Could not start distributor")
         print("- started distributor")
 
-    def init_wasabi_client(self, version, ip, port, name, delay, stop):
+    def init_wasabi_client(
+        self,
+        version: str,
+        ip: str,
+        port: int,
+        name: str,
+        delay: tuple[int, int],
+        stop: tuple[int, int],
+    ) -> WasabiClientBase:
         return WasabiClient(version)(
             host=ip,
             port=port,
@@ -203,7 +219,10 @@ class WasabiEngine(EngineBase):
             stop=stop,
         )
 
-    def start_client(self, idx: int, wallet: WalletConfig | None = None):
+    def init_client(self) -> object:
+        raise NotImplementedError("Wasabi clients require init_wasabi_client()")
+
+    def start_client(self, idx: int, wallet: WalletConfig | None = None) -> EmulatorClient | None:
         if wallet is None:
             raise ValueError("wallet parameter is required")
         version = wallet.version or self.scenario.default_version
@@ -219,13 +238,15 @@ class WasabiEngine(EngineBase):
         if anon_score_target is not None and version < "2.0.3":
             anon_score_target = None
             print(
-                f"Anon Score Target is ignored for wallet {idx} as it is curently supported only for version 2.0.3 and newer"
+                f"Anon Score Target is ignored for wallet {idx} as it is curently supported only for "
+                "version 2.0.3 and newer"
             )
 
         if redcoin_isolation is not None and version < "2.0.3":
             redcoin_isolation = None
             print(
-                f"Redcoin isolation is ignored for wallet {idx} as it is curently supported only for version 2.0.3 and newer"
+                f"Redcoin isolation is ignored for wallet {idx} as it is curently supported only for "
+                "version 2.0.3 and newer"
             )
 
         if self.node is None:
@@ -256,7 +277,7 @@ class WasabiEngine(EngineBase):
                 cpu=(0.3 if version < "2.0.4" else 0.1),
                 memory=(1024 if version < "2.0.4" else 768),
             )
-        except Exception as e:
+        except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             print(f"- could not start {name} ({e})")
             return None
 
@@ -276,12 +297,12 @@ class WasabiEngine(EngineBase):
             print(f"- could not start {name} (application timeout {time() - start} seconds)")
             return None
         print(f"- started {client.name} (wait took {time() - start} seconds)")
-        return client
+        return cast(EmulatorClient, client)
 
-    def stop_client(self, idx: int):
+    def stop_client(self, idx: int) -> None:
         self.driver.stop(f"wasabi-client-{idx:03}")
 
-    def store_engine_logs(self, data_path):
+    def store_engine_logs(self, data_path: str) -> None:
         try:
             if self.backend_architecture == BackendArchitecture.SPLIT:
                 self.driver.download(
@@ -289,7 +310,7 @@ class WasabiEngine(EngineBase):
                     "/home/wasabi/.walletwasabi/backend/",
                     os.path.join(data_path, "wasabi-backend-2.6"),
                 )
-                print(f"- stored backend-2.6 logs")
+                print("- stored backend-2.6 logs")
 
                 try:
                     self.driver.download(
@@ -297,9 +318,9 @@ class WasabiEngine(EngineBase):
                         "/home/wasabi/.walletwasabi/coordinator/",
                         os.path.join(data_path, "wasabi-coordinator"),
                     )
-                    print(f"- stored coordinator logs")
-                except:
-                    print(f"- could not store coordinator logs")
+                    print("- stored coordinator logs")
+                except (CoinjoinEmulatorError, RuntimeError, OSError):
+                    print("- could not store coordinator logs")
             else:
                 # Store logs from legacy backend
                 self.driver.download(
@@ -307,22 +328,25 @@ class WasabiEngine(EngineBase):
                     "/home/wasabi/.walletwasabi/backend/",
                     os.path.join(data_path, "wasabi-backend"),
                 )
-                print(f"- stored backend logs")
-        except:
-            print(f"- could not store backend logs")
+                print("- stored backend logs")
+        except (CoinjoinEmulatorError, RuntimeError, OSError):
+            print("- could not store backend logs")
 
-    def start_coinjoin(self, client):
+    def start_coinjoin(self, client: EmulatorClient) -> None:
         sleep(random.random() / 10)
-        client.start_coinjoin()
+        cast(WasabiClientBase, client).start_coinjoin()
 
-    def stop_coinjoin(self, client):
+    def stop_coinjoin(self, client: EmulatorClient) -> None:
         sleep(random.random() / 10)
-        client.stop_coinjoin()
+        cast(WasabiClientBase, client).stop_coinjoin()
 
-    def update_coinjoins(self):
-        print(f"- updating coinjoins...".ljust(60), end="\r")
-        def start_condition(client):
-            print(f"Checking client {client.name} with delay {client.delay} and stop {client.stop} against current block {self.current_block} and round {self.current_round}")
+    def update_coinjoins(self) -> None:
+        print("- updating coinjoins...".ljust(60), end="\r")
+        def start_condition(client: EmulatorClient) -> bool:
+            print(
+                f"Checking client {client.name} with delay {client.delay} and stop {client.stop} "
+                f"against current block {self.current_block} and round {self.current_round}"
+            )
             if client.stop[0] > 0 and self.current_block >= client.stop[0]:
                 return False
             if client.stop[1] > 0 and self.current_round >= client.stop[1]:
@@ -345,13 +369,13 @@ class WasabiEngine(EngineBase):
         with multiprocessing.pool.ThreadPool() as pool:
             pool.starmap(self.start_coinjoin, ((client,) for client in start))
 
-        print(f"- coinjoins updated".ljust(60), end="\r")
+        print("- coinjoins updated".ljust(60), end="\r")
         with multiprocessing.pool.ThreadPool() as pool:
             pool.starmap(self.stop_coinjoin, ((client,) for client in stop))
 
-        print(f"- coinjoins updated".ljust(60), end="\r")
+        print("- coinjoins updated".ljust(60), end="\r")
 
-    def run_engine(self):
+    def run_engine(self) -> None:
         print("Running simulation")
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
@@ -363,16 +387,16 @@ class WasabiEngine(EngineBase):
                 try:
                     self.current_round = self._get_current_round()
                     break
-                except Exception as e:
-                    print(f"- could not get rounds".ljust(60), end="\r")
+                except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError) as e:
+                    print("- could not get rounds".ljust(60), end="\r")
                     print(f"Round exception: {e}", file=sys.stderr)
 
             for _ in range(3):
                 try:
-                    self.current_block = self.node.get_block_count() - initial_block  # type: ignore
+                    self.current_block = self.node.get_block_count() - initial_block
                     break
-                except Exception as e:
-                    print(f"- could not get blocks".ljust(60), end="\r")
+                except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
+                    print("- could not get blocks".ljust(60), end="\r")
                     print(f"Block exception: {e}", file=sys.stderr)
 
             self.update_invoice_payments()
@@ -383,25 +407,24 @@ class WasabiEngine(EngineBase):
             )
             sleep(1)
         print()
-        print(f"- limit reached")
+        print("- limit reached")
 
     def _get_current_round(self) -> int:
         if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
-            resp = self.coordinator._get_status()
+            resp = self.coordinator.get_status()
             if resp is not None:
-                for round_state in resp["RoundStates"]:
+                round_states = cast(list[dict[str, str]], resp["RoundStates"])
+                for round_state in round_states:
                     if round_state["Phase"] == "TransactionSigning":
                         self.round_ids.add(round_state["RoundId"])
                 return len(self.round_ids)
             return 0
 
-        else:
-            # In legacy versions, rounds are tracked by the backend
-            return sum(
-                1
-                for _ in self.driver.peek(
-                    "wasabi-backend",
-                    "/home/wasabi/.walletwasabi/backend/WabiSabi/CoinJoinIdStore.txt",
-                ).split("\n")[:-1]
-            )
-
+        # In legacy versions, rounds are tracked by the backend
+        return sum(
+            1
+            for _ in self.driver.peek(
+                "wasabi-backend",
+                "/home/wasabi/.walletwasabi/backend/WabiSabi/CoinJoinIdStore.txt",
+            ).split("\n")[:-1]
+        )

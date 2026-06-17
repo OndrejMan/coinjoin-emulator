@@ -1,11 +1,12 @@
 """Factory for creating appropriate Wasabi backend and coordinator instances."""
 
 from enum import Enum
-from manager.wasabi_backend import WasabiBackend
-from manager.wasabi_backend_26 import WasabiBackend26
-from manager.wasabi_coordinator import WasabiCoordinator
-from manager.wasabi_backend_protocol import WasabiBackendProtocol
-from manager.wasabi_coordinator_protocol import WasabiCoordinatorProtocol
+
+from .wasabi_backend import WasabiBackend
+from .wasabi_backend_26 import WasabiBackend26
+from .wasabi_backend_protocol import WasabiBackendProtocol
+from .wasabi_coordinator import WasabiCoordinator
+from .wasabi_coordinator_protocol import WasabiCoordinatorProtocol
 
 
 class BackendArchitecture(Enum):
@@ -53,8 +54,7 @@ def create_backend(
     """
     if architecture == BackendArchitecture.SPLIT:
         return WasabiBackend26(host=host, port=port, internal_ip=internal_ip, proxy=proxy)
-    else:
-        return WasabiBackend(host=host, port=port, internal_ip=internal_ip, proxy=proxy)
+    return WasabiBackend(host=host, port=port, internal_ip=internal_ip, proxy=proxy)
 
 
 def create_coordinator(

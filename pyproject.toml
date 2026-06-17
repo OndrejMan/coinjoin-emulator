@@ -1,0 +1,108 @@
+[project]
+name = "emucoinjoin"
+version = "0.1.0"
+description = "Container-based emulator for CoinJoin transactions on RegTest."
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    "docker==6.1",
+    "kubernetes==28.1.0",
+    "numpy==1.26.4",
+    "podman==4.7",
+    "PySocks==1.7.1",
+    "requests==2.31",
+    "urllib3<2",
+]
+
+[dependency-groups]
+dev = [
+    "mypy",
+    "pylint",
+    "pytest",
+    "ruff>=0.15.17",
+    "types-docker",
+    "types-requests",
+]
+
+[tool.uv]
+package = false
+override-dependencies = [
+    "urllib3<2",
+]
+
+[tool.pylint.main]
+fail-under = 10
+ignore = ["CVS", ".venv", ".venv-k3d", "env"]
+py-version = "3.11"
+
+[tool.pylint.design]
+max-args = 5
+max-attributes = 7
+max-bool-expr = 5
+max-branches = 12
+max-locals = 15
+max-parents = 7
+max-positional-arguments = 5
+max-public-methods = 20
+max-returns = 6
+max-statements = 50
+min-public-methods = 2
+
+[tool.pylint.exceptions]
+overgeneral-exceptions = ["builtins.BaseException", "builtins.Exception"]
+
+[tool.pylint.format]
+ignore-long-lines = "^\\s*(# )?<?https?://\\S+>?$"
+max-line-length = 120
+max-module-lines = 1000
+
+[tool.pylint."messages control"]
+confidence = ["HIGH", "CONTROL_FLOW", "INFERENCE", "INFERENCE_FAILURE", "UNDEFINED"]
+disable = [
+    "missing-docstring",
+    "line-too-long",
+    "trailing-whitespace",
+    "too-many-arguments",
+    "too-few-public-methods",
+    "too-many-positional-arguments",
+    "too-many-public-methods",
+    "too-many-boolean-expressions",
+    "duplicate-code",
+    "too-many-instance-attributes",
+    "too-many-locals",
+    "too-many-return-statements",
+    "invalid-name",
+    "fixme",
+    "too-many-branches",
+    "no-name-in-module",
+]
+
+[tool.pylint.refactoring]
+max-nested-blocks = 5
+
+[tool.pylint.reports]
+score = true
+
+[tool.pylint.similarities]
+ignore-comments = true
+ignore-docstrings = true
+ignore-imports = true
+ignore-signatures = true
+min-similarity-lines = 4
+
+[tool.ruff]
+exclude = [
+    ".git",
+    ".venv",
+    ".venv-k3d",
+    "__pycache__",
+    "build",
+    "dist",
+]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = []
+fixable = ["ALL"]
+unfixable = []

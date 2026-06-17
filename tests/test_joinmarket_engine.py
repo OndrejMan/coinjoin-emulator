@@ -1,30 +1,41 @@
-import sys
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar, cast
 from unittest.mock import patch
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
-
+# pylint: disable=protected-access
+from manager.btc_node import BtcNode
 from manager.engine.configuration import JoinMarketConfig, JoinMarketRole, WalletConfig
 from manager.engine.joinmarket_engine import JoinmarketEngine
 
 
 class FakeDriver:
-    def __init__(self):
-        self.calls = []
-        self.build_calls = []
-        self.log_calls = []
-        self.peek_calls = []
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.build_calls: list[dict[str, str]] = []
+        self.log_calls: list[str] = []
+        self.peek_calls: list[tuple[str, str]] = []
 
-    def has_image(self, name):
+    def has_image(self, _name: str) -> bool:
         return True
 
-    def build(self, name, path):
+    def build(self, name: str, path: str) -> None:
         self.build_calls.append({"name": name, "path": path})
 
-    def run(self, name, image, env=None, ports=None, cpu=0.1, memory=768, **_kwargs):
+    def pull(self, name: str) -> None:
+        pass
+
+    def run(
+        self,
+        name: str,
+        image: str,
+        env: dict[str, str | None] | None = None,
+        ports: dict[int, int] | None = None,
+        _skip_ip: bool = False,
+        cpu: float = 0.1,
+        memory: int = 768,
+        _volumes: dict[str, dict[str, str]] | None = None,
+    ) -> tuple[str, dict[int, int]]:
         self.calls.append(
             {
                 "name": name,
@@ -37,44 +48,80 @@ class FakeDriver:
         )
         return f"{name}.pod", {28183: 32083}
 
-    def logs(self, name):
+    def stop(self, name: str) -> None:
+        pass
+
+    def download(self, name: str, src_path: str, dst_path: str) -> None:
+        pass
+
+    def logs(self, name: str) -> str:
         self.log_calls.append(name)
         return "container stderr"
 
-    def peek(self, name, path):
+    def peek(self, name: str, path: str) -> str:
         self.peek_calls.append((name, path))
         return "jmwalletd stderr"
 
+    def upload(self, name: str, src_path: str, dst_path: str) -> None:
+        pass
+
+    def cleanup(self, image_prefix: str = "") -> None:
+        pass
+
 
 class FakeJoinMarketClientServer:
-    instances = []
+    instances: ClassVar[list["FakeJoinMarketClientServer"]] = []
     wait_wallet_result = True
 
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
+    def __init__(
+        self,
+        name: str = "",
+        host: str = "",
+        port: int = 0,
+        proxy: str = "",
+        role: str = "maker",
+        delay: tuple[int, int] = (0, 0),
+        stop: tuple[int, int] = (0, 0),
+    ) -> None:
+        self.name = name
+        self.host = host
+        self.port = port
+        self.proxy = proxy
+        self.type = role
+        self.delay = delay
+        self.stop = stop
         self.maker_running = False
         self.coinjoin_in_process = False
         self.coinjoin_start = 0
         self.started_maker = False
-        self.started_coinjoins = []
+        self.started_coinjoins: list[dict[str, object]] = []
         self.address_counter = 0
         self.balance = 1000000
+        self.wait_wallet_timeout: int | None = None
+        self.maker_config: dict[str, int | str | float] = {}
         FakeJoinMarketClientServer.instances.append(self)
 
-    def wait_wallet(self, timeout):
+    def wait_wallet(self, timeout: int | None) -> bool:
         self.wait_wallet_timeout = timeout
         return self.wait_wallet_result
 
-    def get_status(self):
+    def get_status(self) -> dict[str, object]:
         return {
             "maker_running": self.maker_running,
             "coinjoin_in_process": self.coinjoin_in_process,
         }
 
-    def get_balance(self):
+    def get_balance(self) -> int:
         return self.balance
 
-    def start_maker(self, txfee, cjfee_a, cjfee_r, ordertype, minsize):
+    def start_maker(
+        self,
+        txfee: int | str,
+        cjfee_a: int | str,
+        cjfee_r: float | str,
+        ordertype: str,
+        minsize: int | str,
+    ) -> dict[str, object]:
         self.started_maker = True
         self.maker_running = True
         self.maker_config = {
@@ -86,11 +133,22 @@ class FakeJoinMarketClientServer:
         }
         return {}
 
-    def get_new_address(self):
+    def get_new_address(self) -> str:
         self.address_counter += 1
         return f"address-{self.name}-{self.address_counter}"
 
-    def start_coinjoin(self, mixdepth, amount_sats, counterparties, destination):
+    def list_coins(self) -> object:
+        return []
+
+    def list_unspent_coins(self) -> object:
+        return []
+
+    def list_keys(self) -> object:
+        return []
+
+    def start_coinjoin(
+        self, mixdepth: int, amount_sats: int, counterparties: int, destination: str
+    ) -> dict[str, object]:
         self.coinjoin_in_process = True
         self.started_coinjoins.append(
             {
@@ -102,20 +160,29 @@ class FakeJoinMarketClientServer:
         )
         return {}
 
-    def stop_coinjoin(self):
+    def stop_coinjoin(self) -> bool:
         self.coinjoin_in_process = False
         return True
 
 
 class FakeBtcNode:
-    def __init__(self, blocks=None, block_count=200):
-        self.create_wallet_calls = []
+    def __init__(
+        self,
+        blocks: dict[int, dict[str, object]] | None = None,
+        block_count: int = 200,
+    ) -> None:
+        self.create_wallet_calls: list[dict[str, object]] = []
         self.blocks = blocks or {}
         self.block_count = block_count
-        self.fund_address_calls = []
-        self.mine_block_calls = []
+        self.fund_address_calls: list[dict[str, object]] = []
+        self.mine_block_calls: list[int] = []
 
-    def create_wallet(self, wallet, disable_private_keys=False, allow_descriptor_fallback=True):
+    def create_wallet(
+        self,
+        wallet: str,
+        disable_private_keys: bool = False,
+        allow_descriptor_fallback: bool = True,
+    ) -> None:
         self.create_wallet_calls.append(
             {
                 "wallet": wallet,
@@ -124,28 +191,28 @@ class FakeBtcNode:
             }
         )
 
-    def get_block_count(self):
+    def get_block_count(self) -> int:
         if self.blocks:
             return max(self.blocks)
         return self.block_count
 
-    def get_block_hash(self, height):
+    def get_block_hash(self, height: int) -> str:
         return f"block-{height}"
 
-    def get_block_info(self, block_hash):
+    def get_block_info(self, block_hash: str) -> dict[str, object]:
         height = int(block_hash.removeprefix("block-"))
         return self.blocks.get(height, {"height": height, "tx": []})
 
-    def fund_address(self, address, amount):
+    def fund_address(self, address: str, amount: int | float) -> None:
         self.fund_address_calls.append({"address": address, "amount": amount})
 
-    def mine_block(self, count=1):
+    def mine_block(self, count: int = 1) -> bool:
         self.mine_block_calls.append(count)
         self.block_count += count
         return True
 
 
-def engine_args(proxy=""):
+def engine_args(proxy: str = "") -> SimpleNamespace:
     return SimpleNamespace(
         image_prefix="ghcr.io/ondrejman/",
         proxy=proxy,
@@ -154,15 +221,21 @@ def engine_args(proxy=""):
     )
 
 
+def set_fake_node(engine: JoinmarketEngine, node: FakeBtcNode | None = None) -> FakeBtcNode:
+    fake_node = node or FakeBtcNode()
+    engine.node = cast(BtcNode, fake_node)
+    return fake_node
+
+
 class JoinmarketEngineTest(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         FakeJoinMarketClientServer.instances = []
         FakeJoinMarketClientServer.wait_wallet_result = True
 
-    def test_distributor_uses_driver_port_mapping_without_proxy(self):
+    def test_distributor_uses_driver_port_mapping_without_proxy(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
-        engine.node = FakeBtcNode()
+        node = set_fake_node(engine)
 
         with patch(
             "manager.engine.joinmarket_engine.JoinMarketClientServer",
@@ -176,7 +249,7 @@ class JoinmarketEngineTest(unittest.TestCase):
             {"JM_RPC_WALLET_FILE": "jm_wallet_distributor"},
         )
         self.assertEqual(
-            engine.node.create_wallet_calls,
+            node.create_wallet_calls,
             [
                 {
                     "wallet": "jm_wallet_distributor",
@@ -190,10 +263,10 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(distributor.port, 32083)
         self.assertEqual(distributor.proxy, "")
 
-    def test_distributor_timeout_dumps_container_logs(self):
+    def test_distributor_timeout_dumps_container_logs(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
-        engine.node = FakeBtcNode()
+        set_fake_node(engine)
         FakeJoinMarketClientServer.wait_wallet_result = False
 
         with patch(
@@ -209,20 +282,20 @@ class JoinmarketEngineTest(unittest.TestCase):
             [("joinmarket-distributor", "/home/joinmarket/jmwalletd.log")],
         )
 
-    def test_engine_starts_irc_without_shared_joinmarket_core_wallet(self):
+    def test_engine_starts_irc_without_shared_joinmarket_core_wallet(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
-        engine.node = FakeBtcNode()
+        node = set_fake_node(engine)
 
         with patch.object(engine, "start_irc_server") as start_irc_server, patch(
             "manager.engine.joinmarket_engine.sleep"
         ):
             engine.start_engine_infrastructure()
 
-        self.assertEqual(engine.node.create_wallet_calls, [])
+        self.assertEqual(node.create_wallet_calls, [])
         start_irc_server.assert_called_once_with()
 
-    def test_prepare_images_rebuilds_patched_joinmarket_client_server(self):
+    def test_prepare_images_rebuilds_patched_joinmarket_client_server(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
 
@@ -238,10 +311,10 @@ class JoinmarketEngineTest(unittest.TestCase):
             ],
         )
 
-    def test_client_uses_driver_port_mapping_without_proxy(self):
+    def test_client_uses_driver_port_mapping_without_proxy(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
-        engine.node = FakeBtcNode()
+        node = set_fake_node(engine)
         wallet = WalletConfig(
             funds=[1000],
             joinmarket=JoinMarketConfig(role=JoinMarketRole.TAKER),
@@ -259,7 +332,7 @@ class JoinmarketEngineTest(unittest.TestCase):
             {"JM_RPC_WALLET_FILE": "jm_wallet_jcs_000"},
         )
         self.assertEqual(
-            engine.node.create_wallet_calls,
+            node.create_wallet_calls,
             [
                 {
                     "wallet": "jm_wallet_jcs_000",
@@ -269,14 +342,16 @@ class JoinmarketEngineTest(unittest.TestCase):
             ],
         )
         self.assertIs(client, FakeJoinMarketClientServer.instances[0])
+        self.assertIsNotNone(client)
+        assert client is not None
         self.assertEqual(client.host, "host.docker.internal")
         self.assertEqual(client.port, 32083)
         self.assertEqual(client.type, "taker")
 
-    def test_client_uses_pod_ip_and_container_port_with_proxy(self):
+    def test_client_uses_pod_ip_and_container_port_with_proxy(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(proxy="http://proxy:8080"), driver)
-        engine.node = FakeBtcNode()
+        set_fake_node(engine)
         wallet = WalletConfig(
             funds=[1000],
             joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER),
@@ -288,6 +363,8 @@ class JoinmarketEngineTest(unittest.TestCase):
         ):
             client = engine.start_client(2, wallet)
 
+        self.assertIsNotNone(client)
+        assert client is not None
         self.assertEqual(driver.calls[0]["ports"], {28183: 28186})
         self.assertEqual(
             driver.calls[0]["env"],
@@ -298,15 +375,15 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(client.proxy, "http://proxy:8080")
         self.assertEqual(client.type, "maker")
 
-    def test_update_starts_makers_before_taker_coinjoin(self):
+    def test_update_starts_makers_before_taker_coinjoin(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
-        engine.node = FakeBtcNode(block_count=205)
+        set_fake_node(engine, FakeBtcNode(block_count=205))
         engine.scenario.rounds = 1
         engine.current_block = 5
-        taker = FakeJoinMarketClientServer(name="jcs-000", type="taker", delay=(0, 0))
+        taker = FakeJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
         makers = [
-            FakeJoinMarketClientServer(name=f"jcs-{idx:03}", type="maker", delay=(0, 0))
+            FakeJoinMarketClientServer(name=f"jcs-{idx:03}", role="maker", delay=(0, 0))
             for idx in range(1, 5)
         ]
         engine.clients = [taker, *makers]
@@ -330,16 +407,16 @@ class JoinmarketEngineTest(unittest.TestCase):
             ["jcs-001", "jcs-002", "jcs-003", "jcs-004"],
         )
 
-    def test_update_does_not_start_parallel_taker_rounds(self):
+    def test_update_does_not_start_parallel_taker_rounds(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
-        engine.node = FakeBtcNode(block_count=205)
+        set_fake_node(engine, FakeBtcNode(block_count=205))
         engine.scenario.rounds = 3
         engine.current_block = 6
-        first_taker = FakeJoinMarketClientServer(name="jcs-000", type="taker", delay=(0, 0))
-        second_taker = FakeJoinMarketClientServer(name="jcs-001", type="taker", delay=(0, 0))
+        first_taker = FakeJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
+        second_taker = FakeJoinMarketClientServer(name="jcs-001", role="taker", delay=(0, 0))
         makers = [
-            FakeJoinMarketClientServer(name=f"jcs-{idx:03}", type="maker", delay=(0, 0))
+            FakeJoinMarketClientServer(name=f"jcs-{idx:03}", role="maker", delay=(0, 0))
             for idx in range(2, 6)
         ]
         for maker in makers:
@@ -362,14 +439,14 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(second_taker.started_coinjoins, [])
         self.assertEqual(len(engine.joinmarket_round_events), 1)
 
-    def test_update_waits_for_maker_confirmed_balance_before_starting(self):
+    def test_update_waits_for_maker_confirmed_balance_before_starting(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
-        engine.node = FakeBtcNode(block_count=205)
+        set_fake_node(engine, FakeBtcNode(block_count=205))
         engine.scenario.rounds = 1
         engine.current_block = 5
-        taker = FakeJoinMarketClientServer(name="jcs-000", type="taker", delay=(0, 0))
-        maker = FakeJoinMarketClientServer(name="jcs-001", type="maker", delay=(0, 0))
+        taker = FakeJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
+        maker = FakeJoinMarketClientServer(name="jcs-001", role="maker", delay=(0, 0))
         maker.balance = 0
         engine.clients = [taker, maker]
 
@@ -377,28 +454,31 @@ class JoinmarketEngineTest(unittest.TestCase):
 
         self.assertFalse(maker.started_maker)
 
-    def test_started_round_is_confirmed_by_mined_destination_output(self):
+    def test_started_round_is_confirmed_by_mined_destination_output(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
-        engine.node = FakeBtcNode(
-            block_count=207,
-            blocks={
-                206: {
-                    "height": 206,
-                    "tx": [
-                        {
-                            "txid": "joinmarket-tx",
-                            "vout": [
-                                {
-                                    "n": 0,
-                                    "value": 0.0004,
-                                    "scriptPubKey": {"address": "destination-address"},
-                                }
-                            ],
-                        }
-                    ],
-                }
-            },
+        set_fake_node(
+            engine,
+            FakeBtcNode(
+                block_count=207,
+                blocks={
+                    206: {
+                        "height": 206,
+                        "tx": [
+                            {
+                                "txid": "joinmarket-tx",
+                                "vout": [
+                                    {
+                                        "n": 0,
+                                        "value": 0.0004,
+                                        "scriptPubKey": {"address": "destination-address"},
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                },
+            ),
         )
         engine.current_block = 6
         engine.joinmarket_round_events = [
@@ -419,10 +499,10 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(engine.joinmarket_round_events[0]["txid"], "joinmarket-tx")
         self.assertEqual(engine.joinmarket_round_events[0]["block_height"], 206)
 
-    def test_joinmarket_invoice_funding_uses_bitcoin_core_directly(self):
+    def test_joinmarket_invoice_funding_uses_bitcoin_core_directly(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
-        engine.node = FakeBtcNode()
+        node = set_fake_node(engine)
 
         engine.pay_invoices([
             ("bcrt1maker", 1000000),
@@ -430,13 +510,13 @@ class JoinmarketEngineTest(unittest.TestCase):
         ])
 
         self.assertEqual(
-            engine.node.fund_address_calls,
+            node.fund_address_calls,
             [
                 {"address": "bcrt1maker", "amount": 0.01},
                 {"address": "bcrt1taker", "amount": 0.002},
             ],
         )
-        self.assertEqual(engine.node.mine_block_calls, [1])
+        self.assertEqual(node.mine_block_calls, [1])
 
 
 if __name__ == "__main__":

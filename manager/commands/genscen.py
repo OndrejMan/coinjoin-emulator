@@ -1,14 +1,24 @@
 import argparse
 import json
 import os
-import sys
-import numpy.random
-import copy
 import random
+import sys
+from collections.abc import Iterable
+from typing import Callable, cast
 
-from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
+import numpy.random
 
-def create_backend_config(args):
+from ..engine.configuration import (
+    FundConfig,
+    ScenarioConfig,
+    WalletConfig,
+    WasabiConfig,
+)
+
+Distribution = Callable[[int], list[int]]
+SkipRounds = Callable[[int], list[int]]
+
+def create_backend_config(args: argparse.Namespace) -> dict[str, object]:
     """Create backend configuration dictionary."""
     return {
         "MaxInputCountByRound": args.max_coinjoin,
@@ -22,74 +32,77 @@ def create_backend_config(args):
     }
 
 
-def setup_parser(parser: argparse.ArgumentParser):
-    parser.add_argument("--name", type=str, help="scenario name")
-    parser.add_argument(
+def setup_parser(arg_parser: argparse.ArgumentParser) -> None:
+    arg_parser.add_argument("--name", type=str, help="scenario name")
+    arg_parser.add_argument(
         "--client-count", type=int, default=10, help="number of wallets"
     )
-    parser.add_argument("--type", type=str, default="static", help="scenario type")
-    parser.add_argument(
+    arg_parser.add_argument("--type", type=str, default="static", help="scenario type")
+    arg_parser.add_argument(
         "--distribution",
         type=str,
         default="lognorm",
         help="fund distribution strategy",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--utxo-count", type=int, default=30, help="number of UTXOs per wallet"
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--max-coinjoin",
         type=int,
         default=400,
         help="maximal number of inputs to a coinjoin",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--min-coinjoin",
         type=int,
         default=4,
         help="minimal number of inputs to a coinjoin",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--stop-round",
         type=int,
         default=0,
         help="terminate after N coinjoin rounds, 0 for no limit",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--stop-block",
         type=int,
         default=0,
         help="terminate after N blocks, 0 for no limit",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--skip-rounds",
         type=str,
         required=False,
-        help="skip rounds ('random[fraction]' for randomly sampled fraction of rounds, or comma-separated list of rounds to skip)",
+        help=(
+            "skip rounds ('random[fraction]' for randomly sampled fraction of rounds, "
+            "or comma-separated list of rounds to skip)"
+        ),
     )
-    parser.add_argument("--force", action="store_true", help="overwrite existing files")
-    parser.add_argument(
+    arg_parser.add_argument("--force", action="store_true", help="overwrite existing files")
+    arg_parser.add_argument(
         "--out-dir", type=str, default="scenarios", help="output directory"
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--distributor-version",
         type=str,
         required=False,
         help="version of the distibutor wallet",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--client-version",
         type=str,
         required=False,
         help="version of the client wallet",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--anon-score-target",
         type=int,
         required=False,
         help="default anon score target used for wallets",
     )
-    parser.add_argument(
+    arg_parser.add_argument(
         "--redcoin-isolation",
         type=bool,
         required=False,
@@ -97,9 +110,9 @@ def setup_parser(parser: argparse.ArgumentParser):
     )
 
 
-def format_name(args):
+def format_name(args: argparse.Namespace) -> str:
     if args.name:
-        return args.name
+        return str(args.name)
     if args.type == "static":
         return (
             f"{args.distribution}-{args.type}-{args.client_count}-{args.utxo_count}utxo"
@@ -117,7 +130,7 @@ def format_name(args):
     return f"{args.distribution}-{args.type}-{args.client_count}"
 
 
-def prepare_skip_rounds(args):
+def prepare_skip_rounds(args: argparse.Namespace) -> SkipRounds | None:
     if not args.skip_rounds:
         return None
     if args.skip_rounds.startswith("random"):
@@ -144,19 +157,18 @@ def prepare_skip_rounds(args):
                 ),
             )
         )
-    else:
-        try:
-            return lambda idx: (
-                sorted(map(int, args.skip_rounds.split(",")))
-                if idx < args.client_count // 2
-                else []
-            )
-        except ValueError:
-            print("- invalid skip rounds list")
-            sys.exit(1)
+    try:
+        return lambda idx: (
+            sorted(map(int, args.skip_rounds.split(",")))
+            if idx < args.client_count // 2
+            else []
+        )
+    except ValueError:
+        print("- invalid skip rounds list")
+        sys.exit(1)
 
 
-def prepare_distribution(distribution):
+def prepare_distribution(distribution: str) -> Distribution | None:
     dist_name = distribution.split("[")[0]
     dist_params = None
     if "[" in distribution:
@@ -165,21 +177,42 @@ def prepare_distribution(distribution):
     match dist_name:
         case "uniform":
             params = dist_params or [0.0, 10_000_000.0]
-            return lambda x: map(round, numpy.random.uniform(params[0], params[1], x))
+            return lambda x: [
+                round(value)
+                for value in cast(
+                    Iterable[float],
+                    numpy.random.uniform(params[0], params[1], size=x),
+                )
+            ]
         case "pareto":
             params = dist_params or [1.16]
-            return lambda x: map(
-                round, numpy.random.pareto(params[0], x) * 1_000_000
-            )
+            return lambda x: [
+                round(value)
+                for value in cast(
+                    Iterable[float],
+                    numpy.random.pareto(params[0], size=x) * 1_000_000,
+                )
+            ]
         case "lognorm":
             # parameters estimated from mainnet data of Wasabi 2.0 coinjoins
             params = dist_params or [14.1, 2.29]
-            return lambda x: map(round, numpy.random.lognormal(params[0], params[1], x))
+            return lambda x: [
+                round(value)
+                for value in cast(
+                    Iterable[float],
+                    numpy.random.lognormal(params[0], params[1], size=x),
+                )
+            ]
         case _:
             return None
 
 
-def prepare_wallet(args, idx, distribution, skip_rounds):
+def prepare_wallet(
+    args: argparse.Namespace,
+    idx: int,
+    distribution: Distribution,
+    skip_rounds: SkipRounds | None,
+) -> WalletConfig:
     """Create a WalletConfig object based on args and wallet type."""
     funds = None
     anon_score_target = None
@@ -236,13 +269,14 @@ def prepare_wallet(args, idx, distribution, skip_rounds):
             skip_rounds=skip_rounds_list
         )
 
+    wallet_funds = cast(list[int | FundConfig], funds)
     return WalletConfig(
-        funds=funds,
+        funds=wallet_funds,
         wasabi=wasabi_config
     )
 
 
-def handler(args):
+def handler(args: argparse.Namespace) -> None:
     print("Generating scenario...")
     
     distribution = prepare_distribution(args.distribution)
@@ -284,7 +318,7 @@ def handler(args):
         print(f"- file {args.out_dir}/{scenario.name}.json already exists")
         sys.exit(1)
 
-    with open(f"{args.out_dir}/{scenario.name}.json", "w") as f:
+    with open(f"{args.out_dir}/{scenario.name}.json", "w", encoding="utf-8") as f:
         json.dump(scenario.to_dict(), f, indent=2)
 
     print(f"- saved to {args.out_dir}/{scenario.name}.json")

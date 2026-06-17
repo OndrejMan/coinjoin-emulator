@@ -1,16 +1,13 @@
 import json
-import sys
 import unittest
-from pathlib import Path
 from unittest.mock import Mock, patch
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from manager.btc_node import BtcNode
 
+# pylint: disable=protected-access
 
-def response(body=None):
+
+def response(body: dict[str, object] | None = None) -> Mock:
     mock_response = Mock()
     mock_response.raise_for_status.return_value = None
     mock_response.json.return_value = body or {"error": None, "result": "ok"}
@@ -18,7 +15,7 @@ def response(body=None):
 
 
 class BtcNodeTest(unittest.TestCase):
-    def test_rpc_uses_requested_wallet_name(self):
+    def test_rpc_uses_requested_wallet_name(self) -> None:
         node = BtcNode(host="btc-node", port=18443)
 
         with patch("manager.btc_node.requests.post", return_value=response()) as post:

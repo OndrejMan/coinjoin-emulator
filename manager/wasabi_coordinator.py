@@ -1,42 +1,54 @@
-from traceback import print_exception
-import requests
 from time import sleep
+from traceback import print_exception
+from typing import cast
+
+import requests
 
 
 class WasabiCoordinator:
-    def __init__(self, host="localhost", port=37128, internal_ip="", proxy=""):
+    def __init__(
+        self,
+        host: str = "localhost",
+        port: int = 37128,
+        internal_ip: str = "",
+        proxy: str = "",
+    ) -> None:
         self.host = host
         self.port = port
         self.internal_ip = internal_ip
         self.proxy = proxy
 
-    def _get_status(self):
+    def _get_status(self) -> dict[str, object] | None:
         """Get coordinator status"""
         try:
             response = requests.get(
                 f"http://{self.host}:{self.port}/wabisabi/human-monitor",
-                proxies=dict(http=self.proxy),
+                proxies={"http": self.proxy},
                 timeout=5,
             )
-            return response.json()
-        except Exception:
+            return cast(dict[str, object], response.json())
+        except (requests.exceptions.RequestException, ValueError):
             return None
 
-    def _get_rounds(self):
+    def get_status(self) -> dict[str, object] | None:
+        """Get coordinator status."""
+        return self._get_status()
+
+    def _get_rounds(self) -> dict[str, object] | None:
         """Get active coinjoin rounds"""
         try:
             print(self.host, self.port, self.proxy)
             response = requests.get(
                 f"http://{self.host}:{self.port}/wabisabi/human-monitor",
-                proxies=dict(http=self.proxy),
+                proxies={"http": self.proxy},
                 timeout=5,
             )
-            return response.json()
-        except Exception as e:
+            return cast(dict[str, object], response.json())
+        except (requests.exceptions.RequestException, ValueError) as e:
             print_exception(e)
             return None
 
-    def wait_ready(self):
+    def wait_ready(self) -> None:
         """Wait for coordinator to be ready"""
         print("Waiting for coordinator to be ready...")
         while True:
@@ -45,6 +57,6 @@ class WasabiCoordinator:
                 if status:
                     print(f"Coordinator ready: {status}")
                     break
-            except:
+            except (requests.exceptions.RequestException, ValueError):
                 pass
             sleep(0.1)

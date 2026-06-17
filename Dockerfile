@@ -1,18 +1,21 @@
 # Použijeme Python 3.11 podle tvých požadavků
 FROM python:3.11-slim
 
-# Instalace gitu (potřeba pro některé závislosti)
+# Instalace gitu a uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-# Nejdříve kopírujeme requirements pro využití Docker cache
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Nejdříve kopírujeme metadata závislostí pro využití Docker cache
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-cache
 
 # Kopírování zbytku repozitáře
 COPY . .
 
 # Výchozí příkaz, který spustí scénář
 #  CMD ["python", "manager.py", "run", "--scenario", "scenarios/defaultCoinJoin.json", "--btcFolder", "/home/bitcoin/data"]
-CMD ["sh", "-c", "python manager.py clean && python manager.py run --control-ip dind"]
+CMD ["sh", "-c", "uv run python manager.py clean && uv run python manager.py run --control-ip dind"]

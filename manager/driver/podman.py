@@ -5,16 +5,32 @@ from . import Driver
 
 
 class PodmanDriver(Driver):
-    def __init__(self, namespace="coinjoin"):
+    def __init__(self, namespace: str = "coinjoin") -> None:
         self._namespace = namespace
 
-    def _run(self, args, **kwargs):
-        return subprocess.run(["podman", *args], check=True, **kwargs)
+    def _run(
+        self,
+        args: list[str],
+        *,
+        stdout: int | None = None,
+        stderr: int | None = None,
+        capture_output: bool = False,
+        text: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["podman", *args],
+            check=True,
+            stdout=stdout,
+            stderr=stderr,
+            capture_output=capture_output,
+            text=text,
+        )
 
     @cached_property
-    def network(self):
+    def network(self) -> str:
         exists = subprocess.run(
             ["podman", "network", "exists", self._namespace],
+            check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -24,9 +40,10 @@ class PodmanDriver(Driver):
             self._run(["network", "create", self._namespace])
         return self._namespace
 
-    def has_image(self, name):
+    def has_image(self, name: str) -> bool:
         result = subprocess.run(
             ["podman", "image", "exists", name],
+            check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -34,23 +51,23 @@ class PodmanDriver(Driver):
             result.check_returncode()
         return result.returncode == 0
 
-    def build(self, name, path):
+    def build(self, name: str, path: str) -> None:
         self._run(["build", "--rm", "--no-cache", "-t", name, path])
 
-    def pull(self, name):
+    def pull(self, name: str) -> None:
         self._run(["pull", name])
 
     def run(
         self,
-        name,
-        image,
-        env=None,
-        ports=None,
-        skip_ip=False,
-        cpu=0.1,
-        memory=768,
-        volumes: dict | None = None,
-    ):
+        name: str,
+        image: str,
+        env: dict[str, str | None] | None = None,
+        ports: dict[int, int] | None = None,
+        skip_ip: bool = False,
+        cpu: float = 0.1,
+        memory: int = 768,
+        volumes: dict[str, dict[str, str]] | None = None,
+    ) -> tuple[str, dict[int, int]]:
         command = [
             "run",
             "-d",
@@ -79,9 +96,10 @@ class PodmanDriver(Driver):
         self._run(command)
         return name, ports or {}
 
-    def stop(self, name):
+    def stop(self, name: str) -> None:
         exists = subprocess.run(
             ["podman", "container", "exists", name],
+            check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -91,24 +109,24 @@ class PodmanDriver(Driver):
             self._run(["stop", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             print(f"- stopped {name}")
 
-    def download(self, name, src_path, dst_path):
+    def download(self, name: str, src_path: str, dst_path: str) -> None:
         try:
             self._run(["cp", f"{name}:{src_path}", dst_path])
         except subprocess.CalledProcessError:
             pass
 
-    def peek(self, name, path):
+    def peek(self, name: str, path: str) -> str:
         result = self._run(["exec", name, "cat", path], capture_output=True, text=True)
         return result.stdout
 
-    def logs(self, name):
+    def logs(self, name: str) -> str:
         result = self._run(["logs", name], capture_output=True, text=True)
         return result.stdout + result.stderr
 
-    def upload(self, name, src_path, dst_path):
+    def upload(self, name: str, src_path: str, dst_path: str) -> None:
         self._run(["cp", src_path, f"{name}:{dst_path}"])
 
-    def cleanup(self, image_prefix=""):
+    def cleanup(self, image_prefix: str = "") -> None:
         try:
             result = subprocess.run(
                 ["podman", "ps", "--format", "{{.Names}}\t{{.Image}}"],
@@ -142,6 +160,7 @@ class PodmanDriver(Driver):
         self.stop_many(containers)
         subprocess.run(
             ["podman", "network", "rm", self._namespace],
+            check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

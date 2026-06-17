@@ -1,16 +1,18 @@
+import argparse
+import os
+import sys
 from traceback import print_exception
+
+import manager.commands.genscen
+from manager.engine.engine_base import EngineBase
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
-from manager.engine.engine_base import EngineBase
-import manager.commands.genscen
-import sys
-import argparse
-
 
 DEFAULT_IMAGE_PREFIX = "ghcr.io/ondrejman/"
 
 
 args: argparse.Namespace | None = None
+driver = None
 engine: EngineBase | None = None
 versions = set()
 
@@ -20,13 +22,12 @@ def download_btc_data(dest_path: str):
     This is used in the Kubernetes flow: after emulation finishes on k8s,
     the raw chain data is downloaded locally so blocksci can analyze it.
     """
-    import os
     os.makedirs(dest_path, exist_ok=True)
     print(f"Downloading btc-node data to {dest_path}")
     try:
         driver.download("btc-node", "/home/bitcoin/data/", dest_path)
         print(f"- btc-node data downloaded to {dest_path}")
-    except Exception as e:
+    except (RuntimeError, OSError, ValueError, TypeError) as e:
         print(f"- failed to download btc-node data: {e}", file=sys.stderr)
         raise
 
@@ -43,7 +44,7 @@ def run():
         print()
         print("KeyboardInterrupt received")
         exit_code = 130
-    except Exception as e:
+    except (RuntimeError, OSError, ValueError, TypeError) as e:
         print(f"Terminating exception: {e}", file=sys.stderr)
         print_exception(e)
         exit_code = 1
@@ -157,7 +158,7 @@ if __name__ == "__main__":
 
     if args.command == "genscen":
         manager.commands.genscen.handler(args)
-        exit(0)
+        sys.exit(0)
 
     match args.driver:
         case "docker":
@@ -174,7 +175,7 @@ if __name__ == "__main__":
             driver = KubernetesDriver(args.namespace, args.reuse_namespace)
         case _:
             print(f"Unknown driver '{args.driver}'")
-            exit(1)
+            sys.exit(1)
 
     match args.engine:
         case "joinmarket":
@@ -183,7 +184,7 @@ if __name__ == "__main__":
             engine = WasabiEngine(args, driver)
         case _:
             print(f"Unknown engine '{args.engine}'")
-            exit(1)
+            sys.exit(1)
 
     engine.load_scenario()
 
@@ -196,4 +197,4 @@ if __name__ == "__main__":
             run()
         case _:
             print(f"Unknown command '{args.command}'")
-            exit(1)
+            sys.exit(1)

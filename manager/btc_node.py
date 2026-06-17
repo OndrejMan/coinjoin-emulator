@@ -1,18 +1,28 @@
-import requests
 import json
 from time import monotonic, sleep
+from typing import cast
+
+import requests
+
+from .exceptions import RpcError
 
 WALLET = "wallet"
 
 
 class BtcNode:
-    def __init__(self, host="localhost", port=18443, internal_ip="", proxy=""):
+    def __init__(
+        self,
+        host: str = "localhost",
+        port: int = 18443,
+        internal_ip: str = "",
+        proxy: str = "",
+    ) -> None:
         self.host = host
         self.port = port
         self.internal_ip = internal_ip
         self.proxy = proxy
 
-    def _rpc(self, request, wallet=None):
+    def _rpc(self, request: dict[str, object], wallet: str | None = None) -> object:
         request["jsonrpc"] = "1.0"
         request["id"] = "1"
         wallet_path = f"/wallet/{wallet}" if wallet else ""
@@ -20,43 +30,43 @@ class BtcNode:
             f"http://{self.host}:{self.port}{wallet_path}",
             data=json.dumps(request),
             auth=("user", "password"),
-            proxies=dict(http=self.proxy),
+            proxies={"http": self.proxy},
             timeout=5,
         )
         response.raise_for_status()
         if response.json()["error"] is not None:
-            raise Exception(response.json()["error"])
+            raise RpcError(str(response.json()["error"]))
         return response.json()["result"]
 
-    def get_block_count(self):
-        request = {
+    def get_block_count(self) -> int:
+        request: dict[str, object] = {
             "method": "getblockcount",
             "params": [],
         }
-        return self._rpc(request)
+        return cast(int, self._rpc(request))
 
-    def get_block_hash(self, height):
-        request = {
+    def get_block_hash(self, height: int) -> str:
+        request: dict[str, object] = {
             "method": "getblockhash",
             "params": [height],
         }
-        return self._rpc(request)
+        return cast(str, self._rpc(request))
 
-    def get_block_info(self, block_hash):
-        request = {
+    def get_block_info(self, block_hash: str) -> dict[str, object]:
+        request: dict[str, object] = {
             "method": "getblock",
             "params": [block_hash, 2],
         }
-        return self._rpc(request)
+        return cast(dict[str, object], self._rpc(request))
 
-    def mine_block(self, count=1):
+    def mine_block(self, count: int = 1) -> bool:
         initial_block_count = self.get_block_count()
 
-        request = {
+        request: dict[str, object] = {
             "method": "getnewaddress",
             "params": [],
         }
-        address = self._rpc(request, WALLET)
+        address = cast(str, self._rpc(request, WALLET))
 
         request = {
             "method": "generatetoaddress",
@@ -66,14 +76,14 @@ class BtcNode:
 
         return self.get_block_count() - initial_block_count == count
 
-    def fund_address(self, address, amount):
-        request = {
+    def fund_address(self, address: str, amount: int | float) -> None:
+        request: dict[str, object] = {
             "method": "sendtoaddress",
             "params": [address, amount],
         }
         self._rpc(request, WALLET)
 
-    def wait_ready(self, timeout=300):
+    def wait_ready(self, timeout: int = 300) -> None:
         deadline = monotonic() + timeout
         last_error = None
         last_block_count = None
@@ -84,7 +94,7 @@ class BtcNode:
                 last_block_count = block_count
                 if block_count > 200:
                     break
-            except Exception as exc:
+            except (requests.exceptions.RequestException, RpcError) as exc:
                 last_error = exc
             sleep(0.1)
         else:
@@ -98,39 +108,58 @@ class BtcNode:
         # wait for the fee-building transactions
         sleep(20)
 
-    def create_wallet(self, wallet, disable_private_keys=False, allow_descriptor_fallback=True):
-        response_body = self._post_create_wallet_request(wallet, descriptors=False, disable_private_keys=disable_private_keys)
+    def create_wallet(
+        self,
+        wallet: str,
+        disable_private_keys: bool = False,
+        allow_descriptor_fallback: bool = True,
+    ) -> None:
+        response_body = self._post_create_wallet_request(
+            wallet, descriptors=False, disable_private_keys=disable_private_keys
+        )
         error = response_body.get("error")
         if error is not None and allow_descriptor_fallback and self._is_bdb_wallet_creation_error(error):
-            response_body = self._post_create_wallet_request(wallet, descriptors=True, disable_private_keys=disable_private_keys)
+            response_body = self._post_create_wallet_request(
+                wallet, descriptors=True, disable_private_keys=disable_private_keys
+            )
             error = response_body.get("error")
 
         if error is not None:
             print(response_body)
-            raise Exception(error)
+            raise RpcError(str(error))
         print(response_body)
 
-    def _post_create_wallet_request(self, wallet, descriptors, disable_private_keys=False):
+    def _post_create_wallet_request(
+        self, wallet: str, descriptors: bool, disable_private_keys: bool = False
+    ) -> dict[str, object]:
         try:
             response = requests.post(
                 f"http://{self.host}:{self.port}",
-                data=json.dumps(self._create_wallet_request(wallet, descriptors=descriptors, disable_private_keys=disable_private_keys)),
+                data=json.dumps(
+                    self._create_wallet_request(
+                        wallet, descriptors=descriptors, disable_private_keys=disable_private_keys
+                    )
+                ),
                 auth=("user", "password"),
-                proxies=dict(http=self.proxy),
+                proxies={"http": self.proxy},
                 timeout=5,
             )
-        except requests.exceptions.Timeout:
-            raise TimeoutError(f"btc-node RPC at {self.host}:{self.port} timed out creating wallet {wallet}")
+        except requests.exceptions.Timeout as exc:
+            raise TimeoutError(
+                f"btc-node RPC at {self.host}:{self.port} timed out creating wallet {wallet}"
+            ) from exc
 
         response.raise_for_status()
         response_body = response.json()
         if not isinstance(response_body, dict):
-            raise Exception(f"Unexpected btc-node RPC response creating wallet {wallet}: {response_body}")
+            raise RpcError(f"Unexpected btc-node RPC response creating wallet {wallet}: {response_body}")
         if "error" not in response_body and "result" not in response_body:
-            raise Exception(f"Unexpected btc-node RPC response creating wallet {wallet}: {response_body}")
+            raise RpcError(f"Unexpected btc-node RPC response creating wallet {wallet}: {response_body}")
         return response_body
 
-    def _is_bdb_wallet_creation_error(self, error):
+    def _is_bdb_wallet_creation_error(self, error: object) -> bool:
+        if not isinstance(error, dict):
+            return False
         message = error.get("message", "")
         return (
             error.get("code") == -4
@@ -140,7 +169,9 @@ class BtcNode:
             )
         )
 
-    def _create_wallet_request(self, wallet, descriptors, disable_private_keys=False):
+    def _create_wallet_request(
+        self, wallet: str, descriptors: bool, disable_private_keys: bool = False
+    ) -> dict[str, object]:
         return {
             "jsonrpc": "2.0",
             "id": "1",

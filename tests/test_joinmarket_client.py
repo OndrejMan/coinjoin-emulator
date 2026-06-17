@@ -1,15 +1,14 @@
-import sys
 import unittest
-from pathlib import Path
 from unittest.mock import Mock, patch
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
 
 from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
 
+# pylint: disable=protected-access
 
-def response(status_code=200, body=None, text=""):
+
+def response(
+    status_code: int = 200, body: dict[str, object] | None = None, text: str = ""
+) -> Mock:
     mock_response = Mock()
     mock_response.status_code = status_code
     mock_response.json.return_value = body or {}
@@ -18,7 +17,7 @@ def response(status_code=200, body=None, text=""):
 
 
 class JoinMarketClientServerTest(unittest.TestCase):
-    def test_protected_rpc_unlocks_before_request_when_token_is_missing(self):
+    def test_protected_rpc_unlocks_before_request_when_token_is_missing(self) -> None:
         client = JoinMarketClientServer(host="dind")
         unlock_response = response(body={"token": "new-token", "refresh_token": "refresh"})
         display_response = response(body={"walletinfo": {"available_balance": "1.00000000"}})
@@ -41,7 +40,7 @@ class JoinMarketClientServerTest(unittest.TestCase):
             {"Authorization": "Bearer new-token"},
         )
 
-    def test_create_wallet_and_unlock_do_not_require_existing_token(self):
+    def test_create_wallet_and_unlock_do_not_require_existing_token(self) -> None:
         client = JoinMarketClientServer(host="dind")
         create_response = response(body={"token": "created-token", "refresh_token": "created-refresh"})
         unlock_response = response(body={"token": "unlocked-token", "refresh_token": "unlocked-refresh"})
@@ -58,7 +57,7 @@ class JoinMarketClientServerTest(unittest.TestCase):
         self.assertEqual(client.token, "unlocked-token")
         self.assertEqual(client.refresh_token, "unlocked-refresh")
 
-    def test_protected_rpc_refreshes_token_once_after_401(self):
+    def test_protected_rpc_refreshes_token_once_after_401(self) -> None:
         client = JoinMarketClientServer(host="dind")
         client.token = "expired-token"
         unauthorized_response = response(status_code=401, body={"message": "expired"}, text="expired")
@@ -82,7 +81,7 @@ class JoinMarketClientServerTest(unittest.TestCase):
             {"Authorization": "Bearer fresh-token"},
         )
 
-    def test_protected_rpc_does_not_continue_when_unlock_fails(self):
+    def test_protected_rpc_does_not_continue_when_unlock_fails(self) -> None:
         client = JoinMarketClientServer(host="dind")
         unlock_response = response(status_code=401, body={"message": "unauthorized"}, text="unauthorized")
 
@@ -100,7 +99,7 @@ class JoinMarketClientServerTest(unittest.TestCase):
         )
         self.assertEqual(request.call_args.kwargs["headers"], {})
 
-    def test_send_raises_when_direct_send_fails(self):
+    def test_send_raises_when_direct_send_fails(self) -> None:
         client = JoinMarketClientServer(host="dind")
 
         with patch.object(client, "simple_send", return_value=False):

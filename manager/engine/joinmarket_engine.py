@@ -1,11 +1,19 @@
-from manager.engine.engine_base import EngineBase, BTC
-from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
-from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
-from time import sleep, time
-import sys
 import json
 import os
+import sys
 import threading
+from time import sleep, time
+from typing import cast
+
+from ..exceptions import CoinjoinEmulatorError, StartupError
+from ..wasabi_clients.joinmarket_client import JoinMarketClientServer
+from .configuration import (
+    JoinMarketConfig,
+    JoinMarketRole,
+    ScenarioConfig,
+    WalletConfig,
+)
+from .engine_base import BTC, DriverProtocol, EmulatorClient, EngineArgs, EngineBase
 
 JOINMARKET_COINJOIN_AMOUNT_SATS = 40000
 JOINMARKET_COUNTERPARTIES = 4
@@ -18,9 +26,9 @@ JOINMARKET_DISTRIBUTOR_RPC_WALLET = "jm_wallet_distributor"
 
 class JoinmarketEngine(EngineBase):
 
-    def __init__(self, args, driver):
+    def __init__(self, args: EngineArgs, driver: DriverProtocol) -> None:
         super().__init__(args, driver, "/home/joinmarket")
-        self.joinmarket_round_events = []
+        self.joinmarket_round_events: list[dict[str, object]] = []
         self._core_wallet_lock = threading.Lock()
 
     def default_scenario(self) -> ScenarioConfig:
@@ -82,21 +90,21 @@ class JoinmarketEngine(EngineBase):
             ],
         )
 
-    def prepare_images(self):
+    def prepare_images(self) -> None:
         print("Preparing images")
         self.prepare_image("btc-node")
         self.prepare_image("joinmarket-client-server", local_build=True)
         self.prepare_image("irc-server")
 
 
-    def start_engine_infrastructure(self):
+    def start_engine_infrastructure(self) -> None:
         self.start_irc_server()
         print("- started irc-server")
 
-    def _core_wallet_name(self, client_name):
+    def _core_wallet_name(self, client_name: str) -> str:
         return f"jm_wallet_{client_name.replace('-', '_')}"
 
-    def _create_joinmarket_core_wallet(self, wallet_name):
+    def _create_joinmarket_core_wallet(self, wallet_name: str) -> None:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
 
@@ -108,11 +116,11 @@ class JoinmarketEngine(EngineBase):
         print(f"- created {wallet_name} in BitcoinCore")
 
 
-    def start_irc_server(self):
+    def start_irc_server(self) -> None:
         name = "irc-server"
 
         try:
-            ip, manager_ports = self.driver.run(
+            self.driver.run(
                 name,
                 f"{self.args.image_prefix}irc-server",
                 env={},  # Add any necessary environment variables
@@ -120,26 +128,26 @@ class JoinmarketEngine(EngineBase):
                 cpu=1.0,
                 memory=2048,
             )
-        except Exception as e:
+        except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             print(f"- could not start {name} ({e})")
-            raise Exception("Could not start IRC server")
+            raise StartupError("Could not start IRC server") from e
 
 
-    def _dump_container_log(self, container_name, log_path):
+    def _dump_container_log(self, container_name: str, log_path: str) -> None:
         """Try to read a log file from a running container for diagnostics."""
         try:
             log_content = self.driver.logs(container_name)
             print(f"- {container_name} container logs:\n{log_content}")
-        except Exception:
+        except (CoinjoinEmulatorError, RuntimeError, OSError):
             print(f"- could not retrieve container logs from {container_name}")
 
         try:
             log_content = self.driver.peek(container_name, log_path)
             print(f"- {container_name} log ({log_path}):\n{log_content}")
-        except Exception:
+        except (CoinjoinEmulatorError, RuntimeError, OSError):
             print(f"- could not retrieve {log_path} from {container_name}")
 
-    def start_distributor(self):
+    def start_distributor(self) -> None:
         name = "joinmarket-distributor"
         port = 28183  # Use a specific port for the distributor
         self._create_joinmarket_core_wallet(JOINMARKET_DISTRIBUTOR_RPC_WALLET)
@@ -152,9 +160,9 @@ class JoinmarketEngine(EngineBase):
                 cpu=1.0,
                 memory=2048,
             )
-        except Exception as e:
+        except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             print(f"- could not start {name} ({e})")
-            raise Exception("Could not start distributor")
+            raise StartupError("Could not start distributor") from e
 
         self.distributor = self.init_joinmarket_clientserver(
             name=name,
@@ -168,32 +176,37 @@ class JoinmarketEngine(EngineBase):
             elapsed = time() - start
             print(f"- could not start {name} (application timeout after {elapsed:.1f}s)")
             self._dump_container_log(name, "/home/joinmarket/jmwalletd.log")
-            raise Exception("Could not start distributor")
+            raise StartupError("Could not start distributor")
         print(f"- started distributor (wait took {time() - start:.1f}s)")
 
 
     def init_joinmarket_clientserver(
         self,
-        name,
-        port,
-        host="localhost",
-        type="maker",
-        delay=(0, 0),
-        stop=(0, 0),
-        proxy="",
-    ):
+        name: str,
+        port: int,
+        host: str = "localhost",
+        role: str = "maker",
+        delay: tuple[int, int] = (0, 0),
+        stop: tuple[int, int] = (0, 0),
+        proxy: str = "",
+    ) -> JoinMarketClientServer:
         return JoinMarketClientServer(
             name=name,
             host=host,
             port=port,
-            type=type,
+            role=role,
             delay=delay,
             stop=stop,
             proxy=proxy,
         )
 
+    def init_client(self) -> object:
+        raise NotImplementedError("JoinMarket clients require init_joinmarket_clientserver()")
 
-    def start_client(self, idx: int, wallet: WalletConfig):
+    def start_client(self, idx: int, wallet: WalletConfig | None = None) -> JoinMarketClientServer | None:
+        if wallet is None:
+            raise ValueError("wallet configuration is required to start a JoinMarket client")
+
         name = f"jcs-{idx:03}"
         port = 28184 + idx
         core_wallet = self._core_wallet_name(name)
@@ -207,7 +220,7 @@ class JoinmarketEngine(EngineBase):
                 cpu=(0.1),
                 memory=(768),
             )
-        except Exception as e:
+        except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             print(f"- could not start {name} ({e})")
             return None
 
@@ -224,7 +237,7 @@ class JoinmarketEngine(EngineBase):
             name=name,
             host=ip if self.args.proxy else self.args.control_ip,
             port=28183 if self.args.proxy else manager_ports[28183],
-            type=role_str,
+            role=role_str,
             delay=delay,
             stop=stop,
             proxy=self.args.proxy,
@@ -243,11 +256,11 @@ class JoinmarketEngine(EngineBase):
         print(f"- started {client.name} (wait took {time() - start} seconds)")
         return client
 
-    def stop_client(self, idx: int):
+    def stop_client(self, idx: int) -> None:
         name = f"jcs-{idx:03}"
         self.driver.stop(name)
 
-    def validate_clients(self):
+    def validate_clients(self) -> None:
         takers = [client for client in self.clients if client.type == "taker"]
         makers = [client for client in self.clients if client.type == "maker"]
         if not takers:
@@ -255,13 +268,15 @@ class JoinmarketEngine(EngineBase):
         if not makers:
             raise RuntimeError("JoinMarket scenario requires at least one started maker client")
 
-    def store_engine_logs(self, data_path):
+    def store_engine_logs(self, data_path: str) -> None:
         labels = self.match_joinmarket_rounds_to_blocks(data_path)
-        with open(os.path.join(data_path, "joinmarket_round_events.json"), "w") as f:
+        with open(
+            os.path.join(data_path, "joinmarket_round_events.json"), "w", encoding="utf-8"
+        ) as f:
             json.dump(labels, f, indent=2)
             print("- stored JoinMarket round labels")
 
-    def pay_invoices(self, addressed_invoices):
+    def pay_invoices(self, addressed_invoices: list[tuple[str, int]]) -> None:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
 
@@ -277,7 +292,7 @@ class JoinmarketEngine(EngineBase):
             self.node.mine_block()
             print("- confirmed JoinMarket invoice funding")
 
-    def match_joinmarket_rounds_to_blocks(self, data_path):
+    def match_joinmarket_rounds_to_blocks(self, data_path: str) -> list[dict[str, object]]:
         labels_by_destination = {
             event["destination_address"]: dict(event)
             for event in self.joinmarket_round_events
@@ -293,17 +308,17 @@ class JoinmarketEngine(EngineBase):
         for filename in sorted(os.listdir(node_path)):
             if not filename.startswith("block_") or not filename.endswith(".json"):
                 continue
-            with open(os.path.join(node_path, filename), "r") as f:
-                block = json.load(f)
+            with open(os.path.join(node_path, filename), encoding="utf-8") as f:
+                block = cast(dict[str, object], json.load(f))
             block_height = block.get("height")
-            for tx in block.get("tx", []):
+            for tx in cast(list[dict[str, object]], block.get("tx", [])):
                 txid = tx.get("txid")
-                for output in tx.get("vout", []):
-                    script_pub_key = output.get("scriptPubKey") or {}
-                    addresses = []
+                for output in cast(list[dict[str, object]], tx.get("vout", [])):
+                    script_pub_key = cast(dict[str, object], output.get("scriptPubKey") or {})
+                    addresses: list[object] = []
                     if script_pub_key.get("address"):
                         addresses.append(script_pub_key["address"])
-                    addresses.extend(script_pub_key.get("addresses") or [])
+                    addresses.extend(cast(list[object], script_pub_key.get("addresses") or []))
                     for address in addresses:
                         event = labels_by_destination.get(address)
                         if event is not None and txid:
@@ -316,15 +331,15 @@ class JoinmarketEngine(EngineBase):
             key=lambda event: (event.get("round_id", 0), event.get("taker", "")),
         )
 
-    def _script_addresses(self, output):
-        script_pub_key = output.get("scriptPubKey") or {}
-        addresses = []
+    def _script_addresses(self, output: dict[str, object]) -> list[object]:
+        script_pub_key = cast(dict[str, object], output.get("scriptPubKey") or {})
+        addresses: list[object] = []
         if script_pub_key.get("address"):
             addresses.append(script_pub_key["address"])
-        addresses.extend(script_pub_key.get("addresses") or [])
+        addresses.extend(cast(list[object], script_pub_key.get("addresses") or []))
         return addresses
 
-    def _find_round_event_tx(self, event):
+    def _find_round_event_tx(self, event: dict[str, object]) -> dict[str, object] | None:
         if event.get("txid"):
             return {
                 "txid": event.get("txid"),
@@ -333,14 +348,14 @@ class JoinmarketEngine(EngineBase):
         if self.node is None or not event.get("destination_address"):
             return None
 
-        start_height = max(0, int(event.get("start_chain_height") or 0))
+        start_height = max(0, int(str(event.get("start_chain_height") or 0)))
         tip_height = self.node.get_block_count()
         for height in range(start_height, tip_height + 1):
             block_hash = self.node.get_block_hash(height)
             block = self.node.get_block_info(block_hash)
-            for tx in block.get("tx", []):
+            for tx in cast(list[dict[str, object]], block.get("tx", [])):
                 txid = tx.get("txid")
-                for output in tx.get("vout", []):
+                for output in cast(list[dict[str, object]], tx.get("vout", [])):
                     if event["destination_address"] in self._script_addresses(output):
                         return {
                             "txid": txid,
@@ -348,7 +363,7 @@ class JoinmarketEngine(EngineBase):
                         }
         return None
 
-    def _confirm_started_rounds(self):
+    def _confirm_started_rounds(self) -> int:
         confirmed = 0
         for event in self.joinmarket_round_events:
             if event.get("status") != "started":
@@ -367,29 +382,29 @@ class JoinmarketEngine(EngineBase):
             print(f"Confirmed coinjoin {event.get('taker')} as {event.get('txid')}")
         return confirmed
 
-    def _active_round_for_taker(self, taker_name):
+    def _active_round_for_taker(self, taker_name: str) -> bool:
         return any(
             event.get("status") == "started" and event.get("taker") == taker_name
             for event in self.joinmarket_round_events
         )
 
-    def _has_active_round(self):
+    def _has_active_round(self) -> bool:
         return any(
             event.get("status") == "started"
             for event in self.joinmarket_round_events
         )
 
-    def _started_round_count(self):
+    def _started_round_count(self) -> int:
         return len([
             event for event in self.joinmarket_round_events
             if event.get("status") in ("started", "confirmed", "stopped")
         ])
 
-    def _expire_stalled_rounds(self):
+    def _expire_stalled_rounds(self) -> None:
         for event in self.joinmarket_round_events:
             if event.get("status") != "started":
                 continue
-            age = self.current_block - int(event.get("start_block") or 0)
+            age = self.current_block - int(cast(int, event.get("start_block") or 0))
             if age <= JOINMARKET_ROUND_TIMEOUT_BLOCKS:
                 continue
             event["status"] = "failed"
@@ -405,14 +420,16 @@ class JoinmarketEngine(EngineBase):
                 f"destination output within {JOINMARKET_ROUND_TIMEOUT_BLOCKS} blocks"
             )
 
-    def _client_confirmed_balance(self, client):
+    def _client_confirmed_balance(self, client: EmulatorClient) -> int:
         try:
             return client.get_balance()
-        except Exception as e:
+        except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError) as e:
             print(f"- waiting for {client.name} wallet balance ({e})")
             return 0
 
-    def _client_has_confirmed_balance(self, client, required_sats, role):
+    def _client_has_confirmed_balance(
+        self, client: EmulatorClient, required_sats: int, role: str
+    ) -> bool:
         balance = self._client_confirmed_balance(client)
         if balance < required_sats:
             print(
@@ -422,7 +439,7 @@ class JoinmarketEngine(EngineBase):
             return False
         return True
 
-    def update_coinjoins_joinmarket(self):
+    def update_coinjoins_joinmarket(self) -> None:
         self._confirm_started_rounds()
         self._expire_stalled_rounds()
 
@@ -437,7 +454,7 @@ class JoinmarketEngine(EngineBase):
                 client.start_maker(0, 5000, 0.00004, "sw0reloffer", JOINMARKET_MAKER_MIN_SIZE_SATS)
                 try:
                     client.get_status()
-                except Exception:
+                except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError):
                     pass
 
         running_makers = [
@@ -487,13 +504,13 @@ class JoinmarketEngine(EngineBase):
                 break
 
 
-    def run_engine(self):
+    def run_engine(self) -> None:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
             
         self.update_invoice_payments()
         initial_block = self.node.get_block_count()
-        for i in range(5):
+        for _ in range(5):
             # Takers need 3 confirmations of transactions for the sourcing commitments
             self.node.mine_block()
 
@@ -511,10 +528,10 @@ class JoinmarketEngine(EngineBase):
 
             for _ in range(3):
                 try:
-                    self.current_block = self.node.get_block_count() - initial_block  # type: ignore
+                    self.current_block = self.node.get_block_count() - initial_block
                     break
-                except Exception as e:
-                    print(f"- could not get blocks".ljust(60), end="\r")
+                except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
+                    print("- could not get blocks".ljust(60), end="\r")
                     print(f"Block exception: {e}", file=sys.stderr)
 
             self.update_invoice_payments()
@@ -529,5 +546,5 @@ class JoinmarketEngine(EngineBase):
             sleep(JOINMARKET_LOOP_SLEEP_SECONDS)
 
         print()
-        print(f"- limit reached")
+        print("- limit reached")
         self.node.mine_block(JOINMARKET_FINAL_SETTLE_BLOCKS)

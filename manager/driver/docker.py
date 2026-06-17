@@ -1,37 +1,42 @@
-from functools import cached_property
-from io import BytesIO
 import os
 import tarfile
 import time
+from functools import cached_property
+from io import BytesIO
+from typing import Protocol, cast
 
-from docker.models.containers import Container
-from . import Driver
 import docker
+
+from . import Driver
+
+
+class DockerNetwork(Protocol):
+    id: str
 
 
 class DockerDriver(Driver):
-    def __init__(self, namespace="coinjoin"):
+    def __init__(self, namespace: str = "coinjoin") -> None:
         self.client: docker.DockerClient = docker.from_env()
         self._namespace = namespace
 
     @cached_property
-    def network(self):
-        return self.client.networks.create(self._namespace, driver="bridge")
+    def network(self) -> DockerNetwork:
+        return cast(DockerNetwork, self.client.networks.create(self._namespace, driver="bridge"))
 
-    def has_image(self, name):
+    def has_image(self, name: str) -> bool:
         try:
             self.client.images.get(name)
             return True
         except docker.errors.ImageNotFound:
             return False
 
-    def build(self, name, path):
+    def build(self, name: str, path: str) -> None:
         self.client.images.build(path=path, tag=name, rm=True, nocache=True)
 
-    def pull(self, name):
+    def pull(self, name: str) -> None:
         self.client.images.pull(name)
 
-    def _remove_existing_container(self, name):
+    def _remove_existing_container(self, name: str) -> bool:
         try:
             old_container = self.client.containers.get(name)
             old_container.remove(force=True)
@@ -40,22 +45,26 @@ class DockerDriver(Driver):
             return False
 
     @staticmethod
-    def _is_name_conflict(error):
+    def _is_name_conflict(error: object) -> bool:
         explanation = getattr(error, "explanation", "") or str(error)
         return "container name" in explanation and "already in use" in explanation
 
     def run(
         self,
-        name,
-        image,
-        env=None,
-        ports=None,
-        skip_ip=False,
-        cpu=0.1,
-        memory=768,
-        volumes: dict | None = None
-    ):
+        name: str,
+        image: str,
+        env: dict[str, str | None] | None = None,
+        ports: dict[int, int] | None = None,
+        skip_ip: bool = False,
+        cpu: float = 0.1,
+        memory: int = 768,
+        volumes: dict[str, dict[str, str]] | None = None
+    ) -> tuple[str, dict[int, int]]:
         self._remove_existing_container(name)
+        docker_ports = {
+            f"{container_port}/tcp": host_port
+            for container_port, host_port in (ports or {}).items()
+        }
 
         for attempt in range(2):
             try:
@@ -66,7 +75,7 @@ class DockerDriver(Driver):
                     name=name,
                     hostname=name,
                     network=self.network.id,
-                    ports=ports or {},
+                    ports=docker_ports,
                     environment={
                         key: value
                         for key, value in (env or {}).items()
@@ -84,7 +93,7 @@ class DockerDriver(Driver):
                 raise
         return name, ports or {}
 
-    def stop(self, name):
+    def stop(self, name: str) -> None:
         try:
             container = self.client.containers.get(name)
             container.stop()
@@ -93,7 +102,7 @@ class DockerDriver(Driver):
         except docker.errors.NotFound:
             pass
 
-    def download(self, name, src_path, dst_path):
+    def download(self, name: str, src_path: str, dst_path: str) -> None:
         try:
             stream, _ = self.client.containers.get(name).get_archive(src_path)
 
@@ -103,10 +112,10 @@ class DockerDriver(Driver):
             fo.seek(0)
             with tarfile.open(fileobj=fo) as tar:
                 tar.extractall(dst_path)
-        except:
+        except (docker.errors.APIError, docker.errors.NotFound, tarfile.TarError, OSError):
             pass
 
-    def peek(self, name, path):
+    def peek(self, name: str, path: str) -> str:
         stream, _ = self.client.containers.get(name).get_archive(path)
 
         fo = BytesIO()
@@ -114,19 +123,22 @@ class DockerDriver(Driver):
             fo.write(d)
         fo.seek(0)
         with tarfile.open(fileobj=fo) as tar:
-            return tar.extractfile(os.path.basename(path)).read().decode()
+            extracted = tar.extractfile(os.path.basename(path))
+            if extracted is None:
+                raise FileNotFoundError(path)
+            return extracted.read().decode()
 
-    def logs(self, name):
+    def logs(self, name: str) -> str:
         return self.client.containers.get(name).logs(stdout=True, stderr=True).decode()
 
-    def upload(self, name, src_path, dst_path):
+    def upload(self, name: str, src_path: str, dst_path: str) -> None:
         fo = BytesIO()
         with tarfile.open(fileobj=fo, mode="w") as tar:
             tar.add(src_path, os.path.basename(dst_path))
         fo.seek(0)
         self.client.containers.get(name).put_archive(os.path.dirname(dst_path), fo)
 
-    def cleanup(self, image_prefix=""):
+    def cleanup(self, image_prefix: str = "") -> None:
         containers = []
         for container in self.client.containers.list(all=True):
             if any(
@@ -143,7 +155,7 @@ class DockerDriver(Driver):
             ):
                 containers.append(container)
 
-        self.stop_many(map(lambda x: x.name, containers))
+        self.stop_many(str(container.name) for container in containers)
         networks = self.client.networks.list(self._namespace)
         if networks:
             for network in networks:

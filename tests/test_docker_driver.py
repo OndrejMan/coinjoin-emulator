@@ -1,55 +1,23 @@
-import sys
-import types
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock, patch
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
-
-try:
-    import docker  # noqa: F401
-except ModuleNotFoundError:
-    docker_module = types.ModuleType("docker")
-    docker_models_module = types.ModuleType("docker.models")
-    docker_containers_module = types.ModuleType("docker.models.containers")
-
-    class ImageNotFound(Exception):
-        pass
-
-    class NotFound(Exception):
-        pass
-
-    class APIError(Exception):
-        def __init__(self, message="", response=None, explanation=None):
-            super().__init__(message)
-            self.response = response
-            self.explanation = explanation
-
-    docker_module.from_env = lambda: None
-    docker_module.errors = SimpleNamespace(
-        ImageNotFound=ImageNotFound,
-        NotFound=NotFound,
-        APIError=APIError,
-    )
-    docker_containers_module.Container = object
-
-    sys.modules["docker"] = docker_module
-    sys.modules["docker.models"] = docker_models_module
-    sys.modules["docker.models.containers"] = docker_containers_module
 
 import docker
 
 from manager.driver.docker import DockerDriver
 
 
+def docker_not_found() -> Exception:
+    return cast(Exception, docker.errors.NotFound("not found"))
+
+
 class DockerDriverTest(unittest.TestCase):
-    def test_run_keeps_container_until_cleanup_for_log_inspection(self):
+    def test_run_keeps_container_until_cleanup_for_log_inspection(self) -> None:
         client = Mock()
         client.networks.create.return_value = SimpleNamespace(id="coinjoin-network-id")
         client.containers.run.return_value = None
-        client.containers.get.side_effect = docker.errors.NotFound()
+        client.containers.get.side_effect = docker_not_found()
 
         with patch("manager.driver.docker.docker.from_env", return_value=client):
             driver = DockerDriver(namespace="coinjoin-test")
@@ -57,7 +25,7 @@ class DockerDriverTest(unittest.TestCase):
 
         self.assertFalse(client.containers.run.call_args.kwargs["auto_remove"])
 
-    def test_run_removes_stale_container_before_reusing_name(self):
+    def test_run_removes_stale_container_before_reusing_name(self) -> None:
         stale_container = Mock()
         client = Mock()
         client.networks.create.return_value = SimpleNamespace(id="coinjoin-network-id")
@@ -72,7 +40,7 @@ class DockerDriverTest(unittest.TestCase):
         stale_container.remove.assert_called_once_with(force=True)
         client.containers.run.assert_called_once()
 
-    def test_run_retries_after_docker_name_conflict(self):
+    def test_run_retries_after_docker_name_conflict(self) -> None:
         stale_container = Mock()
         conflict = docker.errors.APIError(
             "conflict",
@@ -80,7 +48,7 @@ class DockerDriverTest(unittest.TestCase):
         )
         client = Mock()
         client.networks.create.return_value = SimpleNamespace(id="coinjoin-network-id")
-        client.containers.get.side_effect = [docker.errors.NotFound(), stale_container]
+        client.containers.get.side_effect = [docker_not_found(), stale_container]
         client.containers.run.side_effect = [conflict, None]
 
         with patch("manager.driver.docker.docker.from_env", return_value=client):
@@ -91,7 +59,7 @@ class DockerDriverTest(unittest.TestCase):
         stale_container.remove.assert_called_once_with(force=True)
         self.assertEqual(client.containers.run.call_count, 2)
 
-    def test_cleanup_includes_exited_emulator_containers(self):
+    def test_cleanup_includes_exited_emulator_containers(self) -> None:
         matching_container = Mock()
         matching_container.name = "joinmarket-distributor"
         matching_container.attrs = {
