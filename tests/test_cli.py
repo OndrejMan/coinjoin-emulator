@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
 from manager import cli
 from manager.application import DEFAULT_BTC_DOWNLOAD_PATH
 
@@ -56,7 +58,32 @@ def test_main_uses_default_download_path() -> None:
     assert exit_code == 0
     args = dispatch.call_args.args[0]
     assert args.download_path == DEFAULT_BTC_DOWNLOAD_PATH
+    assert args.image_prefix == ""
     assert not args.joinmarket_descriptor_regtest_fallback
+
+
+@pytest.mark.parametrize("command", ["build", "clean", "run"])
+def test_main_uses_empty_default_image_prefix(command: str) -> None:
+    dispatch = Mock(return_value=0)
+
+    exit_code = cli.main([command], dispatcher=dispatch)
+
+    assert exit_code == 0
+    args = dispatch.call_args.args[0]
+    assert args.image_prefix == ""
+
+
+def test_main_accepts_explicit_ghcr_image_prefix() -> None:
+    dispatch = Mock(return_value=0)
+
+    exit_code = cli.main(
+        ["run", "--image-prefix", "ghcr.io/ondrejman/"],
+        dispatcher=dispatch,
+    )
+
+    assert exit_code == 0
+    args = dispatch.call_args.args[0]
+    assert args.image_prefix == "ghcr.io/ondrejman/"
 
 
 def test_dispatch_genscen_delegates_to_genscen_handler() -> None:

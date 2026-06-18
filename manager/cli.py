@@ -13,7 +13,7 @@ from manager.engine.engine_base import EngineBase
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
 
-DEFAULT_IMAGE_PREFIX = "ghcr.io/ondrejman/"
+DEFAULT_IMAGE_PREFIX = ""
 
 ParsedArgs = argparse.Namespace | SimpleNamespace
 DriverFactory = Callable[[ParsedArgs], Driver]
