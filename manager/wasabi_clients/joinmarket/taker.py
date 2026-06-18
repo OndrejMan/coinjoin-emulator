@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import requests
 
 from ...exceptions import RpcError
-from .types import JsonDict, STOP_SERVICE_NOT_RUNNING_MESSAGE, is_stop_service_not_running_error
+from .types import STOP_SERVICE_NOT_RUNNING_MESSAGE, JsonDict, is_stop_service_not_running_error
 
 
 class JoinMarketTakerMixin:

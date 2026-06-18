@@ -1,8 +1,8 @@
 import subprocess
 from functools import cached_property
 
-from . import Driver
 from ..exceptions import CoinjoinEmulatorError
+from . import Driver
 
 
 class PodmanDriver(Driver):
