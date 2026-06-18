@@ -2,6 +2,7 @@ import subprocess
 from functools import cached_property
 
 from . import Driver
+from ..exceptions import CoinjoinEmulatorError
 
 
 class PodmanDriver(Driver):
@@ -113,9 +114,24 @@ class PodmanDriver(Driver):
 
     def download(self, name: str, src_path: str, dst_path: str) -> None:
         try:
-            self._run(["cp", f"{name}:{src_path}", dst_path])
-        except subprocess.CalledProcessError:
-            pass
+            self._run(
+                ["cp", f"{name}:{src_path}", dst_path],
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as error:
+            details = "\n".join(
+                part
+                for part in (
+                    (error.stderr or "").strip(),
+                    (error.stdout or "").strip(),
+                )
+                if part
+            )
+            message = f"Failed to copy {name}:{src_path} to {dst_path}"
+            if details:
+                message = f"{message}: {details}"
+            raise CoinjoinEmulatorError(message) from error
 
     def peek(self, name: str, path: str) -> str:
         result = self._run(["exec", name, "cat", path], capture_output=True, text=True)
