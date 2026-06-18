@@ -7,7 +7,7 @@ from ...exceptions import CoinjoinEmulatorError, StartupError
 from ...wasabi_clients.joinmarket_client import JoinMarketClientServer
 from ..configuration import WalletConfig
 from ..engine_base import DriverProtocol, EmulatorClient, EngineArgs, InvoiceDistributor
-from .constants import JOINMARKET_DISTRIBUTOR_RPC_WALLET
+from .constants import JOINMARKET_COUNTERPARTIES, JOINMARKET_DISTRIBUTOR_RPC_WALLET
 from .environment import joinmarket_container_env
 
 
@@ -192,5 +192,5 @@ class JoinMarketClientLifecycleMixin:
         makers = [client for client in self.clients if client.type == "maker"]
         if not takers:
             raise RuntimeError("JoinMarket scenario requires at least one started taker client")
-        if not makers:
-            raise RuntimeError("JoinMarket scenario requires at least one started maker client")
+        if len(makers) < JOINMARKET_COUNTERPARTIES:
+            raise RuntimeError(f"JoinMarket scenario requires at least {JOINMARKET_COUNTERPARTIES} started maker clients")

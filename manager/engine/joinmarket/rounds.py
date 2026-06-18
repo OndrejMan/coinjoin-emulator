@@ -84,19 +84,39 @@ class JoinMarketRoundMixin:
         self.confirm_started_rounds()
         self._expire_stalled_rounds()
 
+        def start_condition(client: EmulatorClient) -> bool:
+            if client.stop[0] > 0 and self.current_block >= client.stop[0]:
+                return False
+            if client.stop[1] > 0 and self.current_round >= client.stop[1]:
+                return False
+            if self.current_block < client.delay[0]:
+                return False
+            if self.current_round < client.delay[1]:
+                return False
+            return True
+
         for client in self.clients:
             client.get_status()
 
         for client in self.clients:
-            if client.type == "maker" and not client.maker_running and client.delay[0] <= self.current_block:
-                if not self._client_has_confirmed_balance(client, JOINMARKET_MAKER_MIN_SIZE_SATS, "maker"):
-                    continue
-                print(f"Starting maker {client.name}")
-                client.start_maker(0, 5000, 0.00004, "sw0reloffer", JOINMARKET_MAKER_MIN_SIZE_SATS)
-                try:
-                    client.get_status()
-                except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError):
-                    pass
+            if client.type == "maker":
+                can_run = start_condition(client)
+                if can_run and not client.maker_running:
+                    if not self._client_has_confirmed_balance(client, JOINMARKET_MAKER_MIN_SIZE_SATS, "maker"):
+                        continue
+                    print(f"Starting maker {client.name}")
+                    client.start_maker(0, 5000, 0.00004, "sw0reloffer", JOINMARKET_MAKER_MIN_SIZE_SATS)
+                    try:
+                        client.get_status()
+                    except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError):
+                        pass
+                elif not can_run and client.maker_running:
+                    print(f"Stopping maker {client.name}")
+                    try:
+                        client.stop_coinjoin()
+                        client.get_status()
+                    except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError):
+                        pass
 
         running_makers = [
             maker for maker in self.clients
@@ -115,7 +135,7 @@ class JoinMarketRoundMixin:
             if (
                 client.type == "taker"
                 and not client.coinjoin_in_process
-                and client.delay[0] <= self.current_block
+                and start_condition(client)
                 and can_start_more_rounds
                 and not self._has_active_round()
                 and not self._active_round_for_taker(client.name)

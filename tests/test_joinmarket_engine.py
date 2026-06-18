@@ -526,7 +526,11 @@ class JoinmarketEngineTest(unittest.TestCase):
                                         "n": 0,
                                         "value": 0.0004,
                                         "scriptPubKey": {"address": "destination-address"},
-                                    }
+                                    },
+                                    {"n": 1, "value": 0.0004, "scriptPubKey": {"address": "maker-1"}},
+                                    {"n": 2, "value": 0.0004, "scriptPubKey": {"address": "maker-2"}},
+                                    {"n": 3, "value": 0.0004, "scriptPubKey": {"address": "maker-3"}},
+                                    {"n": 4, "value": 0.0004, "scriptPubKey": {"address": "maker-4"}},
                                 ],
                             }
                         ],
@@ -540,6 +544,8 @@ class JoinmarketEngineTest(unittest.TestCase):
                 "round_id": 1,
                 "status": "started",
                 "taker": "jcs-000",
+                "amount_sats": 40000,
+                "counterparties": 4,
                 "destination_address": "destination-address",
                 "start_block": 5,
                 "start_chain_height": 205,
