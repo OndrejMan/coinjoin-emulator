@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+from manager.exceptions import RpcError
 from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
 from tests.joinmarket_helpers import response
 
@@ -24,3 +25,18 @@ class JoinMarketMakerTest(unittest.TestCase):
             )
 
         self.assertIs(result, conflict_response)
+
+    def test_stop_maker_ignores_already_stopped_service(self) -> None:
+        client = JoinMarketClientServer(host="dind", role="maker")
+        client.maker_running = True
+
+        with patch.object(
+            client,
+            "_rpc",
+            side_effect=RpcError("Error 401: Service cannot be stopped as it is not running."),
+        ) as rpc:
+            result = client.stop_coinjoin()
+
+        self.assertTrue(result)
+        self.assertFalse(client.maker_running)
+        rpc.assert_called_once_with("GET", "/wallet/wallet/maker/stop")

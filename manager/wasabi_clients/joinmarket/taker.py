@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import requests
 
 from ...exceptions import RpcError
-from .types import JsonDict
+from .types import JsonDict, STOP_SERVICE_NOT_RUNNING_MESSAGE, is_stop_service_not_running_error
 
 
 class JoinMarketTakerMixin:
@@ -26,7 +26,7 @@ class JoinMarketTakerMixin:
             auth_required: bool = True,
         ) -> JsonDict: ...
 
-        def stop_maker(self) -> JsonDict: ...
+        def stop_maker(self) -> JsonDict | bool: ...
 
     def start_coinjoin(
         self,
@@ -87,18 +87,26 @@ class JoinMarketTakerMixin:
     def stop_coinjoin(self) -> JsonDict | bool:
         """Stop a running coinjoin attempt."""
         if self.role == "taker" and self.coinjoin_in_process:
-            return self.stop_taker()
+            response = self.stop_taker()
+            self.coinjoin_in_process = False
+            return response
         if self.role == "maker" and self.maker_running:
-            return self.stop_maker()
+            response = self.stop_maker()
+            self.maker_running = False
+            return response
         print("No coinjoin in process")
         return True
 
-    def stop_taker(self) -> JsonDict:
+    def stop_taker(self) -> JsonDict | bool:
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/taker/stop"
-        # When stopping not running taker, returns 401 response
-        response = self._rpc(method, endpoint)
-        return response
+        try:
+            return self._rpc(method, endpoint)
+        except RpcError as e:
+            if is_stop_service_not_running_error(e):
+                print(STOP_SERVICE_NOT_RUNNING_MESSAGE)
+                return True
+            raise
 
     def send(self, addressed_fundings: list[tuple[str, int]]) -> list[JsonDict]:
         results: list[JsonDict] = []

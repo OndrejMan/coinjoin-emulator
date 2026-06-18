@@ -44,15 +44,18 @@ class RegtestBitcoinCoreInterface:
         self.jsonRpc = JsonRpc()
         self.calls: list[tuple[str, list[object], str]] = []
 
-    def _rpc(self, method: str, params: list[object]) -> object:
-        self.calls.append((method, params, self.jsonRpc.url))
+    def _rpc(self, method: str, params: list[object] | None = None) -> object:
+        rpc_params = [] if params is None else params
+        self.calls.append((method, rpc_params, self.jsonRpc.url))
         if method == "getnewaddress" and self.jsonRpc.url == "/wallet/jm_wallet":
             raise RpcError()
         if method == "listwallets":
             return ["wallet"]
         if method == "getnewaddress" and self.jsonRpc.url == "/wallet/wallet":
             return "funding-address"
-        raise AssertionError(f"unexpected RPC call: {method} {params}")
+        if method == "getmempoolinfo" and rpc_params == []:
+            return {"mempoolminfee": 0.00001}
+        raise AssertionError(f"unexpected RPC call: {method} {rpc_params}")
 
 
 def test_descriptor_regtest_fallback_uses_funding_wallet_and_restores_url() -> None:
@@ -74,6 +77,20 @@ def test_descriptor_regtest_fallback_uses_funding_wallet_and_restores_url() -> N
         ("listwallets", [], ""),
         ("getnewaddress", [], "/wallet/wallet"),
     ]
+
+
+def test_descriptor_regtest_fallback_preserves_optional_rpc_params() -> None:
+    entrypoint = load_entrypoint()
+    blockchaininterface = SimpleNamespace(
+        RegtestBitcoinCoreInterface=RegtestBitcoinCoreInterface
+    )
+    interface = RegtestBitcoinCoreInterface()
+
+    entrypoint.install_descriptor_regtest_fallback(blockchaininterface)
+    mempool_info = interface._rpc("getmempoolinfo")
+
+    assert mempool_info == {"mempoolminfee": 0.00001}
+    assert interface.calls == [("getmempoolinfo", [], "/wallet/jm_wallet")]
 
 
 def test_parse_args_defaults_descriptor_regtest_fallback_off(monkeypatch: pytest.MonkeyPatch) -> None:

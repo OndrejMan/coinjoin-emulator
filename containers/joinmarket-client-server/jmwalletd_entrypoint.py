@@ -13,7 +13,7 @@ FUNDING_WALLET_NAME = "wallet"
 TRUE_VALUES = {"1", "true", "yes", "on"}
 FALSE_VALUES = {"0", "false", "no", "off"}
 
-RpcMethod = Callable[["RegtestBitcoinCoreInterface", str, list[object]], object]
+RpcMethod = Callable[["RegtestBitcoinCoreInterface", str, list[object] | None], object]
 
 
 class JsonRpc(Protocol):
@@ -41,7 +41,7 @@ class PatchedRpcMethod(Protocol):
         self,
         self_interface: RegtestBitcoinCoreInterface,
         method: str,
-        params: list[object],
+        params: list[object] | None = None,
     ) -> object: ...
 
 
@@ -88,10 +88,11 @@ def install_descriptor_regtest_fallback(
     def rpc_with_descriptor_regtest_fallback(
         self: RegtestBitcoinCoreInterface,
         method: str,
-        params: list[object],
+        params: list[object] | None = None,
     ) -> object:
+        rpc_params = [] if params is None else params
         try:
-            return original_rpc(self, method, params)
+            return original_rpc(self, method, rpc_params)
         except Exception as error:  # pylint: disable=broad-exception-caught
             if not is_no_keys_getnewaddress(method, error):
                 raise

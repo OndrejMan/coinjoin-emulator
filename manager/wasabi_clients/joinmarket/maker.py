@@ -4,11 +4,18 @@ from typing import TYPE_CHECKING
 
 import requests
 
-from .types import JoinmarketConflictException, JsonDict
+from ...exceptions import RpcError
+from .types import (
+    STOP_SERVICE_NOT_RUNNING_MESSAGE,
+    JoinmarketConflictException,
+    JsonDict,
+    is_stop_service_not_running_error,
+)
 
 
 class JoinMarketMakerMixin:
     walletname: str
+    maker_running: bool
 
     if TYPE_CHECKING:
         def _rpc(
@@ -61,13 +68,17 @@ class JoinMarketMakerMixin:
             print(f"Could not start maker: {detail}")
             return e.response
 
-    def stop_maker(self) -> JsonDict:
+    def stop_maker(self) -> JsonDict | bool:
         """Stop the yield generator service."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/maker/stop"
-        # When stopping not running maker, returns 401 response
-        response = self._rpc(method, endpoint)
-        return response
+        try:
+            return self._rpc(method, endpoint)
+        except RpcError as e:
+            if is_stop_service_not_running_error(e):
+                print(STOP_SERVICE_NOT_RUNNING_MESSAGE)
+                return True
+            raise
 
     def list_transactions_maker(self) -> JsonDict:
         """List all transactions in the wallet."""
