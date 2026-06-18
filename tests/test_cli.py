@@ -29,6 +29,7 @@ def test_main_parses_run_arguments_and_dispatches() -> None:
             "btc-data",
             "--download-path",
             "custom-node:/custom/data/",
+            "--joinmarket-descriptor-regtest-fallback",
         ],
         dispatcher=dispatch,
     )
@@ -44,6 +45,7 @@ def test_main_parses_run_arguments_and_dispatches() -> None:
     assert args.btc_node_arg == ["-blocksxor=0"]
     assert args.download_btc_data == "btc-data"
     assert args.download_path == "custom-node:/custom/data/"
+    assert args.joinmarket_descriptor_regtest_fallback
 
 
 def test_main_uses_default_download_path() -> None:
@@ -54,6 +56,7 @@ def test_main_uses_default_download_path() -> None:
     assert exit_code == 0
     args = dispatch.call_args.args[0]
     assert args.download_path == DEFAULT_BTC_DOWNLOAD_PATH
+    assert not args.joinmarket_descriptor_regtest_fallback
 
 
 def test_dispatch_genscen_delegates_to_genscen_handler() -> None:

@@ -139,6 +139,16 @@ def _add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--control-ip", type=str, help="control ip", default="localhost"
     )
+    parser.add_argument(
+        "--joinmarket-descriptor-regtest-fallback",
+        dest="joinmarket_descriptor_regtest_fallback",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "allow JoinMarket regtest containers to get mining addresses from "
+            "Bitcoin Core's funding wallet when their descriptor RPC wallet has no keys"
+        ),
+    )
     parser.add_argument("--reuse-namespace", action="store_true", default=False)
 
 
