@@ -3,8 +3,8 @@ import argparse
 import os
 import runpy
 import sys
-from types import ModuleType
-from typing import Any
+from collections.abc import Collection
+from typing import Callable, Protocol, cast
 
 JMWALLETD_PATH = "/jm/clientserver/scripts/jmwalletd.py"
 FUNDING_WALLET_RPC_PATH = "/wallet/wallet"
@@ -12,6 +12,37 @@ FUNDING_WALLET_NAME = "wallet"
 
 TRUE_VALUES = {"1", "true", "yes", "on"}
 FALSE_VALUES = {"0", "false", "no", "off"}
+
+RpcMethod = Callable[["RegtestBitcoinCoreInterface", str, list[object]], object]
+
+
+class JsonRpc(Protocol):
+    url: str
+
+    def setURL(self, url: str) -> None: ...
+
+
+class RegtestBitcoinCoreInterface(Protocol):
+    jsonRpc: JsonRpc
+
+
+class RegtestBitcoinCoreInterfaceType(Protocol):
+    _rpc: RpcMethod
+
+
+class BlockchainInterface(Protocol):
+    RegtestBitcoinCoreInterface: RegtestBitcoinCoreInterfaceType
+
+
+class PatchedRpcMethod(Protocol):
+    _descriptor_regtest_fallback: bool
+
+    def __call__(
+        self,
+        self_interface: RegtestBitcoinCoreInterface,
+        method: str,
+        params: list[object],
+    ) -> object: ...
 
 
 def parse_bool(value: str | None, default: bool = True) -> bool:
@@ -39,12 +70,12 @@ def is_no_keys_getnewaddress(method: str, error: Exception) -> bool:
 
 
 def install_descriptor_regtest_fallback(
-    blockchaininterface: ModuleType | None = None,
+    blockchaininterface: BlockchainInterface | None = None,
 ) -> bool:
     if blockchaininterface is None:
         from jmclient import blockchaininterface as imported_blockchaininterface
 
-        blockchaininterface = imported_blockchaininterface
+        blockchaininterface = cast(BlockchainInterface, imported_blockchaininterface)
 
     interface_class = blockchaininterface.RegtestBitcoinCoreInterface
     original_rpc = interface_class._rpc
@@ -52,7 +83,7 @@ def install_descriptor_regtest_fallback(
         return False
 
     def rpc_with_descriptor_regtest_fallback(
-        self: Any,
+        self: RegtestBitcoinCoreInterface,
         method: str,
         params: list[object],
     ) -> object:
@@ -65,7 +96,10 @@ def install_descriptor_regtest_fallback(
             original_url = self.jsonRpc.url
             try:
                 self.jsonRpc.setURL("")
-                loaded_wallets = original_rpc(self, "listwallets", [])
+                loaded_wallets = cast(
+                    Collection[str],
+                    original_rpc(self, "listwallets", []),
+                )
                 if FUNDING_WALLET_NAME not in loaded_wallets:
                     original_rpc(self, "loadwallet", [FUNDING_WALLET_NAME])
                 self.jsonRpc.setURL(FUNDING_WALLET_RPC_PATH)
@@ -73,8 +107,9 @@ def install_descriptor_regtest_fallback(
             finally:
                 self.jsonRpc.setURL(original_url)
 
-    rpc_with_descriptor_regtest_fallback._descriptor_regtest_fallback = True
-    interface_class._rpc = rpc_with_descriptor_regtest_fallback
+    patched_rpc = cast(PatchedRpcMethod, rpc_with_descriptor_regtest_fallback)
+    patched_rpc._descriptor_regtest_fallback = True
+    interface_class._rpc = patched_rpc
     return True
 
 
