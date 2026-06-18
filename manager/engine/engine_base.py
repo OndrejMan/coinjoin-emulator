@@ -29,6 +29,7 @@ class EngineArgs(Protocol):
     control_ip: str
     btc_node_ip: str
     wasabi_backend_ip: str
+    btc_node_arg: list[str] | None
 
 
 class DriverProtocol(Protocol):
@@ -45,6 +46,7 @@ class DriverProtocol(Protocol):
         cpu: float = 0.1,
         memory: int = 768,
         volumes: dict[str, dict[str, str]] | None = None,
+        command: list[str] | None = None,
     ) -> tuple[str, dict[int, int]]: ...
     def stop(self, name: str) -> object: ...
     def download(self, name: str, src_path: str, dst_path: str) -> object: ...
@@ -168,13 +170,17 @@ class EngineBase:
             print("- no btcFolder provided; using internal container storage")
 
         print("- starting btc-node")
+        btc_node_command = None
+        if self.args.btc_node_arg:
+            btc_node_command = ["./run.sh", *self.args.btc_node_arg]
         btc_node_ip, btc_node_ports = self.driver.run(
             "btc-node",
             f"{self.args.image_prefix}btc-node",
             ports={18443: 18443, 18444: 18444},
             cpu=4.0,
             memory=8192,
-            volumes=node_volumes
+            volumes=node_volumes,
+            command=btc_node_command,
         )
 
         print("- middle btc-node")

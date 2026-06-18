@@ -1,5 +1,6 @@
 import unittest
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from manager.engine.configuration import ScenarioConfig, WalletConfig
 from manager.engine.engine_base import EngineBase
@@ -36,6 +37,45 @@ class MinimalEngine(EngineBase):
 
 
 class EngineBaseTest(unittest.TestCase):
+    def test_start_btc_node_passes_optional_bitcoind_args(self) -> None:
+        driver = Mock()
+        driver.run.return_value = ("btc-node", {18443: 18443, 18444: 18444})
+        args = SimpleNamespace(
+            btcFolder="",
+            image_prefix="",
+            proxy="",
+            control_ip="localhost",
+            btc_node_arg=["-blocksxor=0"],
+        )
+        engine = MinimalEngine(args, driver, "/tmp")
+
+        with patch("manager.engine.engine_base.BtcNode.wait_ready"):
+            engine.start_btc_node()
+
+        driver.run.assert_called_once()
+        self.assertEqual(
+            driver.run.call_args.kwargs["command"],
+            ["./run.sh", "-blocksxor=0"],
+        )
+
+    def test_start_btc_node_uses_image_default_command_without_extra_args(self) -> None:
+        driver = Mock()
+        driver.run.return_value = ("btc-node", {18443: 18443, 18444: 18444})
+        args = SimpleNamespace(
+            btcFolder="",
+            image_prefix="",
+            proxy="",
+            control_ip="localhost",
+            btc_node_arg=[],
+        )
+        engine = MinimalEngine(args, driver, "/tmp")
+
+        with patch("manager.engine.engine_base.BtcNode.wait_ready"):
+            engine.start_btc_node()
+
+        driver.run.assert_called_once()
+        self.assertIsNone(driver.run.call_args.kwargs["command"])
+
     def test_failed_invoice_payment_remains_pending(self) -> None:
         engine = MinimalEngine(Mock(), Mock(), "/tmp")
         engine.current_block = 0

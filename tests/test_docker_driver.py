@@ -25,6 +25,25 @@ class DockerDriverTest(unittest.TestCase):
 
         self.assertFalse(client.containers.run.call_args.kwargs["auto_remove"])
 
+    def test_run_passes_container_command(self) -> None:
+        client = Mock()
+        client.networks.create.return_value = SimpleNamespace(id="coinjoin-network-id")
+        client.containers.run.return_value = None
+        client.containers.get.side_effect = docker_not_found()
+
+        with patch("manager.driver.docker.docker.from_env", return_value=client):
+            driver = DockerDriver(namespace="coinjoin-test")
+            driver.run(
+                "btc-node",
+                "btc-node:latest",
+                command=["./run.sh", "-blocksxor=0"],
+            )
+
+        self.assertEqual(
+            client.containers.run.call_args.kwargs["command"],
+            ["./run.sh", "-blocksxor=0"],
+        )
+
     def test_run_removes_stale_container_before_reusing_name(self) -> None:
         stale_container = Mock()
         client = Mock()

@@ -24,6 +24,7 @@ def test_main_parses_run_arguments_and_dispatches() -> None:
             "--reuse-namespace",
             "--scenario",
             "scenario.json",
+            "--btc-node-arg=-blocksxor=0",
             "--download-btc-data",
             "btc-data",
             "--download-path",
@@ -40,6 +41,7 @@ def test_main_parses_run_arguments_and_dispatches() -> None:
     assert args.namespace == "test-ns"
     assert args.reuse_namespace
     assert args.scenario == "scenario.json"
+    assert args.btc_node_arg == ["-blocksxor=0"]
     assert args.download_btc_data == "btc-data"
     assert args.download_path == "custom-node:/custom/data/"
 

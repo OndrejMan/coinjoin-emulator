@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import sys
 from collections.abc import Callable
@@ -77,6 +79,12 @@ def _add_run_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPars
     )
     run_subparser.add_argument(
         "--btcFolder", type=str, help="folder with btc node data", default=""
+    )
+    run_subparser.add_argument(
+        "--btc-node-arg",
+        action="append",
+        default=[],
+        help="extra argument passed to btc-node run.sh/bitcoind; repeat for multiple arguments",
     )
     run_subparser.add_argument(
         "--wasabi-backend-ip",

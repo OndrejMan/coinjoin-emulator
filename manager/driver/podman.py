@@ -67,8 +67,9 @@ class PodmanDriver(Driver):
         cpu: float = 0.1,
         memory: int = 768,
         volumes: dict[str, dict[str, str]] | None = None,
+        command: list[str] | None = None,
     ) -> tuple[str, dict[int, int]]:
-        command = [
+        podman_command = [
             "run",
             "-d",
             "--rm",
@@ -81,19 +82,20 @@ class PodmanDriver(Driver):
         ]
 
         for container_port, host_port in (ports or {}).items():
-            command.extend(["-p", f"{host_port}:{container_port}"])
+            podman_command.extend(["-p", f"{host_port}:{container_port}"])
 
         for key, value in (env or {}).items():
             if value is not None:
-                command.extend(["-e", f"{key}={value}"])
+                podman_command.extend(["-e", f"{key}={value}"])
 
         for host_path, mount in (volumes or {}).items():
             bind_path = mount["bind"]
             mode = mount.get("mode", "rw")
-            command.extend(["-v", f"{host_path}:{bind_path}:{mode}"])
+            podman_command.extend(["-v", f"{host_path}:{bind_path}:{mode}"])
 
-        command.append(image)
-        self._run(command)
+        podman_command.append(image)
+        podman_command.extend(command or [])
+        self._run(podman_command)
         return name, ports or {}
 
     def stop(self, name: str) -> None:

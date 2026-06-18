@@ -27,6 +27,7 @@ class Driver(ABC):
         cpu: float = 0.1,
         memory: int = 768,
         volumes: dict[str, dict[str, str]] | None = None,
+        command: list[str] | None = None,
     ) -> tuple[str, dict[int, int]]:
         pass
 

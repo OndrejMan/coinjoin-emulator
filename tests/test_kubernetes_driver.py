@@ -81,6 +81,7 @@ class KubernetesDriverTest(TestCase):
                 "btc-node",
                 "btc-node:latest",
                 ports={18443: 18443},
+                command=["./run.sh", "-blocksxor=0"],
                 volumes={
                     "/tmp/btc-data": {
                         "bind": "/home/bitcoin/data",
@@ -98,6 +99,7 @@ class KubernetesDriverTest(TestCase):
         pod_spec = cast(dict[str, object], pod_bodies[0]["spec"])
         containers = cast(list[dict[str, object]], pod_spec["containers"])
         container = containers[0]
+        self.assertEqual(container["command"], ["./run.sh", "-blocksxor=0"])
         self.assertEqual(
             container["volumeMounts"],
             [

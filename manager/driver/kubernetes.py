@@ -48,6 +48,7 @@ class KubernetesDriver(Driver):
         cpu: float = 0.1,
         memory: int = 768,
         volumes: dict[str, dict[str, str]] | None = None,
+        command: list[str] | None = None,
     ) -> tuple[str, dict[int, int]]:
         if ports is None:
             ports = {}
@@ -74,53 +75,55 @@ class KubernetesDriver(Driver):
                 }
             )
 
+        container_spec = {
+            "image": image,
+            "imagePullPolicy": "Always",
+            "name": name,
+            "ports": [
+                {
+                    "containerPort": container_port,
+                }
+                for container_port in ports.keys()
+            ],
+            "env": [
+                {
+                    "name": k,
+                    "value": v,
+                }
+                for k, v in env.items()
+            ],
+            "volumeMounts": volume_mounts,
+            "securityContext": {
+                "allowPrivilegeEscalation": False,
+                "capabilities": {
+                    "drop": ["ALL"],
+                },
+                "runAsNonRoot": True,
+                "seccompProfile": {
+                    "type": "RuntimeDefault",
+                },
+            },
+            "resources": {
+                "limits": {
+                    "cpu": cpu,
+                    "memory": f"{memory}Mi",
+                },
+                "requests": {
+                    "cpu": cpu,
+                    "memory": f"{memory}Mi",
+                },
+            },
+        }
+        if command is not None:
+            container_spec["command"] = command
+
         pod_manifest = {
             "apiVersion": "v1",
             "kind": "Pod",
             "metadata": {"name": name, "labels": {"app": name}},
             "spec": {
                 "restartPolicy": "Never",
-                "containers": [
-                    {
-                        "image": image,
-                        "imagePullPolicy": "Always",
-                        "name": name,
-                        "ports": [
-                            {
-                                "containerPort": container_port,
-                            }
-                            for container_port in ports.keys()
-                        ],
-                        "env": [
-                            {
-                                "name": k,
-                                "value": v,
-                            }
-                            for k, v in env.items()
-                        ],
-                        "volumeMounts": volume_mounts,
-                        "securityContext": {
-                            "allowPrivilegeEscalation": False,
-                            "capabilities": {
-                                "drop": ["ALL"],
-                            },
-                            "runAsNonRoot": True,
-                            "seccompProfile": {
-                                "type": "RuntimeDefault",
-                            },
-                        },
-                        "resources": {
-                            "limits": {
-                                "cpu": cpu,
-                                "memory": f"{memory}Mi",
-                            },
-                            "requests": {
-                                "cpu": cpu,
-                                "memory": f"{memory}Mi",
-                            },
-                        },
-                    }
-                ],
+                "containers": [container_spec],
                 "volumes": pod_volumes,
             },
         }
