@@ -23,6 +23,10 @@ class EngineArgs(Protocol):
     command: str
     scenario: str | None
     image_prefix: str
+    btc_node_image: str
+    joinmarket_client_server_image: str
+    irc_server_image: str
+    coinjoin_infrastructure_local_build: bool
     force_rebuild: bool
     btcFolder: str | None
     proxy: str
@@ -127,27 +131,39 @@ class EngineBase:
     def prepare_images(self) -> None:
         raise NotImplementedError
 
-    def prepare_image(self, name: str, path: str | None = None, local_build: bool = False) -> None:
-        prefixed_name = self.args.image_prefix + name
+    def image_ref(self, name: str) -> str:
+        override = getattr(self.args, f"{name.replace('-', '_')}_image", "")
+        return override or f"{self.args.image_prefix}{name}"
+
+    def local_build_requested(self, name: str) -> bool:
+        return name in {"btc-node", "joinmarket-client-server", "irc-server"} and bool(
+            getattr(self.args, "coinjoin_infrastructure_local_build", False)
+        )
+
+    def prepare_image(self, name: str, path: str | None = None, local_build: bool | None = None) -> None:
+        image_name = self.image_ref(name)
+        has_override = bool(getattr(self.args, f"{name.replace('-', '_')}_image", ""))
+        if local_build is None:
+            local_build = self.local_build_requested(name)
         if local_build:
-            self.driver.build(prefixed_name, f"./containers/{name}" if path is None else path)
-            print(f"- image built {prefixed_name}")
-        elif self.driver.has_image(prefixed_name):
+            self.driver.build(image_name, f"./containers/{name}" if path is None else path)
+            print(f"- image built {image_name}")
+        elif self.driver.has_image(image_name):
             if self.args.force_rebuild:
-                if self.args.image_prefix:
-                    self.driver.pull(prefixed_name)
-                    print(f"- image pulled {prefixed_name}")
+                if self.args.image_prefix or has_override:
+                    self.driver.pull(image_name)
+                    print(f"- image pulled {image_name}")
                 else:
                     self.driver.build(name, f"./containers/{name}" if path is None else path)
-                    print(f"- image rebuilt {prefixed_name}")
+                    print(f"- image rebuilt {image_name}")
             else:
-                print(f"- image reused {prefixed_name}")
-        elif self.args.image_prefix:
-            self.driver.pull(prefixed_name)
-            print(f"- image pulled {prefixed_name}")
+                print(f"- image reused {image_name}")
+        elif self.args.image_prefix or has_override:
+            self.driver.pull(image_name)
+            print(f"- image pulled {image_name}")
         else:
             self.driver.build(name, f"./containers/{name}" if path is None else path)
-            print(f"- image built {prefixed_name}")
+            print(f"- image built {image_name}")
 
     def start_infrastructure(self) -> None:
         print("Starting infrastructure")
@@ -175,7 +191,7 @@ class EngineBase:
             btc_node_command = ["./run.sh", *self.args.btc_node_arg]
         btc_node_ip, btc_node_ports = self.driver.run(
             "btc-node",
-            f"{self.args.image_prefix}btc-node",
+            self.image_ref("btc-node"),
             ports={18443: 18443, 18444: 18444},
             cpu=4.0,
             memory=8192,

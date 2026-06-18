@@ -68,6 +68,7 @@ def _add_console_parser(subparsers: argparse._SubParsersAction[argparse.Argument
 def _add_build_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     build_subparser = subparsers.add_parser("build", help="build images")
     _add_image_build_arguments(build_subparser)
+    _add_infrastructure_image_arguments(build_subparser)
     build_subparser.add_argument("--namespace", type=str, default="coinjoin")
     build_subparser.add_argument(
         "--image-prefix", type=str, default=DEFAULT_IMAGE_PREFIX, help="image prefix"
@@ -153,6 +154,34 @@ def _add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument("--reuse-namespace", action="store_true", default=False)
+    _add_infrastructure_image_arguments(parser)
+
+
+def _add_infrastructure_image_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--btc-node-image",
+        type=str,
+        default="",
+        help="Exact btc-node image reference; overrides --image-prefix for this image.",
+    )
+    parser.add_argument(
+        "--joinmarket-client-server-image",
+        type=str,
+        default="",
+        help="Exact JoinMarket client-server image reference; overrides --image-prefix for this image.",
+    )
+    parser.add_argument(
+        "--irc-server-image",
+        type=str,
+        default="",
+        help="Exact IRC server image reference; overrides --image-prefix for this image.",
+    )
+    parser.add_argument(
+        "--coinjoin-infrastructure-local-build",
+        action="store_true",
+        default=False,
+        help="Build btc-node, JoinMarket client-server, and IRC server locally.",
+    )
 
 
 def _add_image_build_arguments(parser: argparse.ArgumentParser) -> None:

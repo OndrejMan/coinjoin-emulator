@@ -219,6 +219,10 @@ class FakeBtcNode:
 def engine_args(proxy: str = "") -> SimpleNamespace:
     return SimpleNamespace(
         image_prefix="ghcr.io/ondrejman/",
+        btc_node_image="",
+        joinmarket_client_server_image="",
+        irc_server_image="",
+        coinjoin_infrastructure_local_build=False,
         proxy=proxy,
         control_ip="host.docker.internal",
         force_rebuild=False,
@@ -303,9 +307,19 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(node.create_wallet_calls, [])
         start_irc_server.assert_called_once_with()
 
-    def test_prepare_images_rebuilds_joinmarket_client_server(self) -> None:
+    def test_prepare_images_reuses_joinmarket_client_server_by_default(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
+
+        engine.prepare_images()
+
+        self.assertEqual(driver.build_calls, [])
+
+    def test_prepare_images_can_rebuild_joinmarket_infrastructure_images(self) -> None:
+        driver = FakeDriver()
+        args = engine_args()
+        args.coinjoin_infrastructure_local_build = True
+        engine = JoinmarketEngine(args, driver)
 
         engine.prepare_images()
 
@@ -313,11 +327,37 @@ class JoinmarketEngineTest(unittest.TestCase):
             driver.build_calls,
             [
                 {
+                    "name": "ghcr.io/ondrejman/btc-node",
+                    "path": "./containers/btc-node",
+                },
+                {
                     "name": "ghcr.io/ondrejman/joinmarket-client-server",
                     "path": "./containers/joinmarket-client-server",
-                }
+                },
+                {
+                    "name": "ghcr.io/ondrejman/irc-server",
+                    "path": "./containers/irc-server",
+                },
             ],
         )
+
+    def test_joinmarket_infrastructure_uses_exact_image_overrides(self) -> None:
+        driver = FakeDriver()
+        args = engine_args()
+        args.irc_server_image = "registry.example/irc-server:test"
+        args.joinmarket_client_server_image = "registry.example/jm-client:test"
+        engine = JoinmarketEngine(args, driver)
+        node = set_fake_node(engine)
+
+        with patch.object(engine, "init_joinmarket_clientserver", FakeJoinMarketClientServer):
+            engine.start_irc_server()
+            engine.start_distributor()
+            engine.start_client(0, WalletConfig(funds=[], joinmarket=None))
+
+        self.assertEqual(node.create_wallet_calls[0]["wallet"], "jm_wallet_distributor")
+        self.assertEqual(driver.calls[0]["image"], "registry.example/irc-server:test")
+        self.assertEqual(driver.calls[1]["image"], "registry.example/jm-client:test")
+        self.assertEqual(driver.calls[2]["image"], "registry.example/jm-client:test")
 
     def test_client_uses_driver_port_mapping_without_proxy(self) -> None:
         driver = FakeDriver()

@@ -37,16 +37,59 @@ class MinimalEngine(EngineBase):
 
 
 class EngineBaseTest(unittest.TestCase):
+    def engine_args(self, **overrides: object) -> SimpleNamespace:
+        args = SimpleNamespace(
+            btcFolder="",
+            image_prefix="ghcr.io/ondrejman/",
+            btc_node_image="",
+            joinmarket_client_server_image="",
+            irc_server_image="",
+            coinjoin_infrastructure_local_build=False,
+            force_rebuild=False,
+            proxy="",
+            control_ip="localhost",
+            btc_node_arg=[],
+        )
+        for key, value in overrides.items():
+            setattr(args, key, value)
+        return args
+
+    def test_image_ref_uses_prefix_by_default(self) -> None:
+        engine = MinimalEngine(self.engine_args(), Mock(), "/tmp")
+
+        self.assertEqual(engine.image_ref("btc-node"), "ghcr.io/ondrejman/btc-node")
+
+    def test_image_ref_override_wins_over_prefix(self) -> None:
+        engine = MinimalEngine(
+            self.engine_args(btc_node_image="registry.example/btc-node:test"),
+            Mock(),
+            "/tmp",
+        )
+
+        self.assertEqual(engine.image_ref("btc-node"), "registry.example/btc-node:test")
+
+    def test_prepare_image_local_build_tags_resolved_ref(self) -> None:
+        driver = Mock()
+        engine = MinimalEngine(
+            self.engine_args(
+                btc_node_image="registry.example/btc-node:test",
+                coinjoin_infrastructure_local_build=True,
+            ),
+            driver,
+            "/tmp",
+        )
+
+        engine.prepare_image("btc-node")
+
+        driver.build.assert_called_once_with(
+            "registry.example/btc-node:test",
+            "./containers/btc-node",
+        )
+
     def test_start_btc_node_passes_optional_bitcoind_args(self) -> None:
         driver = Mock()
         driver.run.return_value = ("btc-node", {18443: 18443, 18444: 18444})
-        args = SimpleNamespace(
-            btcFolder="",
-            image_prefix="",
-            proxy="",
-            control_ip="localhost",
-            btc_node_arg=["-blocksxor=0"],
-        )
+        args = self.engine_args(image_prefix="", btc_node_arg=["-blocksxor=0"])
         engine = MinimalEngine(args, driver, "/tmp")
 
         with patch("manager.engine.engine_base.BtcNode.wait_ready"):
@@ -61,13 +104,7 @@ class EngineBaseTest(unittest.TestCase):
     def test_start_btc_node_uses_image_default_command_without_extra_args(self) -> None:
         driver = Mock()
         driver.run.return_value = ("btc-node", {18443: 18443, 18444: 18444})
-        args = SimpleNamespace(
-            btcFolder="",
-            image_prefix="",
-            proxy="",
-            control_ip="localhost",
-            btc_node_arg=[],
-        )
+        args = self.engine_args(image_prefix="")
         engine = MinimalEngine(args, driver, "/tmp")
 
         with patch("manager.engine.engine_base.BtcNode.wait_ready"):
