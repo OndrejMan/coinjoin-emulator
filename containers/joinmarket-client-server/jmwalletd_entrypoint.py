@@ -73,12 +73,15 @@ def install_descriptor_regtest_fallback(
     blockchaininterface: BlockchainInterface | None = None,
 ) -> bool:
     if blockchaininterface is None:
-        from jmclient import blockchaininterface as imported_blockchaininterface
+        # pylint: disable-next=import-error,import-outside-toplevel
+        from jmclient import (
+            blockchaininterface as imported_blockchaininterface,
+        )
 
         blockchaininterface = cast(BlockchainInterface, imported_blockchaininterface)
 
     interface_class = blockchaininterface.RegtestBitcoinCoreInterface
-    original_rpc = interface_class._rpc
+    original_rpc = interface_class._rpc  # pylint: disable=protected-access
     if getattr(original_rpc, "_descriptor_regtest_fallback", False):
         return False
 
@@ -89,7 +92,7 @@ def install_descriptor_regtest_fallback(
     ) -> object:
         try:
             return original_rpc(self, method, params)
-        except Exception as error:
+        except Exception as error:  # pylint: disable=broad-exception-caught
             if not is_no_keys_getnewaddress(method, error):
                 raise
 
@@ -108,8 +111,8 @@ def install_descriptor_regtest_fallback(
                 self.jsonRpc.setURL(original_url)
 
     patched_rpc = cast(PatchedRpcMethod, rpc_with_descriptor_regtest_fallback)
-    patched_rpc._descriptor_regtest_fallback = True
-    interface_class._rpc = patched_rpc
+    patched_rpc._descriptor_regtest_fallback = True  # pylint: disable=protected-access
+    interface_class._rpc = patched_rpc  # pylint: disable=protected-access
     return True
 
 

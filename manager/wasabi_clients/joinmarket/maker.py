@@ -1,3 +1,5 @@
+# pylint: disable=assignment-from-no-return,unused-argument
+
 from typing import TYPE_CHECKING
 
 import requests

@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+# pylint: disable=unused-argument
 from typing import Protocol
 
 class JsonRpc(Protocol):

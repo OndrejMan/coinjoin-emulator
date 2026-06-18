@@ -10,13 +10,13 @@ from manager.application import download_btc_data, parse_download_path, run_engi
 
 def run_args(
     no_logs: bool = False,
-    download_btc_data: str = "",
+    download_btc_data_path: str = "",
     download_path: str = "btc-node:/home/bitcoin/data/",
     image_prefix: str = "",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         no_logs=no_logs,
-        download_btc_data=download_btc_data,
+        download_btc_data=download_btc_data_path,
         download_path=download_path,
         image_prefix=image_prefix,
     )
@@ -94,7 +94,7 @@ def test_run_engine_stores_logs_when_node_is_initialized() -> None:
 def test_run_engine_downloads_btc_data_before_cleanup() -> None:
     args = run_args(
         no_logs=True,
-        download_btc_data="/tmp/btc-data",
+        download_btc_data_path="/tmp/btc-data",
         download_path="custom-node:/custom/data/",
     )
     driver = Mock()

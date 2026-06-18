@@ -6,9 +6,12 @@ from collections.abc import Callable
 from types import SimpleNamespace
 from typing import cast
 
-import manager.commands.genscen
 from manager.application import DEFAULT_BTC_DOWNLOAD_PATH, run_engine
+from manager.commands import genscen
 from manager.driver import Driver
+from manager.driver.docker import DockerDriver
+from manager.driver.kubernetes import KubernetesDriver
+from manager.driver.podman import PodmanDriver
 from manager.engine.engine_base import EngineBase
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
@@ -24,7 +27,7 @@ Dispatcher = Callable[[ParsedArgs], int]
 
 
 def handle_genscen(args: ParsedArgs) -> None:
-    manager.commands.genscen.handler(cast(argparse.Namespace, args))
+    genscen.handler(cast(argparse.Namespace, args))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -123,7 +126,7 @@ def _add_clean_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
 
 def _add_genscen_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     genscen_subparser = subparsers.add_parser("genscen", help="generate scenario file")
-    manager.commands.genscen.setup_parser(genscen_subparser)
+    genscen.setup_parser(genscen_subparser)
 
 
 def _add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
@@ -161,16 +164,10 @@ def _add_image_build_arguments(parser: argparse.ArgumentParser) -> None:
 def create_driver(args: ParsedArgs) -> Driver:
     match args.driver:
         case "docker":
-            from manager.driver.docker import DockerDriver
-
             return DockerDriver(args.namespace)
         case "podman":
-            from manager.driver.podman import PodmanDriver
-
             return PodmanDriver(args.namespace)
         case "kubernetes":
-            from manager.driver.kubernetes import KubernetesDriver
-
             return KubernetesDriver(args.namespace, args.reuse_namespace)
         case _:
             raise ValueError(f"Unknown driver '{args.driver}'")

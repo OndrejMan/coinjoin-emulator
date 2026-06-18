@@ -1,12 +1,11 @@
 import unittest
 from unittest.mock import patch
 
-from joinmarket_helpers import response
-
 from manager.exceptions import RpcError
 from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
+from tests.joinmarket_helpers import response
 
-# pylint: disable=protected-access
+# pylint: disable=assignment-from-no-return,protected-access
 
 
 class JoinMarketRpcTest(unittest.TestCase):

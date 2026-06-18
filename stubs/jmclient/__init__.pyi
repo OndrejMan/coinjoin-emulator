@@ -1,1 +1,1 @@
-from . import blockchaininterface as blockchaininterface
+from __future__ import annotations

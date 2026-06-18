@@ -4,6 +4,8 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+# pylint: disable=protected-access
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENTRYPOINT = (
     PROJECT_ROOT

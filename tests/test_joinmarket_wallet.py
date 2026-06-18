@@ -1,9 +1,10 @@
 import unittest
 from unittest.mock import patch
 
-from joinmarket_helpers import response
-
 from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
+from tests.joinmarket_helpers import response
+
+# pylint: disable=protected-access
 
 
 class JoinMarketWalletTest(unittest.TestCase):
