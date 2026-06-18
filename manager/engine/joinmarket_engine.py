@@ -24,6 +24,14 @@ JOINMARKET_LOOP_SLEEP_SECONDS = 1
 JOINMARKET_DISTRIBUTOR_RPC_WALLET = "jm_wallet_distributor"
 
 
+def joinmarket_container_env(args: EngineArgs, rpc_wallet_file: str) -> dict[str, str | None]:
+    fallback = getattr(args, "joinmarket_descriptor_regtest_fallback", False)
+    return {
+        "JM_RPC_WALLET_FILE": rpc_wallet_file,
+        "JM_DESCRIPTOR_REGTEST_FALLBACK": "1" if fallback else "0",
+    }
+
+
 class JoinmarketEngine(EngineBase):
 
     def __init__(self, args: EngineArgs, driver: DriverProtocol) -> None:
@@ -155,7 +163,10 @@ class JoinmarketEngine(EngineBase):
             ip, manager_ports = self.driver.run(
                 name,
                 f"{self.args.image_prefix}joinmarket-client-server",
-                env={"JM_RPC_WALLET_FILE": JOINMARKET_DISTRIBUTOR_RPC_WALLET},
+                env=joinmarket_container_env(
+                    self.args,
+                    JOINMARKET_DISTRIBUTOR_RPC_WALLET,
+                ),
                 ports={28183: port},
                 cpu=1.0,
                 memory=2048,
@@ -215,7 +226,7 @@ class JoinmarketEngine(EngineBase):
             ip, manager_ports = self.driver.run(
                 name,
                 f"{self.args.image_prefix}joinmarket-client-server",
-                env={"JM_RPC_WALLET_FILE": core_wallet},
+                env=joinmarket_container_env(self.args, core_wallet),
                 ports={28183: port},
                 cpu=(0.1),
                 memory=(768),

@@ -1,9 +1,7 @@
 ARG JOINMARKET_TEST_IMAGE=ghcr.io/ondrejman/joinmarket-test:latest
 FROM ${JOINMARKET_TEST_IMAGE}
 
-COPY patch_descriptor_regtest.py /tmp/patch_descriptor_regtest.py
-RUN python3 /tmp/patch_descriptor_regtest.py \
-    && rm /tmp/patch_descriptor_regtest.py
+COPY jmwalletd_entrypoint.py /usr/local/bin/jmwalletd_entrypoint.py
 
 # Copy the config file to the right place
 

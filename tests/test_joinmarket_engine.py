@@ -31,10 +31,11 @@ class FakeDriver:
         image: str,
         env: dict[str, str | None] | None = None,
         ports: dict[int, int] | None = None,
-        _skip_ip: bool = False,
+        skip_ip: bool = False,
         cpu: float = 0.1,
         memory: int = 768,
-        _volumes: dict[str, dict[str, str]] | None = None,
+        volumes: dict[str, dict[str, str]] | None = None,
+        command: list[str] | None = None,
     ) -> tuple[str, dict[int, int]]:
         self.calls.append(
             {
@@ -42,8 +43,11 @@ class FakeDriver:
                 "image": image,
                 "env": env,
                 "ports": ports,
+                "skip_ip": skip_ip,
                 "cpu": cpu,
                 "memory": memory,
+                "volumes": volumes,
+                "command": command,
             }
         )
         return f"{name}.pod", {28183: 32083}
@@ -218,6 +222,7 @@ def engine_args(proxy: str = "") -> SimpleNamespace:
         proxy=proxy,
         control_ip="host.docker.internal",
         force_rebuild=False,
+        joinmarket_descriptor_regtest_fallback=False,
     )
 
 
@@ -246,7 +251,10 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(driver.calls[0]["ports"], {28183: 28183})
         self.assertEqual(
             driver.calls[0]["env"],
-            {"JM_RPC_WALLET_FILE": "jm_wallet_distributor"},
+            {
+                "JM_RPC_WALLET_FILE": "jm_wallet_distributor",
+                "JM_DESCRIPTOR_REGTEST_FALLBACK": "0",
+            },
         )
         self.assertEqual(
             node.create_wallet_calls,
@@ -295,7 +303,7 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(node.create_wallet_calls, [])
         start_irc_server.assert_called_once_with()
 
-    def test_prepare_images_rebuilds_patched_joinmarket_client_server(self) -> None:
+    def test_prepare_images_rebuilds_joinmarket_client_server(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
 
@@ -329,7 +337,10 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(driver.calls[0]["ports"], {28183: 28184})
         self.assertEqual(
             driver.calls[0]["env"],
-            {"JM_RPC_WALLET_FILE": "jm_wallet_jcs_000"},
+            {
+                "JM_RPC_WALLET_FILE": "jm_wallet_jcs_000",
+                "JM_DESCRIPTOR_REGTEST_FALLBACK": "0",
+            },
         )
         self.assertEqual(
             node.create_wallet_calls,
@@ -368,7 +379,10 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(driver.calls[0]["ports"], {28183: 28186})
         self.assertEqual(
             driver.calls[0]["env"],
-            {"JM_RPC_WALLET_FILE": "jm_wallet_jcs_002"},
+            {
+                "JM_RPC_WALLET_FILE": "jm_wallet_jcs_002",
+                "JM_DESCRIPTOR_REGTEST_FALLBACK": "0",
+            },
         )
         self.assertEqual(client.host, "jcs-002.pod")
         self.assertEqual(client.port, 28183)
