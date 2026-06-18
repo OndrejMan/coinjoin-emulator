@@ -506,7 +506,7 @@ class JoinmarketEngineTest(unittest.TestCase):
             }
         ]
 
-        engine._confirm_started_rounds()
+        engine.confirm_started_rounds()
 
         self.assertEqual(engine.current_round, 1)
         self.assertEqual(engine.joinmarket_round_events[0]["status"], "confirmed")
