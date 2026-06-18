@@ -49,6 +49,7 @@ class ContainerCollection:
         ports: dict[str, int],
         environment: dict[str, str],
         volumes: dict[str, dict[str, str]] | None,
+        command: list[str] | None,
     ) -> object: ...
     def list(self, *, all: bool = ...) -> list[Container]: ...
 
