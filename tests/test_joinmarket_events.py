@@ -88,6 +88,65 @@ class TestJoinMarketRoundEvents:
             }
         ]
 
+    def test_exported_round_match_rejects_destination_output_without_coinjoin_shape(
+        self, tmp_path: Path
+    ) -> None:
+        node_path = tmp_path / "btc-node"
+        node_path.mkdir()
+        (node_path / "block_7.json").write_text(
+            json.dumps(
+                {
+                    "height": 7,
+                    "tx": [
+                        {
+                            "txid": "single-payment-txid",
+                            "vout": [
+                                {
+                                    "value": 0.0004,
+                                    "scriptPubKey": {
+                                        "address": "destination-address",
+                                    },
+                                },
+                            ],
+                        },
+                        {
+                            "txid": "coinjoin-txid",
+                            "vout": [
+                                {
+                                    "value": 0.0004,
+                                    "scriptPubKey": {
+                                        "address": "destination-address",
+                                    },
+                                },
+                                {"value": 0.0004, "scriptPubKey": {"address": "maker-1"}},
+                                {"value": 0.0004, "scriptPubKey": {"address": "maker-2"}},
+                                {"value": 0.0004, "scriptPubKey": {"address": "maker-3"}},
+                                {"value": 0.0004, "scriptPubKey": {"address": "maker-4"}},
+                            ],
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        harness = EventHarness()
+        harness.joinmarket_round_events = [
+            {
+                "round_id": 2,
+                "status": "started",
+                "taker": "jcs-002",
+                "amount_sats": 40000,
+                "counterparties": 4,
+                "destination_address": "destination-address",
+            },
+        ]
+
+        labels = harness.match_joinmarket_rounds_to_blocks(str(tmp_path))
+
+        assert labels[0]["txid"] == "coinjoin-txid"
+        assert labels[0]["block_height"] == 7
+        assert labels[0]["match_source"] == "destination_output"
+
     def test_round_events_confirm_started_round_from_live_node_lookup(self) -> None:
         harness = EventHarness()
         harness.joinmarket_round_events = [

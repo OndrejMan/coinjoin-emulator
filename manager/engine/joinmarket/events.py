@@ -40,15 +40,12 @@ class JoinMarketRoundEventsMixin:
             block_height = block.get("height")
             for tx in cast(list[dict[str, object]], block.get("tx", [])):
                 txid = tx.get("txid")
-                for output in cast(list[dict[str, object]], tx.get("vout", [])):
-                    script_pub_key = cast(dict[str, object], output.get("scriptPubKey") or {})
-                    addresses: list[object] = []
-                    if script_pub_key.get("address"):
-                        addresses.append(script_pub_key["address"])
-                    addresses.extend(cast(list[object], script_pub_key.get("addresses") or []))
-                    for address in addresses:
-                        event = labels_by_destination.get(address)
-                        if event is not None and txid:
+                for event in labels_by_destination.values():
+                    matching_outputs = self._matching_coinjoin_outputs(event, tx)
+                    if not matching_outputs:
+                        continue
+                    for output in matching_outputs:
+                        if event["destination_address"] in self._script_addresses(output) and txid:
                             event["txid"] = txid
                             event["block_height"] = block_height
                             event["match_source"] = "destination_output"
@@ -66,6 +63,23 @@ class JoinMarketRoundEventsMixin:
         addresses.extend(cast(list[object], script_pub_key.get("addresses") or []))
         return addresses
 
+    def _matching_coinjoin_outputs(
+        self, event: dict[str, object], tx: dict[str, object]
+    ) -> list[dict[str, object]]:
+        outputs = cast(list[dict[str, object]], tx.get("vout", []))
+        if not event.get("amount_sats") or not event.get("counterparties"):
+            return outputs
+
+        amount_btc = float(str(event.get("amount_sats", 0))) / 100_000_000
+        expected_outputs_count = int(str(event.get("counterparties", 0))) + 1
+        matching_outputs = [
+            output for output in outputs
+            if abs(float(str(output.get("value", 0))) - amount_btc) < 1e-8
+        ]
+        if len(matching_outputs) < expected_outputs_count:
+            return []
+        return matching_outputs
+
     def _find_round_event_tx(self, event: dict[str, object]) -> dict[str, object] | None:
         if event.get("txid"):
             return {
@@ -77,12 +91,14 @@ class JoinMarketRoundEventsMixin:
 
         start_height = max(0, int(str(event.get("start_chain_height") or 0)))
         tip_height = self.node.get_block_count()
+
         for height in range(start_height, tip_height + 1):
             block_hash = self.node.get_block_hash(height)
             block = self.node.get_block_info(block_hash)
             for tx in cast(list[dict[str, object]], block.get("tx", [])):
                 txid = tx.get("txid")
-                for output in cast(list[dict[str, object]], tx.get("vout", [])):
+                matching_outputs = self._matching_coinjoin_outputs(event, tx)
+                for output in matching_outputs:
                     if event["destination_address"] in self._script_addresses(output):
                         return {
                             "txid": txid,
