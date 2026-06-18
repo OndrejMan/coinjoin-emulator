@@ -15,6 +15,7 @@ WALLET_NAME = "wallet"
 PASSWORD = "password"
 WALLET_TYPE = "sw"
 BTC = 100_000_000
+JsonDict = dict[str, object]
 
 
 class JoinmarketConflictException(Exception):
@@ -43,7 +44,7 @@ class JoinMarketClientServer:
         self.name = name
         self.proxy = proxy
         self.version = version
-        self.type = role
+        self.role = role
         self.maker_running = False
         self.coinjoin_in_process = False
         self.coinjoin_start = 0
@@ -52,13 +53,21 @@ class JoinMarketClientServer:
         self.token = ""
         self.refresh_token = ""
 
+    @property
+    def type(self) -> str:
+        return self.role
+
+    @type.setter
+    def type(self, role: str) -> None:
+        self.role = role
+
     def _headers(self, auth_required: bool = True) -> dict[str, str]:
         headers: dict[str, str] = {}
         if auth_required and self.token:
             headers['Authorization'] = f'Bearer {self.token}'
         return headers
 
-    def _store_tokens(self, response: dict[str, object]) -> None:
+    def _store_tokens(self, response: JsonDict) -> None:
         self.token = str(response.get("token", ""))
         self.refresh_token = str(response.get("refresh_token", ""))
 
@@ -68,7 +77,7 @@ class JoinMarketClientServer:
         if not self.token:
             raise RpcError("Could not authenticate JoinMarket wallet")
 
-    def _raise_response_error(self, response: requests.Response) -> None:
+    def _handle_response_error(self, response: requests.Response) -> None:
         if response.status_code == 409:
             raise JoinmarketConflictException(f"Error {response.status_code}: {response.text}", response)
         try:
@@ -78,15 +87,36 @@ class JoinMarketClientServer:
             error_message = response.text
         raise RpcError(f"Error {response.status_code}: {error_message}")
 
+    def _request_once(
+        self,
+        method: str,
+        endpoint: str,
+        json_data: JsonDict | None,
+        timeout: int,
+        auth_required: bool,
+    ) -> requests.Response:
+        return requests.request(
+            method=method,
+            url=f"https://{self.host}:{self.port}/api/v1{endpoint}",
+            json=json_data or {},
+            headers=self._headers(auth_required=auth_required),
+            proxies={"http": self.proxy},
+            timeout=timeout,
+            verify=False,
+        )
+
+    def _response_json(self, response: requests.Response) -> JsonDict:
+        return cast(JsonDict, response.json())
+
     def _rpc(
         self,
         method: str,
         endpoint: str,
-        json_data: dict[str, object] | None = None,
+        json_data: JsonDict | None = None,
         timeout: int = 5,
         repeat: int = 4,
         auth_required: bool = True,
-    ) -> dict[str, object]:
+    ) -> JsonDict:
         if auth_required:
             self._ensure_auth()
 
@@ -94,14 +124,12 @@ class JoinMarketClientServer:
         refreshed_after_401 = False
         for attempt in range(repeat):
             try:
-                response = requests.request(
+                response = self._request_once(
                     method=method,
-                    url=f"https://{self.host}:{self.port}/api/v1{endpoint}",
-                    json=json_data or {},
-                    headers=self._headers(auth_required=auth_required),
-                    proxies={"http": self.proxy},
+                    endpoint=endpoint,
+                    json_data=json_data,
                     timeout=timeout,
-                    verify=False,
+                    auth_required=auth_required,
                 )
             except requests.exceptions.Timeout:
                 continue
@@ -123,18 +151,18 @@ class JoinMarketClientServer:
                 raise JoinmarketConflictException(f"Error {response.status_code}: {response.text}", response)
 
             if response.status_code >= 400:
-                self._raise_response_error(response)
+                self._handle_response_error(response)
 
-            return cast(dict[str, object], response.json())
+            return self._response_json(response)
 
         if response is not None:
             if response.status_code >= 400:
-                self._raise_response_error(response)
-            return cast(dict[str, object], response.json())
+                self._handle_response_error(response)
+            return self._response_json(response)
 
         raise TimeoutError("timeout")
 
-    def get_status(self) -> dict[str, object]:
+    def get_status(self) -> JsonDict:
         method = "GET"
         endpoint = "/session"
         response = self._rpc(method, endpoint, auth_required=False)
@@ -142,12 +170,12 @@ class JoinMarketClientServer:
         self.coinjoin_in_process = bool(response.get("coinjoin_in_process", False))
         return response
 
-    def _create_wallet(self, walletname: str | None = None) -> dict[str, object]:
+    def _create_wallet(self, walletname: str | None = None) -> JsonDict:
         """Create a new wallet and store its name."""
         method = "POST"
         endpoint = "/wallet/create"
         self.walletname = walletname or self.walletname or WALLET_NAME
-        data: dict[str, object] = {
+        data: JsonDict = {
             "walletname": self.walletname,
             "password": PASSWORD,
             "wallettype": WALLET_TYPE
@@ -156,11 +184,11 @@ class JoinMarketClientServer:
         self._store_tokens(response)
         return response
 
-    def unlock_wallet(self, password: str | None = None) -> dict[str, object]:
+    def unlock_wallet(self, password: str | None = None) -> JsonDict:
         """Unlock an existing wallet using the stored walletname."""
         method = "POST"
         endpoint = f"/wallet/{self.walletname}/unlock"
-        json_data: dict[str, object] = {"password": password or PASSWORD}
+        json_data: JsonDict = {"password": password or PASSWORD}
         response = self._rpc(method, endpoint, json_data=json_data, auth_required=False)
         self._store_tokens(response)
         return response
@@ -189,7 +217,7 @@ class JoinMarketClientServer:
         return False
 
 
-    def display_wallet(self) -> dict[str, object]:
+    def display_wallet(self) -> JsonDict:
         """Get detailed breakdown of wallet contents by account."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/display"
@@ -203,13 +231,13 @@ class JoinMarketClientServer:
         """
         response = self.display_wallet()
         try:
-            walletinfo = cast(dict[str, object], response["walletinfo"])
+            walletinfo = cast(JsonDict, response["walletinfo"])
             available_balance = walletinfo["available_balance"]
             return int(float(str(available_balance)) * BTC)
         except KeyError as e:
             raise RpcError(f"Could not retrieve available balance: {e}") from e
 
-    def get_yieldgen_report(self) -> dict[str, object]:
+    def get_yieldgen_report(self) -> JsonDict:
         """Get the latest report on yield-generating activity."""
         method = "GET"
         endpoint = "/wallet/yieldgen/report"
@@ -223,14 +251,14 @@ class JoinMarketClientServer:
         response = self._rpc(method, endpoint)
         return str(response["address"])
 
-    def get_new_timelock_address(self, lockdate: str) -> dict[str, object]:
+    def get_new_timelock_address(self, lockdate: str) -> JsonDict:
         """Get a fresh timelock address for depositing funds to create a fidelity bond."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/address/timelock/new/{lockdate}"
         response = self._rpc(method, endpoint)
         return response
 
-    def list_utxos(self) -> dict[str, object]:
+    def list_utxos(self) -> JsonDict:
         """List details of all UTXOs currently in the wallet."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/utxos"
@@ -244,7 +272,7 @@ class JoinMarketClientServer:
         cjfee_r: float | str,
         ordertype: str,
         minsize: int | str,
-    ) -> dict[str, object] | requests.Response:
+    ) -> JsonDict | requests.Response:
         """
         Start the yield generator service with the specified configuration.
         - txfee: str or int, e.g., "0" (absolute fee in satoshis)
@@ -255,7 +283,7 @@ class JoinMarketClientServer:
         """
         method = "POST"
         endpoint = f"/wallet/{self.walletname}/maker/start"
-        json_data: dict[str, object] = {
+        json_data: JsonDict = {
             "txfee": str(txfee),
             "cjfee_a": str(cjfee_a),
             "cjfee_r": str(cjfee_r),
@@ -270,7 +298,7 @@ class JoinMarketClientServer:
             print(f"Could not start maker: {detail}")
             return e.response
 
-    def stop_maker(self) -> dict[str, object]:
+    def stop_maker(self) -> JsonDict:
         """Stop the yield generator service."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/maker/stop"
@@ -285,7 +313,7 @@ class JoinMarketClientServer:
         counterparties: int,
         destination: str,
         txfee: int | None = None,
-    ) -> dict[str, object]:
+    ) -> JsonDict:
         """
         Initiate a coinjoin as taker.
         - mixdepth: int, the mixdepth to spend from
@@ -296,7 +324,7 @@ class JoinMarketClientServer:
         """
         method = "POST"
         endpoint = f"/wallet/{self.walletname}/taker/coinjoin"
-        json_data: dict[str, object] = {
+        json_data: JsonDict = {
             "mixdepth": mixdepth,
             "amount_sats": amount_sats,
             "counterparties": counterparties,
@@ -310,8 +338,8 @@ class JoinMarketClientServer:
     def run_schedule(
         self,
         destination_addresses: list[str],
-        tumbler_options: dict[str, object] | None = None,
-    ) -> dict[str, object]:
+        tumbler_options: JsonDict | None = None,
+    ) -> JsonDict:
         """
         Create and run a schedule of transactions.
         - destination_addresses: list of str, addresses to send funds to
@@ -319,7 +347,7 @@ class JoinMarketClientServer:
         """
         method = "POST"
         endpoint = f"/wallet/{self.walletname}/taker/schedule"
-        json_data: dict[str, object] = {
+        json_data: JsonDict = {
             "destination_addresses": destination_addresses,
         }
         if tumbler_options:
@@ -327,37 +355,35 @@ class JoinMarketClientServer:
         response = self._rpc(method, endpoint, json_data=json_data)
         return response
 
-    def get_schedule(self) -> dict[str, object]:
+    def get_schedule(self) -> JsonDict:
         """Get the schedule that is currently running."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/taker/schedule"
         response = self._rpc(method, endpoint)
         return response
 
-    def stop_coinjoin(self) -> dict[str, object] | bool:
+    def stop_coinjoin(self) -> JsonDict | bool:
         """Stop a running coinjoin attempt."""
-        if self.type == "taker" and self.coinjoin_in_process:
+        if self.role == "taker" and self.coinjoin_in_process:
             return self.stop_taker()
-        if self.type == "maker" and self.maker_running:
+        if self.role == "maker" and self.maker_running:
             return self.stop_maker()
         print("No coinjoin in process")
         return True
 
-    def stop_taker(self) -> dict[str, object]:
+    def stop_taker(self) -> JsonDict:
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/taker/stop"
         # When stopping not running taker, returns 401 response
         response = self._rpc(method, endpoint)
         return response
 
-    def send(self, addressed_fundings: list[tuple[str, int]]) -> list[dict[str, object]]:
-        results: list[dict[str, object]] = []
+    def send(self, addressed_fundings: list[tuple[str, int]]) -> list[JsonDict]:
+        results: list[JsonDict] = []
         try:
             for address, amount in addressed_fundings:
                 result = self.simple_send(destination_address=address, amount_sats=amount)
-                if result is False:
-                    raise RpcError(f"direct-send failed for {amount} sats to {address}")
-                results.append(cast(dict[str, object], result))
+                results.append(result)
                 print(f"- sent {amount} sats to {address}")
                 sleep(5)  # The btc node needs time to process the transaction
         except (requests.exceptions.RequestException, RpcError, TimeoutError, KeyError, TypeError, ValueError) as e:
@@ -372,7 +398,7 @@ class JoinMarketClientServer:
         amount_sats: int,
         mixdepth: int = 0,
         txfee: int = 5000,
-    ) -> dict[str, object] | bool:
+    ) -> JsonDict:
         """
         Send funds to a single address without coinjoin.
         - destination_address: str, address to send funds to
@@ -382,7 +408,7 @@ class JoinMarketClientServer:
         """
         method = "POST"
         endpoint = f"/wallet/{self.walletname}/taker/direct-send"
-        json_data: dict[str, object] = {
+        json_data: JsonDict = {
             "destination": destination_address,
             "amount_sats": amount_sats,
             "txfee": txfee,
@@ -397,18 +423,16 @@ class JoinMarketClientServer:
                 print(e)
                 sleep(2)
 
-        print("Failed to send funds, attempt timed out.")
+        raise TimeoutError("Failed to send funds, attempt timed out.")
 
-        return False
-
-    def list_unspent_coins(self) -> dict[str, object]:
+    def list_unspent_coins(self) -> JsonDict:
         """List all unspent coins in the wallet."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/utxos"
         response = self._rpc(method, endpoint)
         return response
 
-    def list_transactions_maker(self) -> dict[str, object]:
+    def list_transactions_maker(self) -> JsonDict:
         """List all transactions in the wallet."""
         method = "GET"
         endpoint = "/wallet/yieldgen/report"

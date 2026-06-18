@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
+from manager.exceptions import RpcError
 from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
 
 # pylint: disable=protected-access
@@ -17,6 +18,17 @@ def response(
 
 
 class JoinMarketClientServerTest(unittest.TestCase):
+    def test_type_property_keeps_role_compatibility(self) -> None:
+        client = JoinMarketClientServer(host="dind", role="maker")
+
+        self.assertEqual(client.role, "maker")
+        self.assertEqual(client.type, "maker")
+
+        client.type = "taker"
+
+        self.assertEqual(client.role, "taker")
+        self.assertEqual(client.type, "taker")
+
     def test_protected_rpc_unlocks_before_request_when_token_is_missing(self) -> None:
         client = JoinMarketClientServer(host="dind")
         unlock_response = response(body={"token": "new-token", "refresh_token": "refresh"})
@@ -81,6 +93,22 @@ class JoinMarketClientServerTest(unittest.TestCase):
             {"Authorization": "Bearer fresh-token"},
         )
 
+    def test_protected_rpc_raises_when_retry_after_refresh_gets_401(self) -> None:
+        client = JoinMarketClientServer(host="dind")
+        client.token = "expired-token"
+        unauthorized_response = response(status_code=401, body={"message": "expired"}, text="expired")
+        unlock_response = response(body={"token": "fresh-token", "refresh_token": "fresh-refresh"})
+        final_unauthorized_response = response(status_code=401, body={"message": "still expired"}, text="still expired")
+
+        with patch(
+            "manager.wasabi_clients.joinmarket_client.requests.request",
+            side_effect=[unauthorized_response, unlock_response, final_unauthorized_response],
+        ) as request:
+            with self.assertRaisesRegex(RpcError, "Error 401: still expired"):
+                client._rpc("GET", "/wallet/wallet/display")
+
+        self.assertEqual(request.call_count, 3)
+
     def test_protected_rpc_does_not_continue_when_unlock_fails(self) -> None:
         client = JoinMarketClientServer(host="dind")
         unlock_response = response(status_code=401, body={"message": "unauthorized"}, text="unauthorized")
@@ -99,11 +127,15 @@ class JoinMarketClientServerTest(unittest.TestCase):
         )
         self.assertEqual(request.call_args.kwargs["headers"], {})
 
-    def test_send_raises_when_direct_send_fails(self) -> None:
+    def test_send_raises_when_direct_send_times_out(self) -> None:
         client = JoinMarketClientServer(host="dind")
 
-        with patch.object(client, "simple_send", return_value=False):
-            with self.assertRaisesRegex(Exception, "direct-send failed"):
+        with patch.object(
+            client,
+            "simple_send",
+            side_effect=TimeoutError("Failed to send funds, attempt timed out."),
+        ):
+            with self.assertRaisesRegex(TimeoutError, "Failed to send funds"):
                 client.send([("bcrt1destination", 100000)])
 
 
