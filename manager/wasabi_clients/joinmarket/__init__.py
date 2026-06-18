@@ -1,12 +1,5 @@
-from .joinmarket import (
-    BTC,
-    PASSWORD,
-    WALLET_NAME,
-    WALLET_TYPE,
-    JoinMarketClientServer,
-    JoinmarketConflictException,
-    JsonDict,
-)
+from .client import JoinMarketClientServer
+from .types import BTC, PASSWORD, WALLET_NAME, WALLET_TYPE, JoinmarketConflictException, JsonDict
 
 __all__ = [
     "BTC",
