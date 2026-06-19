@@ -4,6 +4,8 @@ from typing import cast
 
 import requests
 
+from manager import log_output as log
+
 
 class WasabiCoordinator:
     def __init__(
@@ -37,7 +39,7 @@ class WasabiCoordinator:
     def _get_rounds(self) -> dict[str, object] | None:
         """Get active coinjoin rounds"""
         try:
-            print(self.host, self.port, self.proxy)
+            log.debug(f"Checking coordinator rounds via {self.host}:{self.port} proxy={self.proxy}")
             response = requests.get(
                 f"http://{self.host}:{self.port}/wabisabi/human-monitor",
                 proxies={"http": self.proxy},
@@ -50,12 +52,12 @@ class WasabiCoordinator:
 
     def wait_ready(self) -> None:
         """Wait for coordinator to be ready"""
-        print("Waiting for coordinator to be ready...")
+        log.info("Waiting for coordinator to be ready...")
         while True:
             try:
                 status = self._get_status()
                 if status:
-                    print(f"Coordinator ready: {status}")
+                    log.info(f"Coordinator ready: {status}")
                     break
             except (requests.exceptions.RequestException, ValueError):
                 pass

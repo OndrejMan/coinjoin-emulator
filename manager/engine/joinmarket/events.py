@@ -2,6 +2,8 @@ import json
 import os
 from typing import cast
 
+from manager import log_output as log
+
 from ...btc_node import BtcNode
 
 
@@ -17,7 +19,7 @@ class JoinMarketRoundEventsMixin:
             os.path.join(data_path, "joinmarket_round_events.json"), "w", encoding="utf-8"
         ) as f:
             json.dump(labels, f, indent=2)
-            print("- stored JoinMarket round labels")
+            log.info("- stored JoinMarket round labels")
 
     def match_joinmarket_rounds_to_blocks(self, data_path: str) -> list[dict[str, object]]:
         labels_by_destination = {
@@ -106,5 +108,5 @@ class JoinMarketRoundEventsMixin:
             event["confirmed_block"] = self.current_block
             self.current_round += 1
             confirmed += 1
-            print(f"Confirmed coinjoin {event.get('taker')} as {event.get('txid')}")
+            log.info(f"Confirmed coinjoin {event.get('taker')} as {event.get('txid')}")
         return confirmed

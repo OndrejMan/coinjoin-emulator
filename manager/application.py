@@ -1,9 +1,9 @@
 import os
-import sys
 from collections.abc import Callable
 from traceback import print_exception
 from typing import Protocol
 
+from manager import log_output as log
 from manager.driver import Driver
 from manager.engine.engine_base import EngineBase
 
@@ -42,12 +42,12 @@ def download_btc_data(
     """
     name, src_path = parse_download_path(download_path)
     os.makedirs(dest_path, exist_ok=True)
-    print(f"Downloading {download_path} to {dest_path}")
+    log.info(f"Downloading {download_path} to {dest_path}")
     try:
         driver.download(name, src_path, dest_path)
-        print(f"- {download_path} downloaded to {dest_path}")
+        log.info(f"- {download_path} downloaded to {dest_path}")
     except (RuntimeError, OSError, ValueError, TypeError) as e:
-        print(f"- failed to download {download_path}: {e}", file=sys.stderr)
+        log.error(f"- failed to download {download_path}: {e}")
         raise
 
 
@@ -61,11 +61,11 @@ def run_engine(
     try:
         engine.run()
     except KeyboardInterrupt:
-        print()
-        print("KeyboardInterrupt received")
+        log.blank_line()
+        log.warning("KeyboardInterrupt received")
         exit_code = 130
     except (RuntimeError, OSError, ValueError, TypeError) as e:
-        print(f"Terminating exception: {e}", file=sys.stderr)
+        log.error(f"Terminating exception: {e}")
         print_exception(e)
         exit_code = 1
     finally:
@@ -73,7 +73,7 @@ def run_engine(
         if not args.no_logs and engine.node is not None:
             engine.store_logs()
         elif not args.no_logs:
-            print("- skipping log storage: Bitcoin node is not initialized", file=sys.stderr)
+            log.warning("- skipping log storage: Bitcoin node is not initialized")
         if args.download_btc_data:
             btc_data_downloader(driver, args.download_btc_data, args.download_path)
         driver.cleanup(args.image_prefix)

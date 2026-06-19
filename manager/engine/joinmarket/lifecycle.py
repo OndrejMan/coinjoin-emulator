@@ -2,6 +2,8 @@ import threading
 from time import time
 from typing import Callable, Protocol
 
+from manager import log_output as log
+
 from ...btc_node import BtcNode
 from ...exceptions import CoinjoinEmulatorError, StartupError
 from ...wasabi_clients.joinmarket_client import JoinMarketClientServer
@@ -45,14 +47,14 @@ class JoinMarketClientLifecycleMixin:
     init_joinmarket_clientserver: JoinMarketClientServerFactory
 
     def prepare_images(self) -> None:
-        print("Preparing images")
+        log.info("Preparing images")
         self.prepare_image("btc-node")
         self.prepare_image("joinmarket-client-server")
         self.prepare_image("irc-server")
 
     def start_engine_infrastructure(self) -> None:
         self.start_irc_server()
-        print("- started irc-server")
+        log.info("- started irc-server")
 
     def core_wallet_name(self, client_name: str) -> str:
         return f"jm_wallet_{client_name.replace('-', '_')}"
@@ -66,7 +68,7 @@ class JoinMarketClientLifecycleMixin:
                 wallet_name,
                 disable_private_keys=True,
             )
-        print(f"- created {wallet_name} in BitcoinCore")
+        log.info(f"- created {wallet_name} in BitcoinCore")
 
     def start_irc_server(self) -> None:
         name = "irc-server"
@@ -81,21 +83,21 @@ class JoinMarketClientLifecycleMixin:
                 memory=2048,
             )
         except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
-            print(f"- could not start {name} ({e})")
+            log.error(f"- could not start {name} ({e})")
             raise StartupError("Could not start IRC server") from e
 
     def _dump_container_log(self, container_name: str, log_path: str) -> None:
         try:
             log_content = self.driver.logs(container_name)
-            print(f"- {container_name} container logs:\n{log_content}")
+            log.debug(f"- {container_name} container logs:\n{log_content}")
         except (CoinjoinEmulatorError, RuntimeError, OSError):
-            print(f"- could not retrieve container logs from {container_name}")
+            log.warning(f"- could not retrieve container logs from {container_name}")
 
         try:
             log_content = self.driver.peek(container_name, log_path)
-            print(f"- {container_name} log ({log_path}):\n{log_content}")
+            log.debug(f"- {container_name} log ({log_path}):\n{log_content}")
         except (CoinjoinEmulatorError, RuntimeError, OSError):
-            print(f"- could not retrieve {log_path} from {container_name}")
+            log.warning(f"- could not retrieve {log_path} from {container_name}")
 
     def start_distributor(self) -> None:
         name = "joinmarket-distributor"
@@ -114,7 +116,7 @@ class JoinMarketClientLifecycleMixin:
                 memory=2048,
             )
         except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
-            print(f"- could not start {name} ({e})")
+            log.error(f"- could not start {name} ({e})")
             raise StartupError("Could not start distributor") from e
 
         self.distributor = self.init_joinmarket_clientserver(
@@ -127,10 +129,10 @@ class JoinMarketClientLifecycleMixin:
         start = time()
         if not self.distributor.wait_wallet(timeout=180):
             elapsed = time() - start
-            print(f"- could not start {name} (application timeout after {elapsed:.1f}s)")
+            log.error(f"- could not start {name} (application timeout after {elapsed:.1f}s)")
             self._dump_container_log(name, "/home/joinmarket/jmwalletd.log")
             raise StartupError("Could not start distributor")
-        print(f"- started distributor (wait took {time() - start:.1f}s)")
+        log.info(f"- started distributor (wait took {time() - start:.1f}s)")
 
     def init_client(self) -> object:
         raise NotImplementedError("JoinMarket clients require init_joinmarket_clientserver()")
@@ -153,10 +155,10 @@ class JoinMarketClientLifecycleMixin:
                 memory=768,
             )
         except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
-            print(f"- could not start {name} ({e})")
+            log.warning(f"- could not start {name} ({e})")
             return None
 
-        print(f"driver starting {name}")
+        log.debug(f"driver starting {name}")
 
         delay = (wallet.delay_blocks or 0, wallet.delay_rounds or 0)
         stop = (wallet.stop_blocks or 0, wallet.stop_rounds or 0)
@@ -176,11 +178,11 @@ class JoinMarketClientLifecycleMixin:
         start = time()
         if not client.wait_wallet(timeout=120):
             elapsed = time() - start
-            print(f"- could not start {name} (application timeout {elapsed:.1f}s)")
+            log.warning(f"- could not start {name} (application timeout {elapsed:.1f}s)")
             self._dump_container_log(name, "/home/joinmarket/jmwalletd.log")
             return None
 
-        print(f"- started {client.name} (wait took {time() - start} seconds)")
+        log.info(f"- started {client.name} (wait took {time() - start} seconds)")
         return client
 
     def stop_client(self, idx: int) -> None:

@@ -4,7 +4,9 @@ import os
 import runpy
 import sys
 from collections.abc import Collection
+from datetime import datetime
 from typing import Callable, Protocol, cast
+from zoneinfo import ZoneInfo
 
 JMWALLETD_PATH = "/jm/clientserver/scripts/jmwalletd.py"
 FUNDING_WALLET_RPC_PATH = "/wallet/wallet"
@@ -12,8 +14,25 @@ FUNDING_WALLET_NAME = "wallet"
 
 TRUE_VALUES = {"1", "true", "yes", "on"}
 FALSE_VALUES = {"0", "false", "no", "off"}
+PRAGUE_TZ = ZoneInfo("Europe/Prague")
+RESET_COLOR = "\033[0m"
+INFO_COLOR = "\033[36m"
 
 RpcMethod = Callable[["RegtestBitcoinCoreInterface", str, list[object] | None], object]
+
+
+def log_info(message: object) -> None:
+    timestamp = datetime.now(PRAGUE_TZ).strftime("%H:%M:%S")
+    prefix = f"INFO | {timestamp} |"
+    color_mode = os.getenv("COINJOIN_LOG_COLOR", "auto").lower()
+    use_color = color_mode in {"1", "true", "always", "yes"} or (
+        color_mode not in {"0", "false", "never", "no"}
+        and not os.getenv("NO_COLOR")
+        and sys.stdout.isatty()
+    )
+    if use_color:
+        prefix = f"{INFO_COLOR}{prefix}{RESET_COLOR}"
+    sys.stdout.write(f"{prefix} {message}\n")
 
 
 class JsonRpc(Protocol):
@@ -148,9 +167,9 @@ def main(argv: list[str] | None = None) -> int:
     enabled, jmwalletd_args = parse_args(sys.argv[1:] if argv is None else argv)
     if enabled:
         install_descriptor_regtest_fallback()
-        print("Enabled JoinMarket descriptor regtest fallback")
+        log_info("Enabled JoinMarket descriptor regtest fallback")
     else:
-        print("Disabled JoinMarket descriptor regtest fallback")
+        log_info("Disabled JoinMarket descriptor regtest fallback")
 
     sys.argv = [JMWALLETD_PATH, *jmwalletd_args]
     runpy.run_path(JMWALLETD_PATH, run_name="__main__")

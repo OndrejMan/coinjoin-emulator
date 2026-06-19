@@ -1,6 +1,8 @@
 import subprocess
 from functools import cached_property
 
+from manager import log_output as log
+
 from ..exceptions import CoinjoinEmulatorError
 from . import Driver
 
@@ -110,7 +112,7 @@ class PodmanDriver(Driver):
             exists.check_returncode()
         if exists.returncode == 0:
             self._run(["stop", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print(f"- stopped {name}")
+            log.info(f"- stopped {name}")
 
     def download(self, name: str, src_path: str, dst_path: str) -> None:
         try:

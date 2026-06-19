@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING, cast
 
+from manager import log_output as log
+
 from ...btc_node import BtcNode
 from ...exceptions import CoinjoinEmulatorError
 from ..configuration import ScenarioConfig
@@ -65,7 +67,7 @@ class JoinMarketRoundMixin:
         try:
             return client.get_balance()
         except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError) as e:
-            print(f"- waiting for {client.name} wallet balance ({e})")
+            log.warning(f"- waiting for {client.name} wallet balance ({e})")
             return 0
 
     def _client_has_confirmed_balance(
@@ -73,7 +75,7 @@ class JoinMarketRoundMixin:
     ) -> bool:
         balance = self._client_confirmed_balance(client)
         if balance < required_sats:
-            print(
+            log.info(
                 f"- waiting for JoinMarket {role} {client.name} balance "
                 f"({balance}/{required_sats} sats)"
             )
@@ -91,7 +93,7 @@ class JoinMarketRoundMixin:
             if client.type == "maker" and not client.maker_running and client.delay[0] <= self.current_block:
                 if not self._client_has_confirmed_balance(client, JOINMARKET_MAKER_MIN_SIZE_SATS, "maker"):
                     continue
-                print(f"Starting maker {client.name}")
+                log.info(f"Starting maker {client.name}")
                 client.start_maker(0, 5000, 0.00004, "sw0reloffer", JOINMARKET_MAKER_MIN_SIZE_SATS)
                 try:
                     client.get_status()
@@ -103,7 +105,7 @@ class JoinMarketRoundMixin:
             if maker.type == "maker" and maker.maker_running
         ]
         if len(running_makers) < JOINMARKET_COUNTERPARTIES:
-            print(
+            log.info(
                 f"- waiting for JoinMarket makers "
                 f"({len(running_makers)}/{JOINMARKET_COUNTERPARTIES} running)"
             )
@@ -141,5 +143,5 @@ class JoinMarketRoundMixin:
                     "start_block": self.current_block,
                     "start_chain_height": self.node.get_block_count() if self.node is not None else None,
                 })
-                print(f"Starting coinjoin {client.name}")
+                log.info(f"Starting coinjoin {client.name}")
                 break

@@ -1,6 +1,7 @@
-import sys
 from time import sleep
 from typing import TYPE_CHECKING
+
+from manager import log_output as log
 
 from ...btc_node import BtcNode
 from ...exceptions import CoinjoinEmulatorError
@@ -49,13 +50,13 @@ class JoinMarketRunnerMixin:
                     self.current_block = self.node.get_block_count() - initial_block
                     break
                 except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
-                    print("- could not get blocks".ljust(60), end="\r")
-                    print(f"Block exception: {e}", file=sys.stderr)
+                    log.warning("- could not get blocks".ljust(60), end="\r")
+                    log.error(f"Block exception: {e}")
 
             self.update_invoice_payments()
             self.update_coinjoins_joinmarket()
 
-            print(
+            log.info(
                 f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60),
                 end="\r",
             )
@@ -63,6 +64,6 @@ class JoinMarketRunnerMixin:
                 self.node.mine_block()
             sleep(JOINMARKET_LOOP_SLEEP_SECONDS)
 
-        print()
-        print("- limit reached")
+        log.blank_line()
+        log.info("- limit reached")
         self.node.mine_block(JOINMARKET_FINAL_SETTLE_BLOCKS)

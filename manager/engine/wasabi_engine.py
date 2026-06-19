@@ -3,11 +3,12 @@ import multiprocessing
 import multiprocessing.pool
 import os
 import random
-import sys
 import tempfile
 from time import sleep, time
 from traceback import print_exception
 from typing import cast
+
+from manager import log_output as log
 
 from ..exceptions import CoinjoinEmulatorError, StartupError
 from ..wasabi_backend_factory import (
@@ -61,7 +62,7 @@ class WasabiEngine(EngineBase):
         return detect_backend_architecture(self.versions)
 
     def prepare_images(self) -> None:
-        print("Preparing images")
+        log.info("Preparing images")
         self.prepare_image("btc-node")
         self.prepare_client_images()
 
@@ -135,7 +136,7 @@ class WasabiEngine(EngineBase):
             proxy=self.args.proxy,
         )
         self.backend.wait_ready()
-        print(f"- started wasabi-backend ({self.backend_architecture.value} architecture)")
+        log.info(f"- started wasabi-backend ({self.backend_architecture.value} architecture)")
 
     def start_wasabi_coordinator(self) -> None:
         """Start the Wasabi coordinator (only for split architecture)."""
@@ -164,7 +165,7 @@ class WasabiEngine(EngineBase):
             proxy=self.args.proxy,
         )
         self.coordinator.wait_ready()
-        print("- started wasabi-coordinator")
+        log.info("- started wasabi-coordinator")
 
     def start_distributor(self) -> None:
         if self.node is None:
@@ -196,9 +197,9 @@ class WasabiEngine(EngineBase):
             stop=(0, 0),
         ))
         if not self.distributor.wait_wallet(timeout=360):
-            print("- could not start distributor (application timeout)")
+            log.error("- could not start distributor (application timeout)")
             raise StartupError("Could not start distributor")
-        print("- started distributor")
+        log.info("- started distributor")
 
     def init_wasabi_client(
         self,
@@ -237,14 +238,14 @@ class WasabiEngine(EngineBase):
 
         if anon_score_target is not None and version < "2.0.3":
             anon_score_target = None
-            print(
+            log.warning(
                 f"Anon Score Target is ignored for wallet {idx} as it is curently supported only for "
                 "version 2.0.3 and newer"
             )
 
         if redcoin_isolation is not None and version < "2.0.3":
             redcoin_isolation = None
-            print(
+            log.warning(
                 f"Redcoin isolation is ignored for wallet {idx} as it is curently supported only for "
                 "version 2.0.3 and newer"
             )
@@ -278,7 +279,7 @@ class WasabiEngine(EngineBase):
                 memory=(1024 if version < "2.0.4" else 768),
             )
         except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
-            print(f"- could not start {name} ({e})")
+            log.warning(f"- could not start {name} ({e})")
             return None
 
         delay = (wallet.delay_blocks or 0, wallet.delay_rounds or 0)
@@ -294,9 +295,9 @@ class WasabiEngine(EngineBase):
 
         start = time()
         if not client.wait_wallet(timeout=120):
-            print(f"- could not start {name} (application timeout {time() - start} seconds)")
+            log.warning(f"- could not start {name} (application timeout {time() - start} seconds)")
             return None
-        print(f"- started {client.name} (wait took {time() - start} seconds)")
+        log.info(f"- started {client.name} (wait took {time() - start} seconds)")
         return cast(EmulatorClient, client)
 
     def stop_client(self, idx: int) -> None:
@@ -310,7 +311,7 @@ class WasabiEngine(EngineBase):
                     "/home/wasabi/.walletwasabi/backend/",
                     os.path.join(data_path, "wasabi-backend-2.6"),
                 )
-                print("- stored backend-2.6 logs")
+                log.info("- stored backend-2.6 logs")
 
                 try:
                     self.driver.download(
@@ -318,9 +319,9 @@ class WasabiEngine(EngineBase):
                         "/home/wasabi/.walletwasabi/coordinator/",
                         os.path.join(data_path, "wasabi-coordinator"),
                     )
-                    print("- stored coordinator logs")
+                    log.info("- stored coordinator logs")
                 except (CoinjoinEmulatorError, RuntimeError, OSError):
-                    print("- could not store coordinator logs")
+                    log.warning("- could not store coordinator logs")
             else:
                 # Store logs from legacy backend
                 self.driver.download(
@@ -328,9 +329,9 @@ class WasabiEngine(EngineBase):
                     "/home/wasabi/.walletwasabi/backend/",
                     os.path.join(data_path, "wasabi-backend"),
                 )
-                print("- stored backend logs")
+                log.info("- stored backend logs")
         except (CoinjoinEmulatorError, RuntimeError, OSError):
-            print("- could not store backend logs")
+            log.warning("- could not store backend logs")
 
     def start_coinjoin(self, client: EmulatorClient) -> None:
         sleep(random.random() / 10)
@@ -341,9 +342,9 @@ class WasabiEngine(EngineBase):
         cast(WasabiClientBase, client).stop_coinjoin()
 
     def update_coinjoins(self) -> None:
-        print("- updating coinjoins...".ljust(60), end="\r")
+        log.debug("- updating coinjoins...".ljust(60), end="\r")
         def start_condition(client: EmulatorClient) -> bool:
-            print(
+            log.debug(
                 f"Checking client {client.name} with delay {client.delay} and stop {client.stop} "
                 f"against current block {self.current_block} and round {self.current_round}"
             )
@@ -359,24 +360,24 @@ class WasabiEngine(EngineBase):
 
         start, stop = [], []
         for client in self.clients:
-            print(f"Client {client.name} is currently ")
+            log.debug(f"Client {client.name} is currently ")
             if start_condition(client):
                 start.append(client)
             else:
                 stop.append(client)
 
-        print(f"- {len(start)} coinjoins to start, {len(stop)} coinjoins to stop".ljust(60), end="\r")
+        log.debug(f"- {len(start)} coinjoins to start, {len(stop)} coinjoins to stop".ljust(60), end="\r")
         with multiprocessing.pool.ThreadPool() as pool:
             pool.starmap(self.start_coinjoin, ((client,) for client in start))
 
-        print("- coinjoins updated".ljust(60), end="\r")
+        log.debug("- coinjoins updated".ljust(60), end="\r")
         with multiprocessing.pool.ThreadPool() as pool:
             pool.starmap(self.stop_coinjoin, ((client,) for client in stop))
 
-        print("- coinjoins updated".ljust(60), end="\r")
+        log.debug("- coinjoins updated".ljust(60), end="\r")
 
     def run_engine(self) -> None:
-        print("Running simulation")
+        log.info("Running simulation")
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         initial_block = self.node.get_block_count()
@@ -388,26 +389,26 @@ class WasabiEngine(EngineBase):
                     self.current_round = self._get_current_round()
                     break
                 except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError) as e:
-                    print("- could not get rounds".ljust(60), end="\r")
-                    print(f"Round exception: {e}", file=sys.stderr)
+                    log.warning("- could not get rounds".ljust(60), end="\r")
+                    log.error(f"Round exception: {e}")
 
             for _ in range(3):
                 try:
                     self.current_block = self.node.get_block_count() - initial_block
                     break
                 except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
-                    print("- could not get blocks".ljust(60), end="\r")
-                    print(f"Block exception: {e}", file=sys.stderr)
+                    log.warning("- could not get blocks".ljust(60), end="\r")
+                    log.error(f"Block exception: {e}")
 
             self.update_invoice_payments()
             self.update_coinjoins()
-            print(
+            log.info(
                 f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60),
                 end="\r",
             )
             sleep(1)
-        print()
-        print("- limit reached")
+        log.blank_line()
+        log.info("- limit reached")
 
     def _get_current_round(self) -> int:
         if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:

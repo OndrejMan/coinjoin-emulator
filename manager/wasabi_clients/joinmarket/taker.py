@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 
 import requests
 
+from manager import log_output as log
+
 from ...exceptions import RpcError
 from .types import STOP_SERVICE_NOT_RUNNING_MESSAGE, JsonDict, is_stop_service_not_running_error
 
@@ -94,7 +96,7 @@ class JoinMarketTakerMixin:
             response = self.stop_maker()
             self.maker_running = False
             return response
-        print("No coinjoin in process")
+        log.info("No coinjoin in process")
         return True
 
     def stop_taker(self) -> JsonDict | bool:
@@ -104,7 +106,7 @@ class JoinMarketTakerMixin:
             return self._rpc(method, endpoint)
         except RpcError as e:
             if is_stop_service_not_running_error(e):
-                print(STOP_SERVICE_NOT_RUNNING_MESSAGE)
+                log.info(STOP_SERVICE_NOT_RUNNING_MESSAGE)
                 return True
             raise
 
@@ -114,10 +116,10 @@ class JoinMarketTakerMixin:
             for address, amount in addressed_fundings:
                 result = self.simple_send(destination_address=address, amount_sats=amount)
                 results.append(result)
-                print(f"- sent {amount} sats to {address}")
+                log.info(f"- sent {amount} sats to {address}")
                 sleep(5)  # The btc node needs time to process the transaction
         except (requests.exceptions.RequestException, RpcError, TimeoutError, KeyError, TypeError, ValueError) as e:
-            print(f"- error during fund distribution: {e}")
+            log.error(f"- error during fund distribution: {e}")
             raise
         return results
 
@@ -149,7 +151,7 @@ class JoinMarketTakerMixin:
                 response = self._rpc(method, endpoint, json_data=json_data)
                 return response
             except (requests.exceptions.RequestException, RpcError, TimeoutError, KeyError, TypeError, ValueError) as e:
-                print(e)
+                log.warning(e)
                 sleep(2)
 
         raise TimeoutError("Failed to send funds, attempt timed out.")

@@ -1,3 +1,4 @@
+from ... import log_output as log
 from ...btc_node import BtcNode
 from ..engine_base import BTC
 
@@ -11,14 +12,14 @@ class JoinMarketFundingMixin:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
 
-        print(
+        log.info(
             f"- funding {len(addressed_invoices)} JoinMarket invoices directly "
             f"(block {self.current_block}, round {self.current_round})"
         )
         for address, amount_sats in addressed_invoices:
             self.node.fund_address(address, amount_sats / BTC)
-            print(f"- funded {amount_sats} sats to {address}")
+            log.info(f"- funded {amount_sats} sats to {address}")
 
         if addressed_invoices:
             self.node.mine_block()
-            print("- confirmed JoinMarket invoice funding")
+            log.info("- confirmed JoinMarket invoice funding")

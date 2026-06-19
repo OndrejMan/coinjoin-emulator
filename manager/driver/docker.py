@@ -7,6 +7,8 @@ from typing import Protocol, cast
 
 import docker
 
+from manager import log_output as log
+
 from . import Driver
 
 
@@ -88,7 +90,7 @@ class DockerDriver(Driver):
                 break
             except docker.errors.APIError as error:
                 if attempt == 0 and self._is_name_conflict(error):
-                    print(f"- removing stale container {name} after Docker name conflict")
+                    log.warning(f"- removing stale container {name} after Docker name conflict")
                     self._remove_existing_container(name)
                     time.sleep(0.5)
                     continue
@@ -100,7 +102,7 @@ class DockerDriver(Driver):
             container = self.client.containers.get(name)
             container.stop()
             container.remove(force=True)
-            print(f"- stopped {name}")
+            log.info(f"- stopped {name}")
         except docker.errors.NotFound:
             pass
 

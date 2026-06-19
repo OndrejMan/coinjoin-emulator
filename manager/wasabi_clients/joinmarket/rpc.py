@@ -7,6 +7,8 @@ import requests
 import urllib3
 from urllib3.exceptions import InsecureRequestWarning
 
+from manager import log_output as log
+
 from ...exceptions import RpcError
 from .types import JoinmarketConflictException, JsonDict
 
@@ -43,8 +45,9 @@ class JoinMarketRpcMixin:
         if response.status_code == 409:
             raise JoinmarketConflictException(f"Error {response.status_code}: {response.text}", response)
         try:
-            print(response.json())
-            error_message = response.json().get("message", "Unknown error")
+            response_json = response.json()
+            log.error(response_json)
+            error_message = response_json.get("message", "Unknown error")
         except json.JSONDecodeError:
             error_message = response.text
         raise RpcError(f"Error {response.status_code}: {error_message}")

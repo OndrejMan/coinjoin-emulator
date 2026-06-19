@@ -6,6 +6,7 @@ from collections.abc import Callable
 from types import SimpleNamespace
 from typing import cast
 
+from manager import log_output as log
 from manager.application import DEFAULT_BTC_DOWNLOAD_PATH, run_engine
 from manager.commands import genscen
 from manager.driver import Driver
@@ -226,7 +227,7 @@ def dispatch(
     try:
         driver = driver_factory(args)
     except ValueError as error:
-        print(error)
+        log.error(error)
         return 1
 
     if args.command == "clean":
@@ -236,7 +237,7 @@ def dispatch(
     try:
         engine = engine_factory(args, driver)
     except ValueError as error:
-        print(error)
+        log.error(error)
         return 1
 
     engine.load_scenario()
@@ -248,7 +249,7 @@ def dispatch(
         case "run":
             return engine_runner(args, driver, engine)
         case _:
-            print(f"Unknown command '{args.command}'")
+            log.error(f"Unknown command '{args.command}'")
             return 1
 
 

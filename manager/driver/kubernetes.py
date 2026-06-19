@@ -8,6 +8,8 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from kubernetes.stream import stream
 
+from manager import log_output as log
+
 from . import Driver
 
 
@@ -250,9 +252,9 @@ class KubernetesDriver(Driver):
         while resp.is_open():
             resp.update(timeout=1)
             if resp.peek_stdout():
-                print(f"STDOUT: {resp.read_stdout()}")
+                log.debug(f"STDOUT: {resp.read_stdout()}")
             if resp.peek_stderr():
-                print(f"STDERR: {resp.read_stderr()}")
+                log.error(f"STDERR: {resp.read_stderr()}")
             if commands:
                 c = commands.pop(0)
                 resp.write_stdin(c)

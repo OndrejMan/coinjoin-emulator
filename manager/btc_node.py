@@ -4,6 +4,8 @@ from typing import cast
 
 import requests
 
+from manager import log_output as log
+
 from .exceptions import RpcError
 
 WALLET = "wallet"
@@ -125,9 +127,9 @@ class BtcNode:
             error = response_body.get("error")
 
         if error is not None:
-            print(response_body)
+            log.error(response_body)
             raise RpcError(str(error))
-        print(response_body)
+        log.debug(response_body)
 
     def _post_create_wallet_request(
         self, wallet: str, descriptors: bool, disable_private_keys: bool = False

@@ -9,6 +9,8 @@ import shutil
 from time import sleep
 from typing import Protocol
 
+from manager import log_output as log
+
 from ..btc_node import BtcNode
 from ..exceptions import CoinjoinEmulatorError, RpcError
 from ..utils import batched
@@ -147,26 +149,26 @@ class EngineBase:
             local_build = self.local_build_requested(name)
         if local_build:
             self.driver.build(image_name, f"./containers/{name}" if path is None else path)
-            print(f"- image built {image_name}")
+            log.info(f"- image built {image_name}")
         elif self.driver.has_image(image_name):
             if self.args.force_rebuild:
                 if self.args.image_prefix or has_override:
                     self.driver.pull(image_name)
-                    print(f"- image pulled {image_name}")
+                    log.info(f"- image pulled {image_name}")
                 else:
                     self.driver.build(name, f"./containers/{name}" if path is None else path)
-                    print(f"- image rebuilt {image_name}")
+                    log.info(f"- image rebuilt {image_name}")
             else:
-                print(f"- image reused {image_name}")
+                log.info(f"- image reused {image_name}")
         elif self.args.image_prefix or has_override:
             self.driver.pull(image_name)
-            print(f"- image pulled {image_name}")
+            log.info(f"- image pulled {image_name}")
         else:
             self.driver.build(name, f"./containers/{name}" if path is None else path)
-            print(f"- image built {image_name}")
+            log.info(f"- image built {image_name}")
 
     def start_infrastructure(self) -> None:
-        print("Starting infrastructure")
+        log.info("Starting infrastructure")
         self.start_btc_node()
         self.start_engine_infrastructure()
         self.start_distributor()
@@ -175,7 +177,7 @@ class EngineBase:
         node_volumes = None
         if self.args.btcFolder:
             absolute_host_path = os.path.abspath(self.args.btcFolder)
-            print(f"- mounting external btc-data from: {absolute_host_path}")
+            log.info(f"- mounting external btc-data from: {absolute_host_path}")
             node_volumes = {
                 absolute_host_path: {
                     'bind': '/home/bitcoin/data', 
@@ -183,9 +185,9 @@ class EngineBase:
                 }
             }
         else:
-            print("- no btcFolder provided; using internal container storage")
+            log.info("- no btcFolder provided; using internal container storage")
 
-        print("- starting btc-node")
+        log.info("- starting btc-node")
         btc_node_command = None
         if self.args.btc_node_arg:
             btc_node_command = ["./run.sh", *self.args.btc_node_arg]
@@ -199,16 +201,16 @@ class EngineBase:
             command=btc_node_command,
         )
 
-        print("- middle btc-node")
+        log.debug("- middle btc-node")
         self.node = BtcNode(
             host=btc_node_ip if self.args.proxy else self.args.control_ip,
             port=18443 if self.args.proxy else btc_node_ports[18443],
             internal_ip=btc_node_ip,
             proxy=self.args.proxy,
         )
-        print("- waiting btc-node")
+        log.info("- waiting btc-node")
         self.node.wait_ready()
-        print("- started btc-node")
+        log.info("- started btc-node")
 
     def start_engine_infrastructure(self) -> None:
         raise NotImplementedError
@@ -226,7 +228,7 @@ class EngineBase:
         raise NotImplementedError
 
     def start_clients(self, wallets: list[WalletConfig]) -> None:
-        print("Starting clients")
+        log.info("Starting clients")
         with multiprocessing.pool.ThreadPool() as pool:
             new_clients = pool.starmap(self.start_client, enumerate(wallets, start=len(self.clients)))
 
@@ -243,7 +245,7 @@ class EngineBase:
 
                 if not restart_idx:
                     break
-                print(f"- failed to start {len(restart_idx)} clients; retrying ...")
+                log.warning(f"- failed to start {len(restart_idx)} clients; retrying ...")
                 for idx in restart_idx:
                     self.stop_client(idx)
                 sleep(60)
@@ -256,7 +258,7 @@ class EngineBase:
                         new_clients[restart_idx[idx]] = client
             else:
                 new_clients = [client for client in new_clients if client is not None]
-                print(f"- failed to start {len(wallets) - len(new_clients)} clients; continuing ...")
+                log.warning(f"- failed to start {len(wallets) - len(new_clients)} clients; continuing ...")
         self.clients.extend(client for client in new_clients if client is not None)
 
         if len(new_clients) == 0 and len(wallets) > 0:
@@ -266,7 +268,7 @@ class EngineBase:
         pass
 
     def fund_distributor(self, btc_amount: int | float) -> None:
-        print("Funding distributor")
+        log.info("Funding distributor")
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         if self.distributor is None:
@@ -280,7 +282,7 @@ class EngineBase:
 
         while (balance := self.distributor.get_balance()) < btc_amount * BTC:
             sleep(1)
-        print(f"- funded (current balance {balance / BTC:.8f} BTC)")
+        log.info(f"- funded (current balance {balance / BTC:.8f} BTC)")
 
     def store_client_logs(self, client: EmulatorClient, data_path: str) -> None:
         sleep(random.random() * 3)
@@ -288,24 +290,24 @@ class EngineBase:
         os.mkdir(client_path)
         with open(os.path.join(client_path, "coins.json"), "w", encoding="utf-8") as f:
             json.dump(client.list_coins(), f, indent=2)
-            print(f"- stored {client.name} coins")
+            log.info(f"- stored {client.name} coins")
         with open(
             os.path.join(client_path, "unspent_coins.json"), "w", encoding="utf-8"
         ) as f:
             json.dump(client.list_unspent_coins(), f, indent=2)
-            print(f"- stored {client.name} unspent coins")
+            log.info(f"- stored {client.name} unspent coins")
         with open(os.path.join(client_path, "keys.json"), "w", encoding="utf-8") as f:
             json.dump(client.list_keys(), f, indent=2)
-            print(f"- stored {client.name} keys")
+            log.info(f"- stored {client.name} keys")
         try:
             self.driver.download(client.name, self.log_src_path, client_path)
 
-            print(f"- stored {client.name} logs")
+            log.info(f"- stored {client.name} logs")
         except (CoinjoinEmulatorError, OSError):
-            print(f"- could not store {client.name} logs")
+            log.warning(f"- could not store {client.name} logs")
 
     def store_logs(self) -> None:
-        print("Storing logs")
+        log.info("Storing logs")
         time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
         experiment_path = f"./logs/{time}_{self.scenario.name}"
         data_path = os.path.join(experiment_path, "data")
@@ -315,7 +317,7 @@ class EngineBase:
             os.path.join(experiment_path, "scenario.json"), "w", encoding="utf-8"
         ) as f:
             json.dump(self.scenario.to_dict(), f, indent=2)
-            print("- stored scenario")
+            log.info("- stored scenario")
 
         stored_blocks = 0
         node_path = os.path.join(data_path, "btc-node")
@@ -332,7 +334,7 @@ class EngineBase:
             ) as f:
                 json.dump(block, f, indent=2)
             stored_blocks += 1
-        print(f"- stored {stored_blocks} blocks")
+        log.info(f"- stored {stored_blocks} blocks")
 
         self.store_engine_logs(data_path)
 
@@ -341,27 +343,27 @@ class EngineBase:
             self.store_client_logs(client, data_path)
 
         shutil.make_archive(experiment_path, "zip", *os.path.split(experiment_path))
-        print("- zip archive created")
+        log.info("- zip archive created")
 
     def store_engine_logs(self, data_path: str) -> None:
         raise NotImplementedError
 
     def stop_coinjoins(self) -> None:
-        print("Stopping coinjoins")
+        log.info("Stopping coinjoins")
         for client in self.clients:
             client.stop_coinjoin()
-            print(f"- stopped mixing {client.name}")
+            log.info(f"- stopped mixing {client.name}")
 
     def update_invoice_payments(self) -> None:
         due = list(filter(lambda x: x[0] <= self.current_block and x[1] <= self.current_round, self.invoices.keys()))
         for i in due:
             self.pay_invoices(self.invoices.get(i, []))
             self.invoices.pop(i, None)
-            print(f"- paid invoices for block {i[0]} and round {i[1]}")
-        print(f"- {len(self.invoices)} invoices still pending")
+            log.info(f"- paid invoices for block {i[0]} and round {i[1]}")
+        log.info(f"- {len(self.invoices)} invoices still pending")
 
     def prepare_invoices(self, wallets: list[WalletConfig]) -> None:
-        print("Preparing invoices")
+        log.info("Preparing invoices")
         client_invoices = [(client, wallet.funds) for client, wallet in zip(self.clients, wallets)]
 
         for client, funds in client_invoices:
@@ -385,10 +387,10 @@ class EngineBase:
         for addressed_invoices in self.invoices.values():
             random.shuffle(addressed_invoices)
 
-        print(f"- prepared {sum(map(len, self.invoices.values()))} invoices")
+        log.info(f"- prepared {sum(map(len, self.invoices.values()))} invoices")
 
     def pay_invoices(self, addressed_invoices: list[tuple[str, int]]) -> None:
-        print(
+        log.info(
             f"- paying {len(addressed_invoices)} invoices "
             f"(batch size {BATCH_SIZE}, block {self.current_block}, round {self.current_round})"
         )
@@ -399,30 +401,30 @@ class EngineBase:
                         raise RuntimeError("Distributor is not initialized")
                     result = self.distributor.send(list(batch))
                     if str(result) == "timeout" or result is False or result is None:
-                        print("- transaction timeout")
+                        log.warning("- transaction timeout")
                         continue
-                    print(f"- transaction sent with txid {result}")
+                    log.info(f"- transaction sent with txid {result}")
                     break
                 except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
                     # https://github.com/zkSNACKs/WalletWasabi/issues/12764
                     if "Bad Request" in str(e):
-                        print("- transaction error (bad request)")
+                        log.warning("- transaction error (bad request)")
                     else:
-                        print(f"- transaction error ({e})")
+                        log.error(f"- transaction error ({e})")
             else:
-                print("- invoice payment failed")
+                log.error("- invoice payment failed")
                 raise RpcError("Invoice payment failed")
-            print(f"- paid batch of {len(batch)} invoices")
+            log.info(f"- paid batch of {len(batch)} invoices")
 
     def run(self) -> None:
-        print(f"=== Scenario {self.scenario.name} ===")
+        log.info(f"=== Scenario {self.scenario.name} ===")
         self.prepare_images()
         self.start_infrastructure()
         self.fund_distributor(500)
         self.start_clients(self.scenario.wallets)
         self.validate_clients()
         self.prepare_invoices(self.scenario.wallets)
-        print("Running simulation")
+        log.info("Running simulation")
         self.run_engine()
 
     def run_engine(self) -> None:

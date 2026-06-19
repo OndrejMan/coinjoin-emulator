@@ -8,6 +8,8 @@ from typing import Callable, cast
 
 import numpy.random
 
+from manager import log_output as log
+
 from ..engine.configuration import (
     FundConfig,
     ScenarioConfig,
@@ -135,7 +137,7 @@ def prepare_skip_rounds(args: argparse.Namespace) -> SkipRounds | None:
         return None
     if args.skip_rounds.startswith("random"):
         if args.stop_round == 0:
-            print("- cannot use random skip rounds with no stop round")
+            log.error("- cannot use random skip rounds with no stop round")
             sys.exit(1)
 
         fraction = 2 / 3
@@ -143,9 +145,9 @@ def prepare_skip_rounds(args: argparse.Namespace) -> SkipRounds | None:
             try:
                 fraction = float(args.skip_rounds.split("[")[1].split("]")[0])
             except IndexError:
-                print("- random skip rounds fraction parsing failed")
+                log.error("- random skip rounds fraction parsing failed")
                 sys.exit(1)
-        print(f"- skipping {fraction * 100:.2f}% of rounds")
+        log.info(f"- skipping {fraction * 100:.2f}% of rounds")
 
         return lambda _: sorted(
             map(
@@ -164,7 +166,7 @@ def prepare_skip_rounds(args: argparse.Namespace) -> SkipRounds | None:
             else []
         )
     except ValueError:
-        print("- invalid skip rounds list")
+        log.error("- invalid skip rounds list")
         sys.exit(1)
 
 
@@ -277,11 +279,11 @@ def prepare_wallet(
 
 
 def handler(args: argparse.Namespace) -> None:
-    print("Generating scenario...")
+    log.info("Generating scenario...")
     
     distribution = prepare_distribution(args.distribution)
     if not distribution:
-        print("- invalid distribution")
+        log.error("- invalid distribution")
         sys.exit(1)
 
     skip_rounds = prepare_skip_rounds(args)
@@ -311,17 +313,17 @@ def handler(args: argparse.Namespace) -> None:
             if isinstance(fund, int):
                 total_funds += fund
             # FundConfig objects would have fund.value, but genscen only creates int funds
-    print(f"- requires {total_funds / 100_000_000:0.8f} BTC")
+    log.info(f"- requires {total_funds / 100_000_000:0.8f} BTC")
 
     os.makedirs(args.out_dir, exist_ok=True)
     if os.path.exists(f"{args.out_dir}/{scenario.name}.json") and not args.force:
-        print(f"- file {args.out_dir}/{scenario.name}.json already exists")
+        log.error(f"- file {args.out_dir}/{scenario.name}.json already exists")
         sys.exit(1)
 
     with open(f"{args.out_dir}/{scenario.name}.json", "w", encoding="utf-8") as f:
         json.dump(scenario.to_dict(), f, indent=2)
 
-    print(f"- saved to {args.out_dir}/{scenario.name}.json")
+    log.info(f"- saved to {args.out_dir}/{scenario.name}.json")
 
 
 if __name__ == "__main__":
