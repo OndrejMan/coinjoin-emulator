@@ -1,6 +1,10 @@
+import os
+import tempfile
 import unittest
+import zipfile
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from pathlib import Path
 
 import requests
 
@@ -141,6 +145,33 @@ class EngineBaseTest(unittest.TestCase):
 
         unavailable_client.stop_coinjoin.assert_called_once_with()
         healthy_client.stop_coinjoin.assert_called_once_with()
+
+    def test_store_logs_writes_only_to_emulator_artifact_directory(self) -> None:
+        engine = MinimalEngine(self.engine_args(), Mock(), "/tmp")
+        engine.node = Mock()
+        engine.node.get_block_count.return_value = 1
+        engine.node.get_block_hash.return_value = "block-hash"
+        engine.node.get_block_info.return_value = {"height": 0, "tx": []}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            previous_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with patch("manager.engine.engine_base.datetime.datetime") as datetime_mock:
+                    datetime_mock.now.return_value.strftime.return_value = "2026-06-20_18-10"
+                    engine.store_logs()
+            finally:
+                os.chdir(previous_cwd)
+
+            run_dir = Path(tmpdir) / "logs" / "2026-06-20_18-10_test"
+            emulator_dir = run_dir / "coinjoin_emulator_data"
+            self.assertTrue((emulator_dir / "scenario.json").is_file())
+            self.assertTrue((emulator_dir / "data" / "btc-node" / "block_0.json").is_file())
+            archive = emulator_dir / "emulation_logs.zip"
+            self.assertTrue(archive.is_file())
+            self.assertFalse((run_dir / "scenario.json").exists())
+            with zipfile.ZipFile(archive) as contents:
+                self.assertIn("coinjoin_emulator_data/scenario.json", contents.namelist())
 
 
 if __name__ == "__main__":

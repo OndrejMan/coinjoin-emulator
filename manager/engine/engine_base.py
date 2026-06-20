@@ -309,7 +309,8 @@ class EngineBase:
     def store_logs(self) -> None:
         log.info("Storing logs")
         time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
-        experiment_path = f"./logs/{time}_{self.scenario.name}"
+        run_path = f"./logs/{time}_{self.scenario.name}"
+        experiment_path = os.path.join(run_path, "coinjoin_emulator_data")
         data_path = os.path.join(experiment_path, "data")
         os.makedirs(data_path)
 
@@ -342,7 +343,9 @@ class EngineBase:
         for client in self.clients:
             self.store_client_logs(client, data_path)
 
-        shutil.make_archive(experiment_path, "zip", *os.path.split(experiment_path))
+        archive_base = os.path.join(run_path, ".emulation_logs")
+        archive_path = shutil.make_archive(archive_base, "zip", run_path, "coinjoin_emulator_data")
+        os.replace(archive_path, os.path.join(experiment_path, "emulation_logs.zip"))
         log.info("- zip archive created")
 
     def store_engine_logs(self, data_path: str) -> None:
