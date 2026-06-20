@@ -30,6 +30,11 @@ override-dependencies = [
     "urllib3<2",
 ]
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: runs the emulator against Docker and may take several minutes",
+]
+
 [tool.pylint.main]
 fail-under = 10
 ignore = ["CVS", ".venv", ".venv-k3d", "env"]

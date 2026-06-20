@@ -351,8 +351,14 @@ class EngineBase:
     def stop_coinjoins(self) -> None:
         log.info("Stopping coinjoins")
         for client in self.clients:
-            client.stop_coinjoin()
-            log.info(f"- stopped mixing {client.name}")
+            try:
+                client.stop_coinjoin()
+            except (CoinjoinEmulatorError, OSError, TypeError, ValueError) as error:
+                # A failed run can leave a client pod unavailable. Cleanup is
+                # best-effort and must not hide the failure that initiated it.
+                log.warning(f"- could not stop mixing {client.name}: {error}")
+            else:
+                log.info(f"- stopped mixing {client.name}")
 
     def update_invoice_payments(self) -> None:
         due = list(filter(lambda x: x[0] <= self.current_block and x[1] <= self.current_round, self.invoices.keys()))

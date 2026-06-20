@@ -43,7 +43,8 @@ class WasabiClientBase:
         if self.version < "2.0.4":
             wallet = False
 
-        for _ in range(repeat):
+        last_error: requests.exceptions.RequestException | None = None
+        for attempt in range(repeat):
             try:
                 response = requests.post(
                     f"http://{self.host}:{self.port}/{(wallet_name or WALLET_NAME) if wallet else ''}",
@@ -51,13 +52,18 @@ class WasabiClientBase:
                     proxies={"http": self.proxy},
                     timeout=timeout,
                 )
-            except requests.exceptions.Timeout:
+            except requests.exceptions.RequestException as error:
+                last_error = error
+                if attempt + 1 < repeat:
+                    sleep(0.1)
                 continue
             if "error" in response.json():
                 raise RpcError(str(response.json()["error"]))
             if "result" in response.json():
                 return response.json()["result"]
             return None
+        if last_error is not None:
+            raise last_error
         return "timeout"
 
     def get_status(self) -> object:
@@ -78,7 +84,9 @@ class WasabiClientBase:
             "method": "getnewaddress",
             "params": ["label"],
         }
-        res = cast(dict[str, object], self._rpc(request))["address"]
+        # Allocating an address is safe to retry: a lost response can at most leave an
+        # unused address in the wallet, unlike retrying a payment or a CoinJoin action.
+        res = cast(dict[str, object], self._rpc(request, repeat=30))["address"]
         if not isinstance(res, str):
             raise TypeError(f"Unexpected address response: {res}")
         return res
