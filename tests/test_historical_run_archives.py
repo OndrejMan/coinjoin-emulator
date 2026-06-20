@@ -18,7 +18,6 @@ import pytest
 
 from manager.engine.configuration import ScenarioConfig
 
-
 DEFAULT_TESTING_DATA_DIR = Path(__file__).resolve().parents[2] / "testing_data"
 WALLET_ARTIFACTS = ("coins.json", "unspent_coins.json", "keys.json")
 
@@ -93,7 +92,9 @@ def test_historical_run_archives_follow_the_emulator_artifact_contract(tmp_path:
                 assert isinstance(block, dict), f"{archive_path.name}: block {height} is not an object"
                 assert block.get("height") == height, f"{archive_path.name}: block {height} has the wrong height"
                 assert isinstance(block.get("hash"), str) and block["hash"], f"{archive_path.name}: invalid block hash"
-                assert isinstance(block.get("tx"), list) and block["tx"], f"{archive_path.name}: block {height} has no tx list"
+                assert isinstance(block.get("tx"), list) and block["tx"], (
+                    f"{archive_path.name}: block {height} has no tx list"
+                )
                 if previous_hash is not None:
                     assert block.get("previousblockhash") == previous_hash, (
                         f"{archive_path.name}: block {height} does not link to its predecessor"
@@ -146,7 +147,9 @@ def test_historical_run_archives_have_a_consistent_transaction_and_wallet_view()
                         spent_outpoints.add(outpoint)
 
                     transaction_outputs = transaction.get("vout")
-                    assert isinstance(transaction_outputs, list), f"{archive_path.name}: transaction {txid} has no output list"
+                    assert isinstance(transaction_outputs, list), (
+                        f"{archive_path.name}: transaction {txid} has no output list"
+                    )
                     for index, output in enumerate(transaction_outputs):
                         assert isinstance(output, dict), f"{archive_path.name}: malformed output in {txid}"
                         outputs[(txid, index)] = output
@@ -165,7 +168,12 @@ def test_historical_run_archives_have_a_consistent_transaction_and_wallet_view()
                 coin_outpoints: set[tuple[str, int]] = set()
                 for coin in coins:
                     assert isinstance(coin, dict), f"{archive_path.name}: malformed wallet coin"
-                    outpoint = (coin.get("txid"), coin.get("index"))
+                    txid = coin.get("txid")
+                    coin_index = coin.get("index")
+                    assert isinstance(txid, str) and isinstance(coin_index, int), (
+                        f"{archive_path.name}: wallet coin has an invalid outpoint"
+                    )
+                    outpoint = (txid, coin_index)
                     assert outpoint not in coin_outpoints, f"{archive_path.name}: duplicate wallet coin {outpoint}"
                     coin_outpoints.add(outpoint)
                     key = keys_by_path.get(coin.get("keyPath"))

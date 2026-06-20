@@ -14,6 +14,16 @@ dependencies = [
     "urllib3<2",
 ]
 
+[project.scripts]
+lint = "lint:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["lint"]
+
 [dependency-groups]
 dev = [
     "mypy",
@@ -25,7 +35,6 @@ dev = [
 ]
 
 [tool.uv]
-package = false
 override-dependencies = [
     "urllib3<2",
 ]
@@ -38,6 +47,7 @@ markers = [
 [tool.pylint.main]
 fail-under = 10
 ignore = ["CVS", ".venv", ".venv-k3d", "env"]
+persistent = false
 py-version = "3.11"
 
 [tool.pylint.design]

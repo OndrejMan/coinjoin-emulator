@@ -16,7 +16,6 @@ from zipfile import ZipFile
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = PROJECT_ROOT.parent
 DEFAULT_ARCHIVE = "2025-04-02_12-15_dynamic-0.0paranoid-0seed--wallets--50.zip"

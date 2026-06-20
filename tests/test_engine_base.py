@@ -2,11 +2,11 @@ import os
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
-from pathlib import Path
 
-import requests
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from manager.engine.configuration import ScenarioConfig, WalletConfig
 from manager.engine.engine_base import EngineBase
@@ -135,7 +135,7 @@ class EngineBaseTest(unittest.TestCase):
     def test_stop_coinjoins_continues_when_a_client_connection_is_reset(self) -> None:
         unavailable_client = Mock()
         unavailable_client.name = "wasabi-client-000"
-        unavailable_client.stop_coinjoin.side_effect = requests.exceptions.ConnectionError("connection reset")
+        unavailable_client.stop_coinjoin.side_effect = RequestsConnectionError("connection reset")
         healthy_client = Mock()
         healthy_client.name = "wasabi-client-001"
         engine = MinimalEngine(Mock(), Mock(), "/tmp")

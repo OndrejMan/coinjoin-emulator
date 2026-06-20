@@ -1,7 +1,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
-import requests
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from manager.wasabi_clients.wasabi_client_base import WasabiClientBase
 
@@ -18,7 +18,7 @@ def test_get_new_address_retries_connection_reset() -> None:
     with (
         patch(
             "manager.wasabi_clients.wasabi_client_base.requests.post",
-            side_effect=[requests.exceptions.ConnectionError("connection reset"), response()],
+            side_effect=[RequestsConnectionError("connection reset"), response()],
         ) as post,
         patch("manager.wasabi_clients.wasabi_client_base.sleep"),
     ):
@@ -33,10 +33,10 @@ def test_get_new_address_reraises_after_retry_budget_is_exhausted() -> None:
     with (
         patch(
             "manager.wasabi_clients.wasabi_client_base.requests.post",
-            side_effect=requests.exceptions.ConnectionError("connection reset"),
+            side_effect=RequestsConnectionError("connection reset"),
         ) as post,
         patch("manager.wasabi_clients.wasabi_client_base.sleep"),
-        pytest.raises(requests.exceptions.ConnectionError, match="connection reset"),
+        pytest.raises(RequestsConnectionError, match="connection reset"),
     ):
         client.get_new_address()
 

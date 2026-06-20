@@ -2,6 +2,8 @@ import io
 import re
 import sys
 
+import pytest
+
 from manager.log_output import structured_print
 
 
@@ -27,7 +29,7 @@ def test_structured_print_marks_stderr_as_error() -> None:
     )
 
 
-def test_structured_print_can_force_color(monkeypatch) -> None:
+def test_structured_print_can_force_color(monkeypatch: pytest.MonkeyPatch) -> None:
     stream = io.StringIO()
     monkeypatch.setenv("COINJOIN_LOG_COLOR", "always")
 

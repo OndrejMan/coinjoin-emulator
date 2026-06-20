@@ -4,6 +4,7 @@ from time import sleep, time
 from typing import cast
 
 import requests
+from requests import RequestException
 
 from ..exceptions import RpcError
 
@@ -43,7 +44,7 @@ class WasabiClientBase:
         if self.version < "2.0.4":
             wallet = False
 
-        last_error: requests.exceptions.RequestException | None = None
+        last_error: RequestException | None = None
         for attempt in range(repeat):
             try:
                 response = requests.post(

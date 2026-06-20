@@ -38,7 +38,7 @@ WARNING_MARKERS = (
 
 
 def install_structured_print_logger() -> None:
-    builtins.print = structured_print
+    builtins.print = structured_print  # type: ignore[assignment]  # builtins.print is typed as an overload.
 
 
 def debug(message: object, *, end: str = "\n", flush: bool = False) -> None:
