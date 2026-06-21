@@ -320,12 +320,13 @@ class EngineBase:
             json.dump(self.scenario.to_dict(), f, indent=2)
             log.info("- stored scenario")
 
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        tip_height = self.node.get_block_count()
         stored_blocks = 0
         node_path = os.path.join(data_path, "btc-node")
         os.mkdir(node_path)
-        if self.node is None:
-            raise RuntimeError("Bitcoin node is not initialized")
-        while stored_blocks < self.node.get_block_count():
+        while stored_blocks <= tip_height:
             block_hash = self.node.get_block_hash(stored_blocks)
             block = self.node.get_block_info(block_hash)
             with open(

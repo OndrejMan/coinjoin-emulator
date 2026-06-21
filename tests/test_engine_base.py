@@ -167,6 +167,8 @@ class EngineBaseTest(unittest.TestCase):
             emulator_dir = run_dir / "coinjoin_emulator_data"
             self.assertTrue((emulator_dir / "scenario.json").is_file())
             self.assertTrue((emulator_dir / "data" / "btc-node" / "block_0.json").is_file())
+            self.assertTrue((emulator_dir / "data" / "btc-node" / "block_1.json").is_file())
+            self.assertEqual(engine.node.get_block_hash.call_count, 2)
             archive = emulator_dir / "emulation_logs.zip"
             self.assertTrue(archive.is_file())
             self.assertFalse((run_dir / "scenario.json").exists())
