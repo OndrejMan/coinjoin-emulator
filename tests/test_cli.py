@@ -5,6 +5,7 @@ import pytest
 
 from manager import cli
 from manager.application import DEFAULT_BTC_DOWNLOAD_PATH
+from manager.cli import DEFAULT_RUN_TIMEZONE
 
 
 def command_args(command: str, **overrides: object) -> SimpleNamespace:
@@ -60,6 +61,21 @@ def test_main_uses_default_download_path() -> None:
     assert args.download_path == DEFAULT_BTC_DOWNLOAD_PATH
     assert args.image_prefix == ""
     assert not args.joinmarket_descriptor_regtest_fallback
+    assert args.run_timezone == DEFAULT_RUN_TIMEZONE
+
+
+def test_main_accepts_run_timezone_override() -> None:
+    dispatch = Mock(return_value=0)
+
+    exit_code = cli.main(["--run-timezone", "UTC", "run"], dispatcher=dispatch)
+
+    assert exit_code == 0
+    assert dispatch.call_args.args[0].run_timezone == "UTC"
+
+
+def test_main_rejects_unknown_run_timezone() -> None:
+    with pytest.raises(SystemExit, match="2"):
+        cli.main(["--run-timezone", "not/a-timezone", "run"])
 
 
 @pytest.mark.parametrize("command", ["build", "clean", "run"])

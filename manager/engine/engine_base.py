@@ -8,6 +8,7 @@ import random
 import shutil
 from time import sleep
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from manager import log_output as log
 
@@ -36,6 +37,7 @@ class EngineArgs(Protocol):
     btc_node_ip: str
     wasabi_backend_ip: str
     btc_node_arg: list[str] | None
+    run_timezone: str
 
 
 class DriverProtocol(Protocol):
@@ -308,7 +310,8 @@ class EngineBase:
 
     def store_logs(self) -> None:
         log.info("Storing logs")
-        time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
+        run_timezone = getattr(self.args, "run_timezone", "Europe/Prague")
+        time = datetime.datetime.now(ZoneInfo(run_timezone)).strftime("%Y-%m-%d_%H-%M")
         run_path = f"./logs/{time}_{self.scenario.name}"
         experiment_path = os.path.join(run_path, "coinjoin_emulator_data")
         data_path = os.path.join(experiment_path, "data")

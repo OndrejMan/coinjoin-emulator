@@ -5,6 +5,7 @@ import sys
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import cast
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from manager import log_output as log
 from manager.application import DEFAULT_BTC_DOWNLOAD_PATH, run_engine
@@ -18,6 +19,7 @@ from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
 
 DEFAULT_IMAGE_PREFIX = ""
+DEFAULT_RUN_TIMEZONE = "Europe/Prague"
 
 ParsedArgs = argparse.Namespace | SimpleNamespace
 DriverFactory = Callable[[ParsedArgs], Driver]
@@ -59,6 +61,22 @@ def _add_global_arguments(parser: argparse.ArgumentParser) -> None:
         default="docker",
     )
     parser.add_argument("--no-logs", action="store_true", default=False)
+    parser.add_argument(
+        "--run-timezone",
+        type=timezone_name,
+        default=DEFAULT_RUN_TIMEZONE,
+        metavar="IANA_ZONE",
+        help=f"IANA timezone used in newly created run directory names (default: {DEFAULT_RUN_TIMEZONE}).",
+    )
+
+
+def timezone_name(value: str) -> str:
+    """Validate an IANA timezone while preserving its canonical input string."""
+    try:
+        ZoneInfo(value)
+    except ZoneInfoNotFoundError as error:
+        raise argparse.ArgumentTypeError(f"unknown IANA timezone: {value}") from error
+    return value
 
 
 def _add_console_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

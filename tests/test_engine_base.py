@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from zoneinfo import ZoneInfo
 
 from requests.exceptions import ConnectionError as RequestsConnectionError
 
@@ -160,6 +161,7 @@ class EngineBaseTest(unittest.TestCase):
                 with patch("manager.engine.engine_base.datetime.datetime") as datetime_mock:
                     datetime_mock.now.return_value.strftime.return_value = "2026-06-20_18-10"
                     engine.store_logs()
+                    datetime_mock.now.assert_called_once_with(ZoneInfo("Europe/Prague"))
             finally:
                 os.chdir(previous_cwd)
 
@@ -174,6 +176,24 @@ class EngineBaseTest(unittest.TestCase):
             self.assertFalse((run_dir / "scenario.json").exists())
             with zipfile.ZipFile(archive) as contents:
                 self.assertIn("coinjoin_emulator_data/scenario.json", contents.namelist())
+
+    def test_store_logs_uses_requested_run_timezone(self) -> None:
+        engine = MinimalEngine(self.engine_args(run_timezone="UTC"), Mock(), "/tmp")
+        engine.node = Mock()
+        engine.node.get_block_count.return_value = 0
+        engine.node.get_block_hash.return_value = "block-hash"
+        engine.node.get_block_info.return_value = {"height": 0, "tx": []}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            previous_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with patch("manager.engine.engine_base.datetime.datetime") as datetime_mock:
+                    datetime_mock.now.return_value.strftime.return_value = "2026-06-20_16-10"
+                    engine.store_logs()
+                    datetime_mock.now.assert_called_once_with(ZoneInfo("UTC"))
+            finally:
+                os.chdir(previous_cwd)
 
 
 if __name__ == "__main__":
