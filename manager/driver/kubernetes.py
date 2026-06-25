@@ -104,13 +104,14 @@ class PortForwardServer:
 
 
 class KubernetesDriver(Driver):
-    def __init__(self, namespace: str = "coinjoin", reuse_namespace: bool = False) -> None:
+    def __init__(self, namespace: str = "coinjoin", reuse_namespace: bool = False, port_forward: bool = True) -> None:
         config.load_kube_config()
         self.client = client.CoreV1Api()
         self._namespace = namespace
         self.reuse_namespace = reuse_namespace
         self.control_host = "127.0.0.1"
         self.port_forwards: dict[tuple[str, int], PortForwardServer] = {}
+        self.port_forward_enabled = port_forward
 
     @cached_property
     def namespace(self) -> str:
@@ -256,10 +257,13 @@ class KubernetesDriver(Driver):
         resp = self.client.create_namespaced_service(
             body=service_manifest, namespace=self.namespace
         )
-        port_mapping = self.start_port_forwards(
-            name,
-            [int(port.target_port) for port in resp.spec.ports],
-        )
+        if self.port_forward_enabled:
+            port_mapping = self.start_port_forwards(
+                name,
+                [int(port.target_port) for port in resp.spec.ports],
+            )
+        else:
+            port_mapping = {}
         return pod_ip or "", port_mapping
 
     def start_port_forwards(self, name: str, ports: list[int]) -> dict[int, int]:

@@ -173,6 +173,7 @@ def _add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument("--reuse-namespace", action="store_true", default=False)
+    parser.add_argument("--disable-port-forward", action="store_true", default=False, help="Disable port forwarding for kubernetes driver")
     _add_infrastructure_image_arguments(parser)
 
 
@@ -216,7 +217,8 @@ def create_driver(args: ParsedArgs) -> Driver:
         case "podman":
             return PodmanDriver(args.namespace)
         case "kubernetes":
-            return KubernetesDriver(args.namespace, args.reuse_namespace)
+            disable_port_forward = getattr(args, "disable_port_forward", False)
+            return KubernetesDriver(args.namespace, args.reuse_namespace, port_forward=not disable_port_forward)
         case _:
             raise ValueError(f"Unknown driver '{args.driver}'")
 
