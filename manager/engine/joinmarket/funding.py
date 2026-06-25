@@ -8,6 +8,12 @@ class JoinMarketFundingMixin:
     current_block: int
     current_round: int
 
+    def fund_distributor(self, btc_amount: int | float) -> None:
+        log.info(
+            "- skipping JoinMarket distributor pre-funding; "
+            "wallet invoices are funded directly from Bitcoin Core"
+        )
+
     def pay_invoices(self, addressed_invoices: list[tuple[str, int]]) -> None:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
