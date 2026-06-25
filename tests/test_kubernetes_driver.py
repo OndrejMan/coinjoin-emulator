@@ -21,6 +21,7 @@ if importlib.util.find_spec("kubernetes") is None:
     setattr(client_module, "CoreV1Api", object)
     setattr(client_module, "V1DeleteOptions", object)
     setattr(config_module, "load_kube_config", lambda: None)
+    setattr(stream_module, "portforward", lambda *args, **kwargs: None)
     setattr(stream_module, "stream", lambda *args, **kwargs: None)
     setattr(exceptions_module, "ApiException", ApiException)
 
@@ -36,6 +37,30 @@ if importlib.util.find_spec("kubernetes") is None:
 
 class KubernetesDriverTest(TestCase):
     def test_run_accepts_and_maps_docker_style_volumes(self) -> None:
+        class FakePortForwardServer:
+            next_port = 41000
+            started: list["FakePortForwardServer"] = []
+
+            def __init__(
+                self,
+                kube_client: object,
+                namespace: str,
+                pod_name: str,
+                remote_port: int,
+            ) -> None:
+                self.kube_client = kube_client
+                self.namespace = namespace
+                self.pod_name = pod_name
+                self.remote_port = remote_port
+                self.local_port = FakePortForwardServer.next_port
+                FakePortForwardServer.next_port += 1
+
+            def start(self) -> None:
+                FakePortForwardServer.started.append(self)
+
+            def close(self) -> None:
+                pass
+
         kube_client = SimpleNamespace(
             create_namespaced_pod=lambda **kwargs: None,
             read_namespaced_pod_status=lambda **kwargs: SimpleNamespace(
@@ -55,6 +80,10 @@ class KubernetesDriverTest(TestCase):
             patch(
                 "manager.driver.kubernetes.client.CoreV1Api",
                 return_value=kube_client,
+            ),
+            patch(
+                "manager.driver.kubernetes.PortForwardServer",
+                FakePortForwardServer,
             ),
         ):
             driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
@@ -91,7 +120,12 @@ class KubernetesDriverTest(TestCase):
             )
 
         self.assertEqual(pod_ip, "10.42.0.10")
-        self.assertEqual(ports, {18443: 31843})
+        self.assertEqual(driver.control_host, "127.0.0.1")
+        self.assertEqual(ports, {18443: 41000})
+        self.assertEqual(len(FakePortForwardServer.started), 1)
+        self.assertEqual(FakePortForwardServer.started[0].namespace, "coinjoin-test")
+        self.assertEqual(FakePortForwardServer.started[0].pod_name, "btc-node")
+        self.assertEqual(FakePortForwardServer.started[0].remote_port, 18443)
         service_spec = cast(dict[str, object], service_bodies[0]["spec"])
         service_ports = cast(list[dict[str, object]], service_spec["ports"])
         self.assertNotIn("nodePort", service_ports[0])

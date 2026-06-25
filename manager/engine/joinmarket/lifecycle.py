@@ -44,6 +44,7 @@ class JoinMarketClientLifecycleMixin:
     _core_wallet_lock: threading.Lock
     prepare_image: PrepareImage
     image_ref: Callable[[str], str]
+    control_host: Callable[[], str]
     init_joinmarket_clientserver: JoinMarketClientServerFactory
 
     def prepare_images(self) -> None:
@@ -121,7 +122,7 @@ class JoinMarketClientLifecycleMixin:
 
         self.distributor = self.init_joinmarket_clientserver(
             name=name,
-            host=ip if self.args.proxy else self.args.control_ip,
+            host=ip if self.args.proxy else self.control_host(),
             port=28183 if self.args.proxy else manager_ports[28183],
             proxy=self.args.proxy,
         )
@@ -167,7 +168,7 @@ class JoinMarketClientLifecycleMixin:
 
         client = self.init_joinmarket_clientserver(
             name=name,
-            host=ip if self.args.proxy else self.args.control_ip,
+            host=ip if self.args.proxy else self.control_host(),
             port=28183 if self.args.proxy else manager_ports[28183],
             role=role_str,
             delay=delay,

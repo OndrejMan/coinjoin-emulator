@@ -139,6 +139,9 @@ class EngineBase:
         override = getattr(self.args, f"{name.replace('-', '_')}_image", "")
         return override or f"{self.args.image_prefix}{name}"
 
+    def control_host(self) -> str:
+        return str(getattr(self.driver, "control_host", self.args.control_ip))
+
     def local_build_requested(self, name: str) -> bool:
         return name in {"btc-node", "joinmarket-client-server", "irc-server"} and bool(
             getattr(self.args, "coinjoin_infrastructure_local_build", False)
@@ -204,14 +207,15 @@ class EngineBase:
         )
 
         log.debug("- middle btc-node")
-        self.node = BtcNode(
-            host=btc_node_ip if self.args.proxy else self.args.control_ip,
+        node = BtcNode(
+            host=btc_node_ip if self.args.proxy else self.control_host(),
             port=18443 if self.args.proxy else btc_node_ports[18443],
             internal_ip=btc_node_ip,
             proxy=self.args.proxy,
         )
         log.info("- waiting btc-node")
-        self.node.wait_ready()
+        node.wait_ready()
+        self.node = node
         log.info("- started btc-node")
 
     def start_engine_infrastructure(self) -> None:

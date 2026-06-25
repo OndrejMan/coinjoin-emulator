@@ -91,6 +91,21 @@ def test_run_engine_stores_logs_when_node_is_initialized() -> None:
     driver.cleanup.assert_called_once_with("prefix/")
 
 
+def test_run_engine_cleans_up_when_log_storage_fails() -> None:
+    args = run_args()
+    driver = Mock()
+    engine = Mock()
+    engine.node = Mock()
+    engine.store_logs.side_effect = RuntimeError("rpc unavailable")
+
+    exit_code = run_engine(args, driver, engine)
+
+    assert exit_code == 1
+    engine.stop_coinjoins.assert_called_once_with()
+    engine.store_logs.assert_called_once_with()
+    driver.cleanup.assert_called_once_with("")
+
+
 def test_run_engine_downloads_btc_data_before_cleanup() -> None:
     args = run_args(
         no_logs=True,
@@ -106,6 +121,20 @@ def test_run_engine_downloads_btc_data_before_cleanup() -> None:
 
     assert exit_code == 0
     download.assert_called_once_with(driver, "/tmp/btc-data", "custom-node:/custom/data/")
+    driver.cleanup.assert_called_once_with("")
+
+
+def test_run_engine_cleans_up_when_btc_data_download_fails() -> None:
+    args = run_args(no_logs=True, download_btc_data_path="/tmp/btc-data")
+    driver = Mock()
+    engine = Mock()
+    engine.node = Mock()
+    download = Mock(side_effect=RuntimeError("download failed"))
+
+    exit_code = run_engine(args, driver, engine, btc_data_downloader=download)
+
+    assert exit_code == 1
+    download.assert_called_once_with(driver, "/tmp/btc-data", "btc-node:/home/bitcoin/data/")
     driver.cleanup.assert_called_once_with("")
 
 

@@ -120,6 +120,38 @@ class EngineBaseTest(unittest.TestCase):
         driver.run.assert_called_once()
         self.assertIsNone(driver.run.call_args.kwargs["command"])
 
+    def test_start_btc_node_uses_driver_control_host_when_available(self) -> None:
+        driver = Mock()
+        driver.control_host = "127.0.0.1"
+        driver.run.return_value = ("10.42.0.10", {18443: 41000, 18444: 41001})
+        engine = MinimalEngine(self.engine_args(image_prefix="", control_ip="host.docker.internal"), driver, "/tmp")
+
+        with patch("manager.engine.engine_base.BtcNode") as btc_node_class:
+            btc_node_class.return_value.wait_ready.return_value = None
+            engine.start_btc_node()
+
+        btc_node_class.assert_called_once_with(
+            host="127.0.0.1",
+            port=41000,
+            internal_ip="10.42.0.10",
+            proxy="",
+        )
+        self.assertIs(engine.node, btc_node_class.return_value)
+
+    def test_start_btc_node_is_not_initialized_when_readiness_fails(self) -> None:
+        driver = Mock()
+        driver.run.return_value = ("btc-node", {18443: 18443, 18444: 18444})
+        engine = MinimalEngine(self.engine_args(image_prefix=""), driver, "/tmp")
+
+        with patch(
+            "manager.engine.engine_base.BtcNode.wait_ready",
+            side_effect=TimeoutError("not ready"),
+        ):
+            with self.assertRaisesRegex(TimeoutError, "not ready"):
+                engine.start_btc_node()
+
+        self.assertIsNone(engine.node)
+
     def test_failed_invoice_payment_remains_pending(self) -> None:
         engine = MinimalEngine(Mock(), Mock(), "/tmp")
         engine.current_block = 0

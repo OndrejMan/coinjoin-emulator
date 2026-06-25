@@ -130,7 +130,7 @@ class WasabiEngine(EngineBase):
 
         self.backend = create_backend(
             self.backend_architecture,
-            host=wasabi_backend_ip if self.args.proxy else self.args.control_ip,
+            host=wasabi_backend_ip if self.args.proxy else self.control_host(),
             port=37127 if self.args.proxy else wasabi_backend_ports[37127],
             internal_ip=wasabi_backend_ip,
             proxy=self.args.proxy,
@@ -159,7 +159,7 @@ class WasabiEngine(EngineBase):
         sleep(1)
 
         self.coordinator = create_coordinator(
-            host=wasabi_coordinator_ip if self.args.proxy else self.args.control_ip,
+            host=wasabi_coordinator_ip if self.args.proxy else self.control_host(),
             port=37128 if self.args.proxy else wasabi_coordinator_ports[37128],
             internal_ip=wasabi_coordinator_ip,
             proxy=self.args.proxy,
@@ -190,7 +190,7 @@ class WasabiEngine(EngineBase):
 
         self.distributor = cast(InvoiceDistributor, self.init_wasabi_client(
             distributor_version,
-            wasabi_client_distributor_ip if self.args.proxy else self.args.control_ip,
+            wasabi_client_distributor_ip if self.args.proxy else self.control_host(),
             port=37128 if self.args.proxy else wasabi_client_distributor_ports[37128],
             name="wasabi-client-distributor",
             delay=(0, 0),
@@ -286,7 +286,7 @@ class WasabiEngine(EngineBase):
         stop = (wallet.stop_blocks or 0, wallet.stop_rounds or 0)
         client = self.init_wasabi_client(
             version,
-            ip if self.args.proxy else self.args.control_ip,
+            ip if self.args.proxy else self.control_host(),
             37128 if self.args.proxy else manager_ports[37128],
             f"wasabi-client-{idx:03}",
             delay,

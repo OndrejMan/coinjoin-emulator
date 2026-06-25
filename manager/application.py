@@ -69,13 +69,30 @@ def run_engine(
         print_exception(e)
         exit_code = 1
     finally:
-        engine.stop_coinjoins()
-        if not args.no_logs and engine.node is not None:
-            engine.store_logs()
-        elif not args.no_logs:
-            log.warning("- skipping log storage: Bitcoin node is not initialized")
-        if args.download_btc_data:
-            btc_data_downloader(driver, args.download_btc_data, args.download_path)
-        driver.cleanup(args.image_prefix)
+        try:
+            engine.stop_coinjoins()
+            if not args.no_logs and engine.node is not None:
+                try:
+                    engine.store_logs()
+                except (RuntimeError, OSError, ValueError, TypeError) as e:
+                    log.error(f"- failed to store logs: {e}")
+                    print_exception(e)
+                    exit_code = 1
+            elif not args.no_logs:
+                log.warning("- skipping log storage: Bitcoin node is not initialized")
+            if args.download_btc_data:
+                try:
+                    btc_data_downloader(driver, args.download_btc_data, args.download_path)
+                except (RuntimeError, OSError, ValueError, TypeError) as e:
+                    log.error(f"- failed to download btc data: {e}")
+                    print_exception(e)
+                    exit_code = 1
+        finally:
+            try:
+                driver.cleanup(args.image_prefix)
+            except (RuntimeError, OSError, ValueError, TypeError) as e:
+                log.error(f"- failed to cleanup driver resources: {e}")
+                print_exception(e)
+                exit_code = 1
 
     return exit_code
