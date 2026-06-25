@@ -43,6 +43,25 @@ class JoinMarketRoundMixin:
             if event.get("status") in ("started", "confirmed", "stopped")
         ])
 
+    def _next_round_id(self) -> int:
+        round_ids = [
+            int(cast(int, event.get("round_id") or 0))
+            for event in self.joinmarket_round_events
+        ]
+        return max(round_ids, default=0) + 1
+
+    def _mark_round_failed(self, event: dict[str, object], reason: str) -> None:
+        event["status"] = "failed"
+        event["stop_block"] = self.current_block
+        event["failure_reason"] = reason
+        taker_name = event.get("taker")
+        for client in self.clients:
+            if client.name == taker_name:
+                client.stop_coinjoin()
+                client.coinjoin_in_process = False
+                break
+        log.warning(f"- JoinMarket round for {taker_name} failed: {reason}")
+
     def _expire_stalled_rounds(self) -> None:
         for event in self.joinmarket_round_events:
             if event.get("status") != "started":
@@ -50,17 +69,27 @@ class JoinMarketRoundMixin:
             age = self.current_block - int(cast(int, event.get("start_block") or 0))
             if age <= JOINMARKET_ROUND_TIMEOUT_BLOCKS:
                 continue
-            event["status"] = "failed"
-            event["stop_block"] = self.current_block
-            taker_name = event.get("taker")
-            for client in self.clients:
-                if client.name == taker_name:
-                    client.stop_coinjoin()
-                    client.coinjoin_in_process = False
-                    break
-            raise RuntimeError(
-                f"JoinMarket round for {taker_name} did not produce a mined "
-                f"destination output within {JOINMARKET_ROUND_TIMEOUT_BLOCKS} blocks"
+            self._mark_round_failed(
+                event,
+                "did not produce a mined destination output within "
+                f"{JOINMARKET_ROUND_TIMEOUT_BLOCKS} blocks",
+            )
+
+    def _fail_inactive_started_rounds(self) -> None:
+        active_takers = {
+            client.name
+            for client in self.clients
+            if client.type == "taker" and client.coinjoin_in_process
+        }
+        for event in self.joinmarket_round_events:
+            if event.get("status") != "started":
+                continue
+            taker_name = str(event.get("taker") or "")
+            if taker_name in active_takers:
+                continue
+            self._mark_round_failed(
+                event,
+                "taker service stopped before a mined destination output was found",
             )
 
     def _client_confirmed_balance(self, client: EmulatorClient) -> int:
@@ -88,6 +117,7 @@ class JoinMarketRoundMixin:
 
         for client in self.clients:
             client.get_status()
+        self._fail_inactive_started_rounds()
 
         for client in self.clients:
             if client.type == "maker" and not client.maker_running and client.delay[0] <= self.current_block:
@@ -129,9 +159,10 @@ class JoinMarketRoundMixin:
                 client.start_coinjoin(0, JOINMARKET_COINJOIN_AMOUNT_SATS, JOINMARKET_COUNTERPARTIES, address)
                 client.coinjoin_in_process = True
                 client.coinjoin_start = self.current_block
+                round_id = self._next_round_id()
                 total_started_rounds += 1
                 self.joinmarket_round_events.append({
-                    "round_id": total_started_rounds,
+                    "round_id": round_id,
                     "engine": "joinmarket",
                     "status": "started",
                     "taker": client.name,

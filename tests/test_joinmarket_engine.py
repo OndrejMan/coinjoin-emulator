@@ -469,6 +469,7 @@ class JoinmarketEngineTest(unittest.TestCase):
         engine.current_block = 6
         first_taker = FakeJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
         second_taker = FakeJoinMarketClientServer(name="jcs-001", role="taker", delay=(0, 0))
+        first_taker.coinjoin_in_process = True
         makers = [
             FakeJoinMarketClientServer(name=f"jcs-{idx:03}", role="maker", delay=(0, 0))
             for idx in range(2, 6)
@@ -492,6 +493,75 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(first_taker.started_coinjoins, [])
         self.assertEqual(second_taker.started_coinjoins, [])
         self.assertEqual(len(engine.joinmarket_round_events), 1)
+
+    def test_stalled_round_is_failed_and_new_attempt_can_start(self) -> None:
+        driver = FakeDriver()
+        engine = JoinmarketEngine(engine_args(), driver)
+        set_fake_node(engine, FakeBtcNode(block_count=390))
+        engine.scenario.rounds = 1
+        engine.current_block = 186
+        taker = FakeJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
+        taker.coinjoin_in_process = True
+        makers = [
+            FakeJoinMarketClientServer(name=f"jcs-{idx:03}", role="maker", delay=(0, 0))
+            for idx in range(1, 5)
+        ]
+        for maker in makers:
+            maker.maker_running = True
+        engine.clients = [taker, *makers]
+        engine.joinmarket_round_events = [
+            {
+                "round_id": 1,
+                "status": "started",
+                "taker": "jcs-000",
+                "destination_address": "stalled-destination",
+                "start_block": 5,
+                "start_chain_height": 205,
+            }
+        ]
+
+        engine.update_coinjoins_joinmarket()
+
+        self.assertEqual(engine.joinmarket_round_events[0]["status"], "failed")
+        self.assertEqual(engine.joinmarket_round_events[0]["stop_block"], 186)
+        self.assertEqual(engine.joinmarket_round_events[1]["round_id"], 2)
+        self.assertEqual(engine.joinmarket_round_events[1]["status"], "started")
+        self.assertEqual(taker.started_coinjoins[-1]["destination"], "address-jcs-000-1")
+
+    def test_inactive_taker_round_is_failed_and_new_attempt_can_start(self) -> None:
+        driver = FakeDriver()
+        engine = JoinmarketEngine(engine_args(), driver)
+        set_fake_node(engine, FakeBtcNode(block_count=210))
+        engine.scenario.rounds = 1
+        engine.current_block = 8
+        taker = FakeJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
+        makers = [
+            FakeJoinMarketClientServer(name=f"jcs-{idx:03}", role="maker", delay=(0, 0))
+            for idx in range(1, 5)
+        ]
+        for maker in makers:
+            maker.maker_running = True
+        engine.clients = [taker, *makers]
+        engine.joinmarket_round_events = [
+            {
+                "round_id": 1,
+                "status": "started",
+                "taker": "jcs-000",
+                "destination_address": "dead-destination",
+                "start_block": 7,
+                "start_chain_height": 205,
+            }
+        ]
+
+        engine.update_coinjoins_joinmarket()
+
+        self.assertEqual(engine.joinmarket_round_events[0]["status"], "failed")
+        self.assertEqual(
+            engine.joinmarket_round_events[0]["failure_reason"],
+            "taker service stopped before a mined destination output was found",
+        )
+        self.assertEqual(engine.joinmarket_round_events[1]["round_id"], 2)
+        self.assertEqual(engine.joinmarket_round_events[1]["status"], "started")
 
     def test_update_waits_for_maker_confirmed_balance_before_starting(self) -> None:
         driver = FakeDriver()
