@@ -8,7 +8,7 @@ class JoinMarketFundingMixin:
     current_block: int
     current_round: int
 
-    def fund_distributor(self, btc_amount: int | float) -> None:
+    def fund_distributor(self, btc_amount: int | float) -> None:  # pylint: disable=unused-argument
         log.info(
             "- skipping JoinMarket distributor pre-funding; "
             "wallet invoices are funded directly from Bitcoin Core"

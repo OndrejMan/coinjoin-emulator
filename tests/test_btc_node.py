@@ -1,8 +1,9 @@
 import json
 import unittest
+from typing import Mapping
 from unittest.mock import Mock, patch
 
-import requests
+from requests.exceptions import HTTPError
 
 from manager.btc_node import BtcNode
 from manager.exceptions import RpcError
@@ -10,7 +11,7 @@ from manager.exceptions import RpcError
 # pylint: disable=protected-access
 
 
-def response(body: dict[str, object] | None = None, status_error: Exception | None = None) -> Mock:
+def response(body: Mapping[str, object] | None = None, status_error: Exception | None = None) -> Mock:
     mock_response = Mock()
     mock_response.raise_for_status.side_effect = status_error
     mock_response.json.return_value = body or {"error": None, "result": "ok"}
@@ -45,7 +46,7 @@ class BtcNodeTest(unittest.TestCase):
 
         with patch(
             "manager.btc_node.requests.post",
-            return_value=response(body, requests.exceptions.HTTPError("500 Server Error")),
+            return_value=response(body, HTTPError("500 Server Error")),
         ):
             with self.assertRaises(RpcError) as error:
                 node._rpc({"method": "sendtoaddress", "params": ["bcrt1address", 0.1]}, wallet="wallet")

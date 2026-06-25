@@ -75,7 +75,7 @@ class PortForwardServer:
             )
             upstream_socket = forward.socket(self.remote_port)
             self.bridge(client_socket, upstream_socket)
-        except Exception as error:  # pragma: no cover - defensive logging around background thread
+        except Exception as error:  # pylint: disable=broad-exception-caught # pragma: no cover - defensive logging around background thread
             log.debug(f"- port-forward {self.pod_name}:{self.remote_port} failed: {error}")
         finally:
             try:
