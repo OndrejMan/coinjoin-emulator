@@ -173,7 +173,12 @@ def _add_runtime_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument("--reuse-namespace", action="store_true", default=False)
-    parser.add_argument("--disable-port-forward", action="store_true", default=False, help="Disable port forwarding for kubernetes driver")
+    parser.add_argument(
+        "--disable-port-forward",
+        action="store_true",
+        default=False,
+        help="Disable port forwarding for kubernetes driver",
+    )
     _add_infrastructure_image_arguments(parser)
 
 
