@@ -16,6 +16,21 @@ from manager import log_output as log
 
 from . import Driver
 
+MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
+MANAGED_BY_VALUE = "coinjoin-emulator"
+MANAGED_LABELS = {
+    MANAGED_BY_LABEL: MANAGED_BY_VALUE,
+    "app.kubernetes.io/component": "emulator",
+}
+CLEANUP_NAME_MARKERS = (
+    "irc-server",
+    "btc-node",
+    "wasabi-backend",
+    "wasabi-coordinator",
+    "wasabi-client",
+    "joinmarket-client-server",
+)
+
 
 class SocketLike(Protocol):
     def recv(self, size: int) -> bytes: ...
@@ -106,12 +121,15 @@ class PortForwardServer:
 class KubernetesDriver(Driver):
     def __init__(self, namespace: str = "coinjoin", reuse_namespace: bool = False, port_forward: bool = True) -> None:
         config.load_kube_config()
-        self.client = client.CoreV1Api()
+        self.client = self._new_client()
         self._namespace = namespace
         self.reuse_namespace = reuse_namespace
         self.control_host = "127.0.0.1"
         self.port_forwards: dict[tuple[str, int], PortForwardServer] = {}
         self.port_forward_enabled = port_forward
+
+    def _new_client(self) -> client.CoreV1Api:
+        return client.CoreV1Api()
 
     @cached_property
     def namespace(self) -> str:
@@ -215,7 +233,7 @@ class KubernetesDriver(Driver):
         pod_manifest = {
             "apiVersion": "v1",
             "kind": "Pod",
-            "metadata": {"name": name, "labels": {"app": name}},
+            "metadata": {"name": name, "labels": {"app": name, **MANAGED_LABELS}},
             "spec": {
                 "restartPolicy": "Never",
                 "containers": [container_spec],
@@ -235,10 +253,13 @@ class KubernetesDriver(Driver):
                 ).status.pod_ip
                 sleep(1)
 
+        if not ports:
+            return pod_ip or "", {}
+
         service_manifest = {
             "apiVersion": "v1",
             "kind": "Service",
-            "metadata": {"name": f"{name}-service"},
+            "metadata": {"name": f"{name}-service", "labels": {"app": name, **MANAGED_LABELS}},
             "spec": {
                 "type": "NodePort",
                 "selector": {"app": name},
@@ -269,7 +290,7 @@ class KubernetesDriver(Driver):
     def start_port_forwards(self, name: str, ports: list[int]) -> dict[int, int]:
         port_mapping = {}
         for remote_port in ports:
-            forward = PortForwardServer(self.client, self.namespace, name, remote_port)
+            forward = PortForwardServer(self._new_client(), self.namespace, name, remote_port)
             forward.start()
             self.port_forwards[(name, remote_port)] = forward
             port_mapping[remote_port] = forward.local_port
@@ -286,9 +307,12 @@ class KubernetesDriver(Driver):
     def stop(self, name: str) -> None:
         self.close_port_forwards(name)
         try:
-            self.client.delete_namespaced_pod(name=name, namespace=self.namespace)
+            self.client.delete_namespaced_pod(name=name, namespace=self._namespace)
+        except ApiException:
+            pass
+        try:
             self.client.delete_namespaced_service(
-                f"{name}-service", namespace=self.namespace
+                f"{name}-service", namespace=self._namespace
             )
         except ApiException:
             pass
@@ -299,7 +323,7 @@ class KubernetesDriver(Driver):
         src_parent, src_target = os.path.split(src_path)
         exec_command = ["tar", "cf", "-", "-C", src_parent, src_target]
         resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
+            self._new_client().connect_get_namespaced_pod_exec,
             name,
             self.namespace,
             command=exec_command,
@@ -323,7 +347,7 @@ class KubernetesDriver(Driver):
     def peek(self, name: str, path: str) -> str:
         exec_command = ["cat", path]
         resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
+            self._new_client().connect_get_namespaced_pod_exec,
             name,
             self.namespace,
             command=exec_command,
@@ -353,7 +377,7 @@ class KubernetesDriver(Driver):
 
         exec_command = ["tar", "xf", "-", "-C", "/"]
         resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
+            self._new_client().connect_get_namespaced_pod_exec,
             name,
             self.namespace,
             command=exec_command,
@@ -379,46 +403,40 @@ class KubernetesDriver(Driver):
 
     def cleanup(self, image_prefix: str = "") -> None:
         self.close_port_forwards()
-        pods = self.client.list_namespaced_pod(namespace=self._namespace)
-        for pod in pods.items:
-            if any(
-                x in pod.metadata.name
-                for x in (
-                    "irc-server",
-                    "btc-node",
-                    "wasabi-backend",
-                    "wasabi-coordinator",
-                    "wasabi-client",
-                    "joinmarket-client-server",
+        cleanup_client = self._new_client()
+        if not self.reuse_namespace:
+            try:
+                cleanup_client.delete_namespace(
+                    name=self._namespace, body=client.V1DeleteOptions()
                 )
-            ):
+            except ApiException as error:
+                if getattr(error, "status", None) != 404:
+                    raise
+            return
+
+        pods = cleanup_client.list_namespaced_pod(namespace=self._namespace)
+        for pod in pods.items:
+            if self._is_managed_resource(pod):
                 try:
-                    self.client.delete_namespaced_pod(
+                    cleanup_client.delete_namespaced_pod(
                         name=pod.metadata.name, namespace=self._namespace
                     )
                 except ApiException:
                     pass
-        services = self.client.list_namespaced_service(namespace=self._namespace)
+        services = cleanup_client.list_namespaced_service(namespace=self._namespace)
         for service in services.items:
-            if any(
-                x in service.metadata.name
-                for x in (
-                    "irc-server",
-                    "btc-node",
-                    "wasabi-backend",
-                    "wasabi-coordinator",
-                    "wasabi-client",
-                    "joinmarket-client-server",
-                )
-            ):
+            if self._is_managed_resource(service):
                 try:
-                    self.client.delete_namespaced_service(
+                    cleanup_client.delete_namespaced_service(
                         name=service.metadata.name, namespace=self._namespace
                     )
                 except ApiException:
                     pass
 
-        if not self.reuse_namespace:
-            self.client.delete_namespace(
-                name=self._namespace, body=client.V1DeleteOptions()
-            )
+    def _is_managed_resource(self, resource: object) -> bool:
+        metadata = getattr(resource, "metadata", None)
+        name = getattr(metadata, "name", "") or ""
+        labels = getattr(metadata, "labels", None) or {}
+        return labels.get(MANAGED_BY_LABEL) == MANAGED_BY_VALUE or any(
+            marker in name for marker in CLEANUP_NAME_MARKERS
+        )

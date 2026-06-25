@@ -129,7 +129,13 @@ class KubernetesDriverTest(TestCase):
         service_spec = cast(dict[str, object], service_bodies[0]["spec"])
         service_ports = cast(list[dict[str, object]], service_spec["ports"])
         self.assertNotIn("nodePort", service_ports[0])
+        service_metadata = cast(dict[str, object], service_bodies[0]["metadata"])
+        service_labels = cast(dict[str, object], service_metadata["labels"])
+        self.assertEqual(service_labels["app.kubernetes.io/managed-by"], "coinjoin-emulator")
 
+        pod_metadata = cast(dict[str, object], pod_bodies[0]["metadata"])
+        pod_labels = cast(dict[str, object], pod_metadata["labels"])
+        self.assertEqual(pod_labels["app.kubernetes.io/managed-by"], "coinjoin-emulator")
         pod_spec = cast(dict[str, object], pod_bodies[0]["spec"])
         containers = cast(list[dict[str, object]], pod_spec["containers"])
         container = containers[0]
@@ -156,3 +162,118 @@ class KubernetesDriverTest(TestCase):
                 }
             ],
         )
+
+    def test_run_does_not_create_empty_service_when_no_ports_are_exposed(self) -> None:
+        created_pods: list[dict[str, object]] = []
+
+        def create_pod(**kwargs: object) -> None:
+            created_pods.append(cast(dict[str, object], kwargs["body"]))
+
+        def create_service(**_kwargs: object) -> None:
+            raise AssertionError("service should not be created for a pod with no exposed ports")
+
+        kube_client = SimpleNamespace(
+            create_namespaced_pod=create_pod,
+            create_namespaced_service=create_service,
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                return_value=kube_client,
+            ),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            pod_ip, ports = driver.run(
+                "joinmarket-client-server-0",
+                "joinmarket-client-server:latest",
+                ports={},
+                skip_ip=True,
+            )
+
+        self.assertEqual(pod_ip, "")
+        self.assertEqual(ports, {})
+        self.assertEqual(created_pods[0]["kind"], "Pod")
+
+    def test_cleanup_uses_fresh_client_and_deletes_managed_resources(self) -> None:
+        closed_forwards: list[str] = []
+        deleted_pods: list[str] = []
+        deleted_services: list[str] = []
+
+        class FakeForward:
+            def close(self) -> None:
+                closed_forwards.append("closed")
+
+        def corrupted_list_pods(**_kwargs: object) -> None:
+            raise ValueError("Missing required parameter `ports`")
+
+        regular_client = SimpleNamespace(list_namespaced_pod=corrupted_list_pods)
+        cleanup_client = SimpleNamespace(
+            list_namespaced_pod=lambda **_kwargs: SimpleNamespace(
+                items=[
+                    SimpleNamespace(
+                        metadata=SimpleNamespace(
+                            name="wallet-helper",
+                            labels={"app.kubernetes.io/managed-by": "coinjoin-emulator"},
+                        )
+                    ),
+                    SimpleNamespace(metadata=SimpleNamespace(name="unrelated", labels={})),
+                    SimpleNamespace(metadata=SimpleNamespace(name="btc-node-old", labels={})),
+                ]
+            ),
+            list_namespaced_service=lambda **_kwargs: SimpleNamespace(
+                items=[
+                    SimpleNamespace(
+                        metadata=SimpleNamespace(
+                            name="wallet-helper-service",
+                            labels={"app.kubernetes.io/managed-by": "coinjoin-emulator"},
+                        )
+                    ),
+                    SimpleNamespace(metadata=SimpleNamespace(name="unrelated-service", labels={})),
+                    SimpleNamespace(metadata=SimpleNamespace(name="btc-node-old-service", labels={})),
+                ]
+            ),
+            delete_namespaced_pod=lambda **kwargs: deleted_pods.append(cast(str, kwargs["name"])),
+            delete_namespaced_service=lambda **kwargs: deleted_services.append(cast(str, kwargs["name"])),
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                side_effect=[regular_client, cleanup_client],
+            ),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            driver.port_forwards[("btc-node", 18443)] = FakeForward()
+            driver.cleanup()
+
+        self.assertEqual(closed_forwards, ["closed"])
+        self.assertEqual(deleted_pods, ["wallet-helper", "btc-node-old"])
+        self.assertEqual(deleted_services, ["wallet-helper-service", "btc-node-old-service"])
+
+    def test_cleanup_deletes_owned_namespace_without_listing_resources(self) -> None:
+        deleted_namespaces: list[str] = []
+
+        cleanup_client = SimpleNamespace(
+            delete_namespace=lambda **kwargs: deleted_namespaces.append(cast(str, kwargs["name"])),
+            list_namespaced_pod=lambda **_kwargs: (_ for _ in ()).throw(
+                AssertionError("owned namespace cleanup should not list pods")
+            ),
+            list_namespaced_service=lambda **_kwargs: (_ for _ in ()).throw(
+                AssertionError("owned namespace cleanup should not list services")
+            ),
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                return_value=cleanup_client,
+            ),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=False)
+            driver.cleanup()
+
+        self.assertEqual(deleted_namespaces, ["coinjoin-test"])
