@@ -4,3 +4,19 @@ logs/
 
 .python-version
 pyrightconfig.json
+
+.DS_Store
+bin/
+lib/
+pyvenv.cfg
+venv/
+.venv/
+
+.vscode/
+.mypy_cache/
+__pycache__/
+*.pyc
+*.egg-info/
+.pycache-pylint/
+
+.idea
