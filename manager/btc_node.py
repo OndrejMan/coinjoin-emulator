@@ -9,6 +9,7 @@ from manager import log_output as log
 from .exceptions import RpcError
 
 WALLET = "wallet"
+FUNDING_WALLET_TX_FEE = 0.0001
 
 
 class BtcNode:
@@ -24,9 +25,27 @@ class BtcNode:
         self.internal_ip = internal_ip
         self.proxy = proxy
 
+    def _response_body(self, response: requests.Response) -> dict[str, object] | None:
+        try:
+            body = response.json()
+        except ValueError:
+            return None
+        if isinstance(body, dict):
+            return body
+        return None
+
+    def _rpc_error(self, method: object, wallet: str | None, error: object) -> RpcError:
+        wallet_detail = f" wallet={wallet}" if wallet else ""
+        if isinstance(error, dict):
+            code = error.get("code")
+            message = error.get("message")
+            return RpcError(f"Bitcoin Core RPC {method}{wallet_detail} failed: code={code} message={message}")
+        return RpcError(f"Bitcoin Core RPC {method}{wallet_detail} failed: {error}")
+
     def _rpc(self, request: dict[str, object], wallet: str | None = None) -> object:
         request["jsonrpc"] = "1.0"
         request["id"] = "1"
+        method = request.get("method")
         wallet_path = f"/wallet/{wallet}" if wallet else ""
         response = requests.post(
             f"http://{self.host}:{self.port}{wallet_path}",
@@ -35,10 +54,15 @@ class BtcNode:
             proxies={"http": self.proxy},
             timeout=5,
         )
+        response_body = self._response_body(response)
+        if response_body is not None and response_body.get("error") is not None:
+            raise self._rpc_error(method, wallet, response_body["error"])
         response.raise_for_status()
-        if response.json()["error"] is not None:
-            raise RpcError(str(response.json()["error"]))
-        return response.json()["result"]
+        if response_body is None:
+            raise RpcError(f"Unexpected Bitcoin Core RPC {method} response: {response.text}")
+        if "error" not in response_body and "result" not in response_body:
+            raise RpcError(f"Unexpected Bitcoin Core RPC {method} response: {response_body}")
+        return response_body["result"]
 
     def get_block_count(self) -> int:
         request: dict[str, object] = {
@@ -95,6 +119,7 @@ class BtcNode:
                 block_count = self.get_block_count()
                 last_block_count = block_count
                 if block_count > 200:
+                    self.ensure_funding_wallet_ready()
                     break
             except (requests.exceptions.RequestException, RpcError) as exc:
                 last_error = exc
@@ -109,6 +134,21 @@ class BtcNode:
 
         # wait for the fee-building transactions
         sleep(20)
+
+    def ensure_funding_wallet_ready(self) -> None:
+        loaded_wallets = cast(list[str], self._rpc({"method": "listwallets", "params": []}))
+        if WALLET not in loaded_wallets:
+            try:
+                self._rpc({"method": "loadwallet", "params": [WALLET]})
+            except RpcError as exc:
+                if self._is_wallet_already_loaded_error(exc):
+                    pass
+                elif self._is_wallet_missing_error(exc):
+                    self.create_wallet(WALLET)
+                else:
+                    raise
+        self._rpc({"method": "getwalletinfo", "params": []}, WALLET)
+        self._rpc({"method": "settxfee", "params": [FUNDING_WALLET_TX_FEE]}, WALLET)
 
     def create_wallet(
         self,
@@ -151,12 +191,15 @@ class BtcNode:
                 f"btc-node RPC at {self.host}:{self.port} timed out creating wallet {wallet}"
             ) from exc
 
-        response.raise_for_status()
-        response_body = response.json()
-        if not isinstance(response_body, dict):
+        response_body = self._response_body(response)
+        if response_body is None:
+            response.raise_for_status()
             raise RpcError(f"Unexpected btc-node RPC response creating wallet {wallet}: {response_body}")
         if "error" not in response_body and "result" not in response_body:
             raise RpcError(f"Unexpected btc-node RPC response creating wallet {wallet}: {response_body}")
+        if response_body.get("error") is not None:
+            return response_body
+        response.raise_for_status()
         return response_body
 
     def _is_bdb_wallet_creation_error(self, error: object) -> bool:
@@ -169,6 +212,18 @@ class BtcNode:
                 "BDB wallet creation is deprecated" in message
                 or "Compiled without bdb support" in message
             )
+        )
+
+    def _is_wallet_already_loaded_error(self, error: Exception) -> bool:
+        return "already loaded" in str(error)
+
+    def _is_wallet_missing_error(self, error: Exception) -> bool:
+        message = str(error)
+        return (
+            "Path does not exist" in message
+            or "not found" in message
+            or "No such file or directory" in message
+            or "Wallet file verification failed" in message
         )
 
     def _create_wallet_request(
