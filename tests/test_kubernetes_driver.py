@@ -6,7 +6,7 @@ from typing import cast
 from unittest import TestCase
 from unittest.mock import patch
 
-from manager.driver.kubernetes import KubernetesDriver
+from manager.driver.kubernetes import KubernetesDriver, PortForwardServer
 
 if importlib.util.find_spec("kubernetes") is None:
     kubernetes_module = types.ModuleType("kubernetes")
@@ -36,6 +36,50 @@ if importlib.util.find_spec("kubernetes") is None:
 
 
 class KubernetesDriverTest(TestCase):
+    def test_port_forward_retries_transient_handshake_failure(self) -> None:
+        class FakeClientSocket:
+            closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        class FakeForward:
+            closed = False
+
+            def socket(self, remote_port: int) -> object:
+                return {"remote_port": remote_port}
+
+            def close(self) -> None:
+                self.closed = True
+
+        server = PortForwardServer.__new__(PortForwardServer)
+        server.kube_client = SimpleNamespace(connect_get_namespaced_pod_portforward=object())
+        server.namespace = "coinjoin-test"
+        server.pod_name = "wasabi-client-005"
+        server.remote_port = 37128
+        fake_socket = FakeClientSocket()
+        fake_forward = FakeForward()
+        bridge_calls: list[tuple[object, object]] = []
+
+        def bridge(client_socket: object, upstream_socket: object) -> None:
+            bridge_calls.append((client_socket, upstream_socket))
+
+        server.bridge = bridge
+
+        with (
+            patch(
+                "manager.driver.kubernetes.portforward",
+                side_effect=[RuntimeError("Handshake status 502 Bad Gateway"), fake_forward],
+            ) as portforward,
+            patch("manager.driver.kubernetes.sleep"),
+        ):
+            server.handle_connection(fake_socket)  # type: ignore[arg-type]
+
+        self.assertEqual(portforward.call_count, 2)
+        self.assertEqual(bridge_calls, [(fake_socket, {"remote_port": 37128})])
+        self.assertTrue(fake_socket.closed)
+        self.assertTrue(fake_forward.closed)
+
     def test_run_accepts_and_maps_docker_style_volumes(self) -> None:
         class FakePortForwardServer:
             next_port = 41000

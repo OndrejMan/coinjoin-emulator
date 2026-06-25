@@ -41,3 +41,18 @@ def test_get_new_address_reraises_after_retry_budget_is_exhausted() -> None:
         client.get_new_address()
 
     assert post.call_count == 30
+
+
+def test_start_coinjoin_retries_connection_reset() -> None:
+    client = WasabiClientBase()
+
+    with (
+        patch(
+            "manager.wasabi_clients.wasabi_client_base.requests.post",
+            side_effect=[RequestsConnectionError("connection reset"), response()],
+        ) as post,
+        patch("manager.wasabi_clients.wasabi_client_base.sleep"),
+    ):
+        assert client.start_coinjoin() == {"address": "bcrt1qtest"}
+
+    assert post.call_count == 2

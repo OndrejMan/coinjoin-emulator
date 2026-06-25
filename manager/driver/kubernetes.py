@@ -30,6 +30,8 @@ CLEANUP_NAME_MARKERS = (
     "wasabi-client",
     "joinmarket-client-server",
 )
+PORT_FORWARD_ATTEMPTS = 3
+PORT_FORWARD_RETRY_DELAY_SECONDS = 0.25
 
 
 class SocketLike(Protocol):
@@ -82,12 +84,25 @@ class PortForwardServer:
     def handle_connection(self, client_socket: socket.socket) -> None:
         forward = None
         try:
-            forward = portforward(
-                self.kube_client.connect_get_namespaced_pod_portforward,
-                self.pod_name,
-                self.namespace,
-                ports=str(self.remote_port),
-            )
+            for attempt in range(PORT_FORWARD_ATTEMPTS):
+                try:
+                    forward = portforward(
+                        self.kube_client.connect_get_namespaced_pod_portforward,
+                        self.pod_name,
+                        self.namespace,
+                        ports=str(self.remote_port),
+                    )
+                    break
+                except Exception as error:  # pylint: disable=broad-exception-caught
+                    log.debug(
+                        f"- port-forward {self.pod_name}:{self.remote_port} failed "
+                        f"({attempt + 1}/{PORT_FORWARD_ATTEMPTS}): {error}"
+                    )
+                    if attempt + 1 >= PORT_FORWARD_ATTEMPTS:
+                        raise
+                    sleep(PORT_FORWARD_RETRY_DELAY_SECONDS)
+            if forward is None:
+                return
             upstream_socket = forward.socket(self.remote_port)
             self.bridge(client_socket, upstream_socket)
         except Exception as error:  # pylint: disable=broad-exception-caught # pragma: no cover - defensive logging around background thread

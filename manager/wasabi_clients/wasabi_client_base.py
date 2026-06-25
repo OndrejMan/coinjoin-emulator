@@ -156,7 +156,7 @@ class WasabiClientBase:
             "method": "startcoinjoin",
             "params": ["", "True", "True"],
         }
-        return self._rpc(request, timeout=None)
+        return self._rpc(request, timeout=None, repeat=5)
 
     def stop_coinjoin(self) -> object:
         request: dict[str, object] = {
