@@ -53,7 +53,9 @@ class KubernetesDriverTest(TestCase):
                 self.closed = True
 
         server = PortForwardServer.__new__(PortForwardServer)
-        server.kube_client = SimpleNamespace(connect_get_namespaced_pod_portforward=object())
+        server.kube_client = SimpleNamespace(  # type: ignore[assignment]
+            connect_get_namespaced_pod_portforward=object()
+        )
         server.namespace = "coinjoin-test"
         server.pod_name = "wasabi-client-005"
         server.remote_port = 37128
@@ -64,7 +66,7 @@ class KubernetesDriverTest(TestCase):
         def bridge(client_socket: object, upstream_socket: object) -> None:
             bridge_calls.append((client_socket, upstream_socket))
 
-        server.bridge = bridge
+        server.bridge = bridge  # type: ignore[method-assign]
 
         with (
             patch(
@@ -290,7 +292,7 @@ class KubernetesDriverTest(TestCase):
             ),
         ):
             driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
-            driver.port_forwards[("btc-node", 18443)] = FakeForward()
+            driver.port_forwards[("btc-node", 18443)] = FakeForward()  # type: ignore[assignment]
             driver.cleanup()
 
         self.assertEqual(closed_forwards, ["closed"])
