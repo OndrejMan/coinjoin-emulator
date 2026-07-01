@@ -4,10 +4,10 @@ A container-based setup for the emulation of CoinJoin transactions on RegTest ne
 
 ## Usage
 
-1. Install [Docker](https://docker.com/) and [Python](http://python.org/).
+1. Install [Docker](https://docker.com/) or [Podman](https://podman.io/), [Python](http://python.org/), and [uv](https://docs.astral.sh/uv/).
 2. Clone the repository `git clone --recurse-submodules https://github.com/crocs-muni/coinjoin-emulator`.
-3. Install dependencies: `pip install -r requirements.txt`.
-4. Run the default scenario with the default driver: `python manager.py run`.
+3. Install dependencies: `uv sync`.
+4. Run the default scenario with the default driver: `uv run python manager.py run`.
    - [Scenario](#scenarios) definition file can be specified using the `--scenario` option.
 
 For more complex setups see section [Advanced usage](#advanced-usage).
@@ -83,11 +83,9 @@ The default driver is `docker`. Running `docker` requires [Docker](https://www.d
 
 #### Podman
 
-*Podman support will be likely **removed** in the future versions.*
+To run the simulation using `podman`, specify it as driver using `--driver podman`, for example `uv run python manager.py --driver podman run`.
 
-To run the simulation using `podman`, specify it as driver using `--driver podman` option.
-
-The driver requires [Podman](https://podman.io/) being installed and you may also need to override default IP addresses to communicate via localhost using `--control-ip` and `--wasabi-backend-ip` options. 
+The driver requires the [Podman](https://podman.io/) CLI. You may also need to override default IP addresses to communicate via localhost using `--control-ip` and `--wasabi-backend-ip` options.
 
 
 #### Kubernetes
@@ -104,5 +102,15 @@ If you need to specify custom namespace, use the `--namespace` option. If you al
 
 Running the simulation on a remote cluster using pre-existing namespace and a proxy reachable on localhost port 8123:
 ```bash
-python manager.py run --driver kubernetes --namespace custom-coinjoin-ns --reuse-namespace --image-prefix "crocsmuni/" --proxy "socks5://127.0.0.1:8123" --scenario "scenarios/uniform-dynamic-500-30utxo.json"
+uv run python manager.py run --driver kubernetes --namespace custom-coinjoin-ns --reuse-namespace --image-prefix "crocsmuni/" --proxy "socks5://127.0.0.1:8123" --scenario "scenarios/uniform-dynamic-500-30utxo.json"
+```
+
+### Exporting raw Bitcoin node data
+
+The emulator normally stores scenario, block, client, and wallet data in the log archive. If you need the raw Bitcoin Core data directory for external analysis tools, use `--download-btc-data` to choose a local destination path. The data is copied before containers or pods are cleaned up.
+
+By default, the source is `btc-node:/home/bitcoin/data/`. To export a different container or pod path, pass `--download-path` in `name:/path` format:
+
+```bash
+uv run python manager.py run --download-btc-data ./btc-data --download-path btc-node:/home/bitcoin/data/
 ```

@@ -1,5 +1,7 @@
-FROM joinmarket-test
+ARG JOINMARKET_TEST_IMAGE=ghcr.io/ondrejman/joinmarket-test:latest
+FROM ${JOINMARKET_TEST_IMAGE}
 
+COPY jmwalletd_entrypoint.py /usr/local/bin/jmwalletd_entrypoint.py
 
 # Copy the config file to the right place
 
@@ -23,4 +25,3 @@ RUN chmod +x /home/joinmarket/run.sh
 WORKDIR /home/joinmarket
 
 CMD ["./run.sh"]
-
