@@ -183,11 +183,18 @@ class EngineBase:
         if self.args.btcFolder:
             absolute_host_path = os.path.abspath(self.args.btcFolder)
             log.info(f"- mounting external btc-data from: {absolute_host_path}")
+            storage_uid = os.environ.get("KUBERNETES_STORAGE_UID")
+            storage_gid = os.environ.get("KUBERNETES_STORAGE_GID")
+            mount = {
+                "bind": "/home/bitcoin/data",
+                "mode": "rw",
+            }
+            if storage_uid:
+                mount["uid"] = storage_uid
+            if storage_gid:
+                mount["gid"] = storage_gid
             node_volumes = {
-                absolute_host_path: {
-                    'bind': '/home/bitcoin/data', 
-                    'mode': 'rw'
-                }
+                absolute_host_path: mount
             }
         else:
             log.info("- no btcFolder provided; using internal container storage")

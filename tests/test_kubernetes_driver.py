@@ -161,6 +161,8 @@ class KubernetesDriverTest(TestCase):
                     "/tmp/btc-data": {
                         "bind": "/home/bitcoin/data",
                         "mode": "rw",
+                        "uid": "1234",
+                        "gid": "5678",
                     }
                 },
             )
@@ -186,6 +188,8 @@ class KubernetesDriverTest(TestCase):
         containers = cast(list[dict[str, object]], pod_spec["containers"])
         container = containers[0]
         self.assertEqual(container["command"], ["./run.sh", "-blocksxor=0"])
+        self.assertEqual(container["securityContext"]["runAsUser"], 1234)
+        self.assertEqual(container["securityContext"]["runAsGroup"], 5678)
         self.assertEqual(
             container["volumeMounts"],
             [

@@ -118,6 +118,36 @@ class EngineBaseTest(unittest.TestCase):
             engine.start_btc_node()
 
         driver.run.assert_called_once()
+
+    def test_start_btc_node_forwards_shared_storage_identity(self) -> None:
+        driver = Mock()
+        driver.run.return_value = ("btc-node", {18443: 18443, 18444: 18444})
+        engine = MinimalEngine(
+            self.engine_args(btcFolder="/storage/user/btc-data"),
+            driver,
+            "/tmp",
+        )
+
+        with (
+            patch.dict(
+                os.environ,
+                {"KUBERNETES_STORAGE_UID": "1234", "KUBERNETES_STORAGE_GID": "5678"},
+            ),
+            patch("manager.engine.engine_base.BtcNode.wait_ready"),
+        ):
+            engine.start_btc_node()
+
+        self.assertEqual(
+            driver.run.call_args.kwargs["volumes"],
+            {
+                "/storage/user/btc-data": {
+                    "bind": "/home/bitcoin/data",
+                    "mode": "rw",
+                    "uid": "1234",
+                    "gid": "5678",
+                }
+            },
+        )
         self.assertIsNone(driver.run.call_args.kwargs["command"])
 
     def test_start_btc_node_uses_driver_control_host_when_available(self) -> None:

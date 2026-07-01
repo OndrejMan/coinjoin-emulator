@@ -184,6 +184,8 @@ class KubernetesDriver(Driver):
             env = {}
         volume_mounts = []
         pod_volumes = []
+        storage_uid = None
+        storage_gid = None
         for index, (host_path, mount) in enumerate((volumes or {}).items()):
             volume_name = f"host-volume-{index}"
             volume_mounts.append(
@@ -202,6 +204,16 @@ class KubernetesDriver(Driver):
                     },
                 }
             )
+            if mount.get("uid") is not None:
+                candidate_uid = int(mount["uid"])
+                if storage_uid is not None and storage_uid != candidate_uid:
+                    raise ValueError("Kubernetes volume mounts require one runAsUser value")
+                storage_uid = candidate_uid
+            if mount.get("gid") is not None:
+                candidate_gid = int(mount["gid"])
+                if storage_gid is not None and storage_gid != candidate_gid:
+                    raise ValueError("Kubernetes volume mounts require one runAsGroup value")
+                storage_gid = candidate_gid
 
         container_spec = {
             "image": image,
@@ -242,6 +254,10 @@ class KubernetesDriver(Driver):
                 },
             },
         }
+        if storage_uid is not None:
+            container_spec["securityContext"]["runAsUser"] = storage_uid
+        if storage_gid is not None:
+            container_spec["securityContext"]["runAsGroup"] = storage_gid
         if command is not None:
             container_spec["command"] = command
 
