@@ -215,7 +215,22 @@ class KubernetesDriver(Driver):
                     raise ValueError("Kubernetes volume mounts require one runAsGroup value")
                 storage_gid = candidate_gid
 
-        container_spec = {
+        security_context: dict[str, object] = {
+            "allowPrivilegeEscalation": False,
+            "capabilities": {
+                "drop": ["ALL"],
+            },
+            "runAsNonRoot": True,
+            "seccompProfile": {
+                "type": "RuntimeDefault",
+            },
+        }
+        if storage_uid is not None:
+            security_context["runAsUser"] = storage_uid
+        if storage_gid is not None:
+            security_context["runAsGroup"] = storage_gid
+
+        container_spec: dict[str, object] = {
             "image": image,
             "imagePullPolicy": "Always",
             "name": name,
@@ -233,16 +248,7 @@ class KubernetesDriver(Driver):
                 for k, v in env.items()
             ],
             "volumeMounts": volume_mounts,
-            "securityContext": {
-                "allowPrivilegeEscalation": False,
-                "capabilities": {
-                    "drop": ["ALL"],
-                },
-                "runAsNonRoot": True,
-                "seccompProfile": {
-                    "type": "RuntimeDefault",
-                },
-            },
+            "securityContext": security_context,
             "resources": {
                 "limits": {
                     "cpu": cpu,
@@ -254,10 +260,6 @@ class KubernetesDriver(Driver):
                 },
             },
         }
-        if storage_uid is not None:
-            container_spec["securityContext"]["runAsUser"] = storage_uid
-        if storage_gid is not None:
-            container_spec["securityContext"]["runAsGroup"] = storage_gid
         if command is not None:
             container_spec["command"] = command
 
