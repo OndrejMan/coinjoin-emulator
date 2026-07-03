@@ -1,8 +1,10 @@
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock
 
 import pytest
 
+from manager.btc_node import BtcNode
 from manager.engine.wasabi_engine import WasabiEngine
 from manager.exceptions import StartupError
 from manager.wasabi_backend_factory import BackendArchitecture
@@ -24,7 +26,7 @@ def configured_engine(architecture: BackendArchitecture) -> tuple[WasabiEngine, 
     driver.run.return_value = ("10.42.0.20", {37128: 30123})
     engine = WasabiEngine(engine_args(), driver)
     engine.backend_architecture = architecture
-    engine.node = SimpleNamespace(internal_ip="10.42.0.2")
+    engine.node = cast(BtcNode, SimpleNamespace(internal_ip="10.42.0.2"))
     engine.backend = SimpleNamespace(internal_ip="10.42.0.3")
     distributor = Mock()
     distributor.wait_wallet.return_value = True
@@ -34,7 +36,7 @@ def configured_engine(architecture: BackendArchitecture) -> tuple[WasabiEngine, 
 
 def test_split_distributor_receives_coordinator_internal_ip() -> None:
     engine, driver, distributor = configured_engine(BackendArchitecture.SPLIT)
-    engine.coordinator = SimpleNamespace(internal_ip="10.42.0.4")  # type: ignore[assignment]
+    engine.coordinator = SimpleNamespace(internal_ip="10.42.0.4")
 
     engine.start_distributor()
 
