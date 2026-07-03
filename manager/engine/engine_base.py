@@ -277,15 +277,23 @@ class EngineBase:
                     if client is not None:
                         new_clients[restart_idx[idx]] = client
             else:
-                new_clients = [client for client in new_clients if client is not None]
-                log.warning(f"- failed to start {len(wallets) - len(new_clients)} clients; continuing ...")
+                started_clients = [client for client in new_clients if client is not None]
+                failed_count = len(wallets) - len(started_clients)
+                raise RuntimeError(
+                    f"Failed to start {failed_count} clients after retries; aborting experiment"
+                )
         self.clients.extend(client for client in new_clients if client is not None)
 
         if len(new_clients) == 0 and len(wallets) > 0:
             raise RuntimeError("No emulator clients started successfully")
 
     def validate_clients(self) -> None:
-        pass
+        expected = len(self.scenario.wallets)
+        actual = len(self.clients)
+        if actual != expected:
+            raise RuntimeError(
+                f"Expected {expected} clients, but only {actual} started"
+            )
 
     def fund_distributor(self, btc_amount: int | float) -> None:
         log.info("Funding distributor")

@@ -191,6 +191,7 @@ class JoinMarketClientLifecycleMixin:
         self.driver.stop(name)
 
     def validate_clients(self) -> None:
+        super().validate_clients()
         takers = [client for client in self.clients if client.type == "taker"]
         makers = [client for client in self.clients if client.type == "maker"]
         if not takers:
