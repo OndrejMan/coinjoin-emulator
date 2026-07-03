@@ -174,15 +174,22 @@ class WasabiEngine(EngineBase):
             raise RuntimeError("Wasabi backend is not initialized")
 
         backend_address = self.backend.internal_ip
+        distributor_env: dict[str, str | None] = {
+            "ADDR_BTC_NODE": self.args.btc_node_ip or self.node.internal_ip,
+            "ADDR_WASABI_BACKEND": self.args.wasabi_backend_ip or backend_address,
+        }
+        if self.backend_architecture == BackendArchitecture.SPLIT:
+            if self.coordinator is None:
+                raise StartupError(
+                    "Wasabi coordinator is not initialized for the split backend architecture"
+                )
+            distributor_env["ADDR_WASABI_COORDINATOR"] = self.coordinator.internal_ip
 
         distributor_version = self.scenario.distributor_version or self.scenario.default_version
         wasabi_client_distributor_ip, wasabi_client_distributor_ports = self.driver.run(
             "wasabi-client-distributor",
             f"{self.args.image_prefix}wasabi-client:{distributor_version}",
-            env={
-                "ADDR_BTC_NODE": self.args.btc_node_ip or self.node.internal_ip,
-                "ADDR_WASABI_BACKEND": self.args.wasabi_backend_ip or backend_address,
-            },
+            env=distributor_env,
             ports={37128: 37131},
             cpu=1.0,
             memory=2048,

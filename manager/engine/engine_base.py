@@ -6,20 +6,23 @@ import multiprocessing.pool
 import os
 import random
 import shutil
-from time import sleep
-from typing import Protocol
+from time import monotonic, sleep
+from typing import Protocol, cast
 from zoneinfo import ZoneInfo
 
 from manager import log_output as log
 
 from ..btc_node import BtcNode
-from ..exceptions import CoinjoinEmulatorError, RpcError
+from ..exceptions import CoinjoinEmulatorError, RpcError, StartupError
 from ..utils import batched
 from .configuration import FundConfig, ScenarioConfig, WalletConfig
 
 DISTRIBUTOR_UTXOS = 10
 BATCH_SIZE = 20
 BTC = 100_000_000
+DISTRIBUTOR_BALANCE_RPC_TIMEOUT = 5
+DISTRIBUTOR_FUNDING_TIMEOUT = 360
+DISTRIBUTOR_FUNDING_PROGRESS_INTERVAL = 15
 
 
 class EngineArgs(Protocol):
@@ -102,6 +105,10 @@ class InvoiceDistributor(Protocol):
     def get_balance(self) -> int: ...
     def wait_wallet(self, timeout: int | None = None) -> bool: ...
     def send(self, invoices: list[tuple[str, int]]) -> object: ...
+
+
+class BoundedBalanceDistributor(Protocol):
+    def get_balance(self, timeout: int | None = None) -> int: ...
 
 
 class EngineBase:
@@ -293,8 +300,49 @@ class EngineBase:
                 math.ceil(btc_amount * BTC / DISTRIBUTOR_UTXOS) // BTC,
             )
 
-        while (balance := self.distributor.get_balance()) < btc_amount * BTC:
-            sleep(1)
+        target_balance = int(btc_amount * BTC)
+        started = monotonic()
+        deadline = started + DISTRIBUTOR_FUNDING_TIMEOUT
+        next_progress = started + DISTRIBUTOR_FUNDING_PROGRESS_INTERVAL
+        balance: int | None = None
+        last_error: Exception | None = None
+        bounded_distributor = cast(BoundedBalanceDistributor, self.distributor)
+
+        while monotonic() < deadline:
+            try:
+                balance = bounded_distributor.get_balance(timeout=DISTRIBUTOR_BALANCE_RPC_TIMEOUT)
+                last_error = None
+                if balance >= target_balance:
+                    break
+            except (CoinjoinEmulatorError, OSError, KeyError, TypeError, ValueError) as error:
+                last_error = error
+
+            now = monotonic()
+            if now >= next_progress:
+                current = "unavailable" if balance is None else f"{balance / BTC:.8f} BTC"
+                message = (
+                    f"- still funding distributor after {now - started:.0f}s "
+                    f"(current {current}, target {target_balance / BTC:.8f} BTC)"
+                )
+                if last_error is not None:
+                    message += f"; last balance error: {last_error}"
+                log.info(message)
+                next_progress = now + DISTRIBUTOR_FUNDING_PROGRESS_INTERVAL
+            sleep(min(1, max(0, deadline - now)))
+        else:
+            endpoint = (
+                f"{getattr(self.distributor, 'name', 'distributor')}@"
+                f"{getattr(self.distributor, 'host', 'unknown')}:"
+                f"{getattr(self.distributor, 'port', 'unknown')}"
+            )
+            current = "unavailable" if balance is None else f"{balance / BTC:.8f} BTC"
+            detail = (
+                f"Distributor funding timed out after {DISTRIBUTOR_FUNDING_TIMEOUT}s: "
+                f"endpoint={endpoint}, current={current}, target={target_balance / BTC:.8f} BTC"
+            )
+            if last_error is not None:
+                detail += f", last balance error={last_error}"
+            raise StartupError(detail)
         log.info(f"- funded (current balance {balance / BTC:.8f} BTC)")
 
     def store_client_logs(self, client: EmulatorClient, data_path: str) -> None:

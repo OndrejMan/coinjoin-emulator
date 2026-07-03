@@ -11,7 +11,7 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 
 from manager.engine.configuration import ScenarioConfig, WalletConfig
 from manager.engine.engine_base import EngineBase
-from manager.exceptions import RpcError
+from manager.exceptions import RpcError, StartupError
 
 
 class MinimalEngine(EngineBase):
@@ -194,6 +194,52 @@ class EngineBaseTest(unittest.TestCase):
             engine.update_invoice_payments()
 
         self.assertEqual(engine.invoices, {(0, 0): [("bcrt1destination", 100000)]})
+
+    def test_fund_distributor_uses_bounded_balance_rpc_and_succeeds(self) -> None:
+        engine = MinimalEngine(Mock(), Mock(), "/tmp")
+        engine.node = Mock()
+        engine.distributor = Mock()
+        engine.distributor.get_new_address.return_value = "bcrt1distributor"
+        engine.distributor.get_balance.side_effect = [0, 2 * 100_000_000]
+
+        with patch("manager.engine.engine_base.sleep"):
+            engine.fund_distributor(2)
+
+        self.assertEqual(engine.node.fund_address.call_count, 10)
+        self.assertEqual(engine.distributor.get_balance.call_count, 2)
+        engine.distributor.get_balance.assert_called_with(timeout=5)
+
+    def test_fund_distributor_times_out_with_progress_and_endpoint(self) -> None:
+        engine = MinimalEngine(Mock(), Mock(), "/tmp")
+        engine.node = Mock()
+        engine.distributor = Mock()
+        engine.distributor.name = "wasabi-client-distributor"
+        engine.distributor.host = "127.0.0.1"
+        engine.distributor.port = 37128
+        engine.distributor.get_new_address.return_value = "bcrt1distributor"
+        engine.distributor.get_balance.side_effect = RequestsConnectionError(
+            "coordinator endpoint is unreachable"
+        )
+        clock = [0.0]
+
+        def advance(seconds: float) -> None:
+            clock[0] += seconds
+
+        with (
+            patch("manager.engine.engine_base.DISTRIBUTOR_FUNDING_TIMEOUT", 3),
+            patch("manager.engine.engine_base.DISTRIBUTOR_FUNDING_PROGRESS_INTERVAL", 1),
+            patch("manager.engine.engine_base.monotonic", side_effect=lambda: clock[0]),
+            patch("manager.engine.engine_base.sleep", side_effect=advance),
+            patch("manager.engine.engine_base.log.info") as info,
+            self.assertRaisesRegex(
+                StartupError,
+                r"endpoint=wasabi-client-distributor@127\.0\.0\.1:37128.*"
+                r"last balance error=coordinator endpoint is unreachable",
+            ),
+        ):
+            engine.fund_distributor(2)
+
+        self.assertTrue(any("still funding distributor" in call.args[0] for call in info.call_args_list))
 
     def test_stop_coinjoins_continues_when_a_client_connection_is_reset(self) -> None:
         unavailable_client = Mock()
