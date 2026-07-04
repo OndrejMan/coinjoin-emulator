@@ -1,0 +1,1857 @@
+{
+  "repository": "coinjoin-emulator",
+  "recommendation": "Reimplement PR #1 as a clean review branch or stacked PR series. Do not ask a human reviewer to review the current chronological/fixup-heavy history.",
+  "review_strategy": [
+    "Keep every commit buildable/testable where realistic.",
+    "Separate mechanical refactors from behavior changes.",
+    "Put tests near the feature they validate instead of leaving all tests to the end.",
+    "Keep GHCR publishing separate from runtime behavior.",
+    "Keep AI/Codex/planning files out of the main functional MR unless they are explicitly wanted.",
+    "Do not change default image source silently; expose GHCR through documented flags or a clearly justified commit."
+  ],
+  "commits": [
+    {
+      "number": 1,
+      "phase": "tooling-baseline",
+      "message": "chore: add uv Python project metadata",
+      "type": "chore",
+      "scope": "tooling",
+      "description": "Introduce uv-based dependency management before changing runtime behavior.",
+      "changes": [
+        "Add pyproject.toml",
+        "Add uv.lock",
+        "Declare runtime dependencies",
+        "Declare development dependencies",
+        "Configure pytest integration marker"
+      ],
+      "files": [
+        "pyproject.toml",
+        "uv.lock"
+      ],
+      "verification": [
+        "uv sync --frozen",
+        "uv run pytest --collect-only"
+      ]
+    },
+    {
+      "number": 2,
+      "phase": "tooling-baseline",
+      "message": "chore: align legacy dependency entrypoints with uv",
+      "type": "chore",
+      "scope": "tooling",
+      "description": "Make the old dependency files/scripts intentional after adding uv.",
+      "changes": [
+        "Update or freeze requirements.txt so it does not conflict with pyproject.toml",
+        "Update managePythonVirtualEnvironment.sh to call uv or mark it as legacy",
+        "Document the preferred dependency installation path"
+      ],
+      "files": [
+        "requirements.txt",
+        "managePythonVirtualEnvironment.sh",
+        "README.md"
+      ],
+      "verification": [
+        "uv sync --frozen",
+        "./managePythonVirtualEnvironment.sh works or is explicitly documented as deprecated"
+      ]
+    },
+    {
+      "number": 3,
+      "phase": "tooling-baseline",
+      "message": "chore: add Python lint and type-check configuration",
+      "type": "chore",
+      "scope": "tooling",
+      "description": "Add Ruff, mypy, and pylint configuration without changing application behavior.",
+      "changes": [
+        "Configure Ruff checks",
+        "Configure mypy",
+        "Configure pylint thresholds and disabled rules",
+        "Add lint.py helper"
+      ],
+      "files": [
+        "pyproject.toml",
+        "mypy.ini",
+        "lint.py"
+      ],
+      "verification": [
+        "uv run ruff check .",
+        "uv run mypy .",
+        "uv run pylint ."
+      ]
+    },
+    {
+      "number": 4,
+      "phase": "tooling-baseline",
+      "message": "chore: ignore generated local artifacts",
+      "type": "chore",
+      "scope": "repo",
+      "description": "Keep local Python, Docker, log, mount, and editor artifacts out of commits.",
+      "changes": [
+        "Add Python cache ignores",
+        "Add virtualenv ignores",
+        "Add logs and mounts ignores",
+        "Add macOS/editor ignores",
+        "Add Docker build context ignores"
+      ],
+      "files": [
+        ".gitignore",
+        ".dockerignore"
+      ],
+      "verification": [
+        "Run tests and a local dry run",
+        "Confirm git status stays clean"
+      ]
+    },
+    {
+      "number": 5,
+      "phase": "tooling-baseline",
+      "message": "ci: add static analysis workflow",
+      "type": "ci",
+      "scope": "github-actions",
+      "description": "Add a CI workflow for tests and static checks.",
+      "changes": [
+        "Install dependencies with uv",
+        "Run pytest",
+        "Run Ruff",
+        "Run mypy",
+        "Run pylint"
+      ],
+      "files": [
+        ".github/workflows/static-analysis.yaml"
+      ],
+      "verification": [
+        "Run workflow manually",
+        "Confirm all checks pass"
+      ]
+    },
+    {
+      "number": 6,
+      "phase": "runtime-foundation",
+      "message": "refactor(errors): add emulator-specific exception types",
+      "type": "refactor",
+      "scope": "errors",
+      "description": "Introduce domain-specific exceptions before improving error handling.",
+      "changes": [
+        "Add CoinjoinEmulatorError",
+        "Add StartupError",
+        "Add RpcError",
+        "Replace selected generic exceptions where behavior is unchanged"
+      ],
+      "files": [
+        "manager/exceptions.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_btc_node.py tests/test_joinmarket_rpc.py"
+      ]
+    },
+    {
+      "number": 7,
+      "phase": "runtime-foundation",
+      "message": "feat(logging): add structured emulator log output",
+      "type": "feat",
+      "scope": "logging",
+      "description": "Add consistent timestamped log output while keeping compatibility with existing print-style code.",
+      "changes": [
+        "Add info/warning/error/debug helpers",
+        "Add structured print wrapper",
+        "Infer log level from common error markers",
+        "Respect NO_COLOR and color mode environment variables"
+      ],
+      "files": [
+        "manager/log_output.py",
+        "manager.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_log_output.py",
+        "Run manager command and inspect output format"
+      ]
+    },
+    {
+      "number": 8,
+      "phase": "runtime-foundation",
+      "message": "refactor(cli): split manager entrypoint from command dispatch",
+      "type": "refactor",
+      "scope": "cli",
+      "description": "Move parser construction and dispatch out of manager.py into a testable module.",
+      "changes": [
+        "Create manager/cli.py",
+        "Move argparse setup into build_parser",
+        "Move driver selection into create_driver",
+        "Move engine selection into create_engine",
+        "Move command dispatch into dispatch",
+        "Reduce manager.py to logging installation and sys.exit(main())"
+      ],
+      "files": [
+        "manager.py",
+        "manager/cli.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_cli.py tests/test_manager.py",
+        "uv run python manager.py --help"
+      ]
+    },
+    {
+      "number": 9,
+      "phase": "runtime-foundation",
+      "message": "refactor(application): isolate run cleanup orchestration",
+      "type": "refactor",
+      "scope": "application",
+      "description": "Move run/finally behavior into manager/application.py so cleanup and export paths are testable.",
+      "changes": [
+        "Create run_engine helper",
+        "Handle KeyboardInterrupt with exit code 130",
+        "Store logs before cleanup",
+        "Run driver cleanup even after failures",
+        "Return explicit exit codes"
+      ],
+      "files": [
+        "manager/application.py",
+        "manager/cli.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_application.py"
+      ]
+    },
+    {
+      "number": 10,
+      "phase": "runtime-foundation",
+      "message": "feat(export): add BTC data download support before cleanup",
+      "type": "feat",
+      "scope": "export",
+      "description": "Allow raw Bitcoin Core data to be downloaded before containers or pods are removed.",
+      "changes": [
+        "Add --download-btc-data",
+        "Add --download-path",
+        "Parse name:/path source paths",
+        "Create destination directory",
+        "Call driver.download before cleanup"
+      ],
+      "files": [
+        "manager/cli.py",
+        "manager/application.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_application.py",
+        "Run with --download-btc-data on a small scenario"
+      ]
+    },
+    {
+      "number": 11,
+      "phase": "runtime-foundation",
+      "message": "feat(cli): add runtime image override options",
+      "type": "feat",
+      "scope": "cli",
+      "description": "Allow infrastructure images to be selected explicitly without silently changing global defaults.",
+      "changes": [
+        "Add --btc-node-image",
+        "Add --joinmarket-client-server-image",
+        "Add --irc-server-image",
+        "Add --coinjoin-infrastructure-local-build",
+        "Keep default image prefix empty unless intentionally changed in a separate commit"
+      ],
+      "files": [
+        "manager/cli.py",
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_cli.py tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 12,
+      "phase": "runtime-foundation",
+      "message": "refactor(commands): keep genscen command behind CLI dispatch",
+      "type": "refactor",
+      "scope": "cli",
+      "description": "Update genscen command wiring after the CLI split.",
+      "changes": [
+        "Move genscen invocation into dispatch path",
+        "Keep existing scenario generation behavior",
+        "Add parser/dispatch tests for genscen"
+      ],
+      "files": [
+        "manager/commands/genscen.py",
+        "manager/cli.py",
+        "tests/test_cli.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_cli.py",
+        "uv run python manager.py genscen --help"
+      ]
+    },
+    {
+      "number": 13,
+      "phase": "runtime-foundation",
+      "message": "refactor(utils): add shared batching helper",
+      "type": "refactor",
+      "scope": "utils",
+      "description": "Extract common batch iteration logic used by funding flows.",
+      "changes": [
+        "Add batched helper",
+        "Use helper in invoice payment flow"
+      ],
+      "files": [
+        "manager/utils.py",
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 14,
+      "phase": "bitcoin-core",
+      "message": "refactor(bitcoin): type Bitcoin Core RPC wrapper",
+      "type": "refactor",
+      "scope": "btc-node",
+      "description": "Make the Bitcoin Core RPC wrapper safer before JoinMarket depends on it.",
+      "changes": [
+        "Add typed RPC request/response handling",
+        "Raise RpcError on JSON-RPC errors",
+        "Raise on invalid HTTP responses",
+        "Add typed block and mining helpers"
+      ],
+      "files": [
+        "manager/btc_node.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_btc_node.py"
+      ]
+    },
+    {
+      "number": 15,
+      "phase": "bitcoin-core",
+      "message": "feat(bitcoin): ensure funding wallet is loaded and fee configured",
+      "type": "feat",
+      "scope": "btc-node",
+      "description": "Make the default Bitcoin Core funding wallet robust across fresh and reused datadirs.",
+      "changes": [
+        "List loaded wallets",
+        "Load existing funding wallet when needed",
+        "Create funding wallet if missing",
+        "Set transaction fee for funding transactions"
+      ],
+      "files": [
+        "manager/btc_node.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_btc_node.py",
+        "Run btc-node against fresh datadir",
+        "Run btc-node against reused datadir"
+      ]
+    },
+    {
+      "number": 16,
+      "phase": "bitcoin-core",
+      "message": "feat(bitcoin): support descriptor fallback for wallet creation",
+      "type": "feat",
+      "scope": "btc-node",
+      "description": "Support current Bitcoin Core behavior where legacy BDB wallet creation may fail.",
+      "changes": [
+        "Try legacy non-descriptor wallet creation first",
+        "Detect BDB/deprecated wallet creation errors",
+        "Fallback to descriptor wallet creation",
+        "Support disable_private_keys for JoinMarket RPC wallets"
+      ],
+      "files": [
+        "manager/btc_node.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_btc_node.py",
+        "Create wallet with descriptors disabled when supported",
+        "Create wallet with descriptor fallback when BDB is unavailable"
+      ]
+    },
+    {
+      "number": 17,
+      "phase": "bitcoin-core",
+      "message": "fix(bitcoin): allow extra bitcoind arguments",
+      "type": "fix",
+      "scope": "btc-node",
+      "description": "Allow manager CLI options to pass extra flags into the btc-node run script.",
+      "changes": [
+        "Add --btc-node-arg CLI option",
+        "Pass command override through engine startup",
+        "Forward shell arguments from run.sh to bitcoind"
+      ],
+      "files": [
+        "manager/cli.py",
+        "manager/engine/engine_base.py",
+        "containers/btc-node/run.sh"
+      ],
+      "verification": [
+        "Run with --btc-node-arg=-blocksxor=0",
+        "Confirm bitcoind receives the argument"
+      ]
+    },
+    {
+      "number": 18,
+      "phase": "bitcoin-core",
+      "message": "fix(bitcoin): configure btc-node for Bitcoin Core 29 compatibility",
+      "type": "fix",
+      "scope": "btc-node",
+      "description": "Apply container-level compatibility settings for current Bitcoin Core regtest behavior.",
+      "changes": [
+        "Pin btc-node image platform to linux/amd64 if required",
+        "Enable deprecated create_bdb RPC where needed",
+        "Preserve regtest and txindex settings",
+        "Keep compatibility flags explicit and documented"
+      ],
+      "files": [
+        "containers/btc-node/Dockerfile",
+        "containers/btc-node/bitcoin.conf"
+      ],
+      "verification": [
+        "Build btc-node image",
+        "Run btc-node container",
+        "Confirm wallet creation works"
+      ]
+    },
+    {
+      "number": 19,
+      "phase": "driver-abstraction",
+      "message": "refactor(driver): type common driver interface",
+      "type": "refactor",
+      "scope": "driver",
+      "description": "Update the driver interface so all backends support the same emulator needs.",
+      "changes": [
+        "Type has_image/build/pull/run/stop/download/peek/upload/cleanup",
+        "Add logs method",
+        "Add volumes parameter to run",
+        "Add command parameter to run",
+        "Make stop_many accept an iterable"
+      ],
+      "files": [
+        "manager/driver/__init__.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_docker_driver.py tests/test_kubernetes_driver.py tests/test_podman_driver.py"
+      ]
+    },
+    {
+      "number": 20,
+      "phase": "driver-abstraction",
+      "message": "feat(docker): support volumes commands and persistent logs",
+      "type": "feat",
+      "scope": "docker",
+      "description": "Update Docker driver to support the new engine needs.",
+      "changes": [
+        "Support host volume bindings",
+        "Support container command override",
+        "Disable immediate auto-remove",
+        "Remove stale containers before start",
+        "Expose container logs",
+        "Remove containers during stop/cleanup"
+      ],
+      "files": [
+        "manager/driver/docker.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_docker_driver.py",
+        "Run Docker scenario and inspect logs after failure"
+      ]
+    },
+    {
+      "number": 21,
+      "phase": "driver-abstraction",
+      "message": "refactor(podman): replace Python client with podman CLI driver",
+      "type": "refactor",
+      "scope": "podman",
+      "description": "Rewrite Podman driver around the podman CLI for more predictable local behavior.",
+      "changes": [
+        "Use subprocess calls to podman",
+        "Create or reuse podman network",
+        "Implement image existence checks",
+        "Implement build and pull",
+        "Implement run/stop/download/upload/logs",
+        "Implement cleanup by image markers"
+      ],
+      "files": [
+        "manager/driver/podman.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_podman_driver.py",
+        "Run minimal Podman scenario"
+      ]
+    },
+    {
+      "number": 22,
+      "phase": "driver-abstraction",
+      "message": "feat(kubernetes): add managed labels and safer cleanup",
+      "type": "feat",
+      "scope": "kubernetes",
+      "description": "Make Kubernetes resources easier to identify and clean up safely.",
+      "changes": [
+        "Add managed-by labels",
+        "Apply labels to pods and services",
+        "Cleanup only emulator-managed resources",
+        "Close port forwards during stop"
+      ],
+      "files": [
+        "manager/driver/kubernetes.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_kubernetes_driver.py"
+      ]
+    },
+    {
+      "number": 23,
+      "phase": "driver-abstraction",
+      "message": "feat(kubernetes): support hostPath volumes and storage ownership",
+      "type": "feat",
+      "scope": "kubernetes",
+      "description": "Allow btc-node data to be written to shared Kubernetes storage.",
+      "changes": [
+        "Map driver volumes to Kubernetes hostPath volumes",
+        "Mount host paths into pods",
+        "Read optional UID/GID from volume metadata",
+        "Apply runAsUser and runAsGroup when configured"
+      ],
+      "files": [
+        "manager/driver/kubernetes.py",
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_kubernetes_driver.py",
+        "Run Kubernetes btcFolder scenario on shared storage"
+      ]
+    },
+    {
+      "number": 24,
+      "phase": "driver-abstraction",
+      "message": "feat(kubernetes): add local port forwarding",
+      "type": "feat",
+      "scope": "kubernetes",
+      "description": "Expose pod services through local port forwards instead of relying only on NodePort access.",
+      "changes": [
+        "Add PortForwardServer",
+        "Bridge local sockets to Kubernetes portforward streams",
+        "Retry failed port-forward setup",
+        "Return local forwarded ports to manager",
+        "Add --disable-port-forward CLI option"
+      ],
+      "files": [
+        "manager/driver/kubernetes.py",
+        "manager/cli.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_kubernetes_driver.py",
+        "Run Kubernetes scenario with port forwarding enabled",
+        "Run Kubernetes scenario with --disable-port-forward"
+      ]
+    },
+    {
+      "number": 25,
+      "phase": "engine-base",
+      "message": "refactor(engine): add typed engine protocols",
+      "type": "refactor",
+      "scope": "engine",
+      "description": "Define protocols for engine args, drivers, clients, and distributors.",
+      "changes": [
+        "Add EngineArgs protocol",
+        "Add DriverProtocol protocol",
+        "Add EmulatorClient protocol",
+        "Add InvoiceDistributor protocol",
+        "Use typed client and invoice collections"
+      ],
+      "files": [
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run mypy manager/engine/engine_base.py",
+        "uv run pytest tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 26,
+      "phase": "engine-base",
+      "message": "feat(engine): resolve image references with overrides",
+      "type": "feat",
+      "scope": "engine",
+      "description": "Centralize image reference selection for local builds, prefixed images, and exact image overrides.",
+      "changes": [
+        "Add image_ref helper",
+        "Use exact image override when provided",
+        "Use image prefix otherwise",
+        "Allow local build for selected infrastructure images"
+      ],
+      "files": [
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 27,
+      "phase": "engine-base",
+      "message": "feat(engine): support external btc-node datadir mounts",
+      "type": "feat",
+      "scope": "engine",
+      "description": "Add btcFolder-driven Bitcoin Core datadir mounting for Docker, Podman, and Kubernetes.",
+      "changes": [
+        "Add btcFolder handling in btc-node startup",
+        "Mount host folder to /home/bitcoin/data",
+        "Pass optional storage UID/GID metadata",
+        "Use internal container storage when btcFolder is omitted"
+      ],
+      "files": [
+        "manager/cli.py",
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_engine_base.py",
+        "Run with --btcFolder on Docker",
+        "Run with --btcFolder on Kubernetes"
+      ]
+    },
+    {
+      "number": 28,
+      "phase": "engine-base",
+      "message": "fix(engine): fail when clients cannot start",
+      "type": "fix",
+      "scope": "engine",
+      "description": "Avoid silently continuing experiments with missing clients.",
+      "changes": [
+        "Retry failed client startup",
+        "Abort after retry exhaustion",
+        "Validate number of started clients",
+        "Raise clear error when no clients start"
+      ],
+      "files": [
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 29,
+      "phase": "engine-base",
+      "message": "fix(engine): add distributor funding timeout diagnostics",
+      "type": "fix",
+      "scope": "engine",
+      "description": "Make distributor funding failures diagnosable instead of hanging indefinitely.",
+      "changes": [
+        "Add funding timeout",
+        "Add progress interval logging",
+        "Capture last balance error",
+        "Include endpoint and target/current balances in timeout error"
+      ],
+      "files": [
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 30,
+      "phase": "engine-base",
+      "message": "feat(export): write deterministic emulator artifact layout",
+      "type": "feat",
+      "scope": "export",
+      "description": "Normalize scenario, block, client, and archive output paths.",
+      "changes": [
+        "Create logs/<timestamp>_<scenario>/coinjoin_emulator_data",
+        "Write scenario.json",
+        "Export decoded blocks as JSON",
+        "Export client coins/unspent/keys where available",
+        "Create emulation_logs.zip"
+      ],
+      "files": [
+        "manager/engine/engine_base.py"
+      ],
+      "outputs": [
+        "logs/<run>/coinjoin_emulator_data/scenario.json",
+        "logs/<run>/coinjoin_emulator_data/data/btc-node/block_*.json",
+        "logs/<run>/coinjoin_emulator_data/emulation_logs.zip"
+      ],
+      "verification": [
+        "uv run pytest tests/test_engine_base.py",
+        "uv run pytest tests/test_historical_run_archives.py"
+      ]
+    },
+    {
+      "number": 31,
+      "phase": "engine-base",
+      "message": "feat(engine): add configurable run timezone",
+      "type": "feat",
+      "scope": "logging",
+      "description": "Make run directory timestamps deterministic and configurable.",
+      "changes": [
+        "Add --run-timezone",
+        "Validate IANA timezone names",
+        "Use timezone when naming run directories"
+      ],
+      "files": [
+        "manager/cli.py",
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_cli.py tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 32,
+      "phase": "scenario-model",
+      "message": "refactor(config): type scenario parsing",
+      "type": "refactor",
+      "scope": "config",
+      "description": "Make scenario parsing explicit before adding protocol-specific config.",
+      "changes": [
+        "Type JSON input as dict[str, object]",
+        "Validate wallets is a list",
+        "Validate each wallet is an object",
+        "Validate funds is a list",
+        "Reject invalid fund entries"
+      ],
+      "files": [
+        "manager/engine/configuration.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_configuration.py"
+      ]
+    },
+    {
+      "number": 33,
+      "phase": "scenario-model",
+      "message": "feat(config): support nested Wasabi wallet config",
+      "type": "feat",
+      "scope": "config",
+      "description": "Allow Wasabi-specific wallet settings under a nested wasabi object while keeping old flat fields.",
+      "changes": [
+        "Parse wallet.wasabi.anon_score_target",
+        "Parse wallet.wasabi.redcoin_isolation",
+        "Parse wallet.wasabi.skip_rounds",
+        "Keep flat anon_score_target/redcoin_isolation/skip_rounds compatible"
+      ],
+      "files": [
+        "manager/engine/configuration.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_configuration.py"
+      ]
+    },
+    {
+      "number": 34,
+      "phase": "scenario-model",
+      "message": "feat(config): support nested JoinMarket wallet config",
+      "type": "feat",
+      "scope": "config",
+      "description": "Allow JoinMarket maker/taker roles to be configured per wallet.",
+      "changes": [
+        "Add JoinMarketRole enum",
+        "Add JoinMarketConfig dataclass",
+        "Parse wallet.joinmarket.role",
+        "Keep legacy wallet.type compatible"
+      ],
+      "files": [
+        "manager/engine/configuration.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_configuration.py tests/test_joinmarket_scenario.py"
+      ]
+    },
+    {
+      "number": 35,
+      "phase": "scenario-model",
+      "message": "fix(config): reject invalid JoinMarket roles",
+      "type": "fix",
+      "scope": "config",
+      "description": "Fix the behavior where every non-maker role can accidentally become taker.",
+      "changes": [
+        "Accept only maker and taker",
+        "Raise ValueError on unknown role",
+        "Include wallet index or scenario context when possible",
+        "Add regression test for invalid role"
+      ],
+      "files": [
+        "manager/engine/configuration.py",
+        "tests/test_configuration.py",
+        "tests/test_joinmarket_scenario.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_configuration.py tests/test_joinmarket_scenario.py"
+      ]
+    },
+    {
+      "number": 36,
+      "phase": "scenario-model",
+      "message": "fix(config): serialize enums safely in scenario artifacts",
+      "type": "fix",
+      "scope": "config",
+      "description": "Ensure scenario.json exports are valid JSON even when config contains enum values.",
+      "changes": [
+        "Add recursive JSON-safe conversion",
+        "Serialize enum values as strings",
+        "Apply conversion in ScenarioConfig.to_dict"
+      ],
+      "files": [
+        "manager/engine/configuration.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_configuration.py tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 37,
+      "phase": "joinmarket-container",
+      "message": "feat(joinmarket): add client-server container image",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Add the JoinMarket client-server container wrapper used by the emulator.",
+      "changes": [
+        "Add JoinMarket client-server Dockerfile",
+        "Use configurable JOINMARKET_TEST_IMAGE build arg",
+        "Copy JoinMarket config",
+        "Copy runtime scripts"
+      ],
+      "files": [
+        "containers/joinmarket-client-server/Dockerfile",
+        "containers/joinmarket-client-server/joinmarket.cfg",
+        "containers/joinmarket-client-server/run.sh"
+      ],
+      "verification": [
+        "docker build containers/joinmarket-client-server",
+        "Start container locally"
+      ]
+    },
+    {
+      "number": 38,
+      "phase": "joinmarket-container",
+      "message": "feat(joinmarket): select Bitcoin Core RPC wallet per container",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Let each JoinMarket container use its own Bitcoin Core RPC wallet.",
+      "changes": [
+        "Read JM_RPC_WALLET_FILE environment variable",
+        "Patch joinmarket.cfg at startup",
+        "Log selected RPC wallet",
+        "Preserve jmwalletd logs"
+      ],
+      "files": [
+        "containers/joinmarket-client-server/run.sh",
+        "manager/engine/joinmarket/environment.py"
+      ],
+      "verification": [
+        "Start two JoinMarket containers with different JM_RPC_WALLET_FILE values",
+        "Confirm each uses the requested wallet"
+      ]
+    },
+    {
+      "number": 39,
+      "phase": "joinmarket-container",
+      "message": "feat(joinmarket): add descriptor regtest fallback entrypoint",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Patch JoinMarket jmwalletd startup so descriptor wallets can still obtain regtest mining addresses when needed.",
+      "changes": [
+        "Add jmwalletd_entrypoint.py",
+        "Parse --descriptor-regtest-fallback flags",
+        "Read JM_DESCRIPTOR_REGTEST_FALLBACK",
+        "Patch RegtestBitcoinCoreInterface RPC behavior",
+        "Fall back to Bitcoin Core funding wallet getnewaddress when descriptor wallet has no keys"
+      ],
+      "files": [
+        "containers/joinmarket-client-server/jmwalletd_entrypoint.py",
+        "containers/joinmarket-client-server/run.sh",
+        "manager/cli.py",
+        "manager/engine/joinmarket/environment.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_jmwalletd_entrypoint.py",
+        "Run JoinMarket scenario with --joinmarket-descriptor-regtest-fallback"
+      ]
+    },
+    {
+      "number": 40,
+      "phase": "joinmarket-container",
+      "message": "fix(joinmarket): retry jmwalletd startup with logs",
+      "type": "fix",
+      "scope": "joinmarket",
+      "description": "Make JoinMarket wallet RPC startup more robust and debuggable.",
+      "changes": [
+        "Retry jmwalletd startup",
+        "Append stdout/stderr to jmwalletd.log",
+        "Fail after max attempts",
+        "Preserve status code"
+      ],
+      "files": [
+        "containers/joinmarket-client-server/run.sh"
+      ],
+      "verification": [
+        "Force jmwalletd failure",
+        "Confirm retry messages and final failure are logged"
+      ]
+    },
+    {
+      "number": 41,
+      "phase": "joinmarket-client",
+      "message": "refactor(joinmarket): split JoinMarket RPC client into mixins",
+      "type": "refactor",
+      "scope": "joinmarket",
+      "description": "Replace the large JoinMarket client file with smaller focused modules.",
+      "changes": [
+        "Create joinmarket client package",
+        "Move common types/constants",
+        "Move RPC behavior",
+        "Move wallet operations",
+        "Move maker operations",
+        "Move taker operations",
+        "Keep compatibility re-export from joinmarket_client.py"
+      ],
+      "files": [
+        "manager/wasabi_clients/joinmarket_client.py",
+        "manager/wasabi_clients/joinmarket/__init__.py",
+        "manager/wasabi_clients/joinmarket/client.py",
+        "manager/wasabi_clients/joinmarket/types.py",
+        "manager/wasabi_clients/joinmarket/rpc.py",
+        "manager/wasabi_clients/joinmarket/wallet.py",
+        "manager/wasabi_clients/joinmarket/maker.py",
+        "manager/wasabi_clients/joinmarket/taker.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_client.py tests/test_joinmarket_rpc.py tests/test_joinmarket_wallet.py tests/test_joinmarket_maker.py tests/test_joinmarket_taker.py"
+      ]
+    },
+    {
+      "number": 42,
+      "phase": "joinmarket-client",
+      "message": "fix(joinmarket): refresh wallet auth on 401 responses",
+      "type": "fix",
+      "scope": "joinmarket",
+      "description": "Make JoinMarket RPC calls recover from expired or missing wallet tokens.",
+      "changes": [
+        "Unlock wallet before authenticated calls",
+        "Retry once after 401",
+        "Store access and refresh tokens",
+        "Raise RpcError when authentication fails"
+      ],
+      "files": [
+        "manager/wasabi_clients/joinmarket/rpc.py",
+        "manager/wasabi_clients/joinmarket/wallet.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_rpc.py tests/test_joinmarket_wallet.py"
+      ]
+    },
+    {
+      "number": 43,
+      "phase": "joinmarket-client",
+      "message": "feat(joinmarket): implement wallet balance and address operations",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Add wallet operations needed for funding and round orchestration.",
+      "changes": [
+        "Create wallet",
+        "Unlock wallet",
+        "Wait for wallet readiness",
+        "Read wallet balance",
+        "Get new address",
+        "List UTXOs where supported"
+      ],
+      "files": [
+        "manager/wasabi_clients/joinmarket/wallet.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_wallet.py"
+      ]
+    },
+    {
+      "number": 44,
+      "phase": "joinmarket-client",
+      "message": "feat(joinmarket): implement maker control RPC calls",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Allow the emulator to start and stop JoinMarket maker/yieldgen behavior.",
+      "changes": [
+        "Add start_maker",
+        "Handle maker already-running conflicts",
+        "Add stop_maker",
+        "Track maker_running from session status"
+      ],
+      "files": [
+        "manager/wasabi_clients/joinmarket/maker.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_maker.py"
+      ]
+    },
+    {
+      "number": 45,
+      "phase": "joinmarket-client",
+      "message": "feat(joinmarket): implement taker coinjoin RPC calls",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Allow the emulator to start and stop JoinMarket taker rounds.",
+      "changes": [
+        "Add start_coinjoin",
+        "Add stop_taker",
+        "Track coinjoin_in_process",
+        "Expose stop_coinjoin compatibility method"
+      ],
+      "files": [
+        "manager/wasabi_clients/joinmarket/taker.py",
+        "manager/wasabi_clients/joinmarket/client.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_taker.py tests/test_joinmarket_client.py"
+      ]
+    },
+    {
+      "number": 46,
+      "phase": "joinmarket-engine",
+      "message": "feat(joinmarket): add engine constants and environment builder",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Centralize JoinMarket runtime constants and container environment creation.",
+      "changes": [
+        "Add distributor RPC wallet constant",
+        "Add coinjoin amount constant",
+        "Add counterparties constant",
+        "Add maker minimum size constant",
+        "Add round timeout and settle constants",
+        "Build JoinMarket container environment"
+      ],
+      "files": [
+        "manager/engine/joinmarket/constants.py",
+        "manager/engine/joinmarket/environment.py",
+        "manager/engine/joinmarket/__init__.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_environment.py"
+      ]
+    },
+    {
+      "number": 47,
+      "phase": "joinmarket-engine",
+      "message": "feat(joinmarket): add default JoinMarket scenario",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Move the default JoinMarket scenario into a dedicated module.",
+      "changes": [
+        "Create default_joinmarket_scenario",
+        "Include multiple makers",
+        "Include at least one taker",
+        "Include finite target rounds",
+        "Preserve existing default funds and delays"
+      ],
+      "files": [
+        "manager/engine/joinmarket/scenario.py",
+        "manager/engine/joinmarket_engine.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_default_joinmarket_scenario.py tests/test_joinmarket_scenario.py"
+      ]
+    },
+    {
+      "number": 48,
+      "phase": "joinmarket-engine",
+      "message": "refactor(joinmarket): compose engine from focused mixins",
+      "type": "refactor",
+      "scope": "joinmarket",
+      "description": "Reduce JoinmarketEngine into a small composition root.",
+      "changes": [
+        "Create lifecycle mixin",
+        "Create funding mixin",
+        "Create round events mixin",
+        "Create round orchestration mixin",
+        "Create runner mixin",
+        "Keep JoinmarketEngine responsible for wiring"
+      ],
+      "files": [
+        "manager/engine/joinmarket_engine.py",
+        "manager/engine/joinmarket/lifecycle.py",
+        "manager/engine/joinmarket/funding.py",
+        "manager/engine/joinmarket/events.py",
+        "manager/engine/joinmarket/rounds.py",
+        "manager/engine/joinmarket/runner.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_engine.py tests/test_joinmarket_lifecycle.py tests/test_joinmarket_runner.py"
+      ]
+    },
+    {
+      "number": 49,
+      "phase": "joinmarket-engine",
+      "message": "feat(joinmarket): start IRC and distributor infrastructure",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Start the infrastructure required before JoinMarket clients can participate.",
+      "changes": [
+        "Prepare btc-node, joinmarket-client-server, and irc-server images",
+        "Start IRC server",
+        "Create distributor Bitcoin Core RPC wallet",
+        "Start distributor container",
+        "Wait for distributor wallet readiness",
+        "Dump logs on startup timeout"
+      ],
+      "files": [
+        "manager/engine/joinmarket/lifecycle.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_lifecycle.py"
+      ]
+    },
+    {
+      "number": 50,
+      "phase": "joinmarket-engine",
+      "message": "feat(joinmarket): start maker and taker clients",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Start JoinMarket clients from scenario wallet roles.",
+      "changes": [
+        "Create deterministic per-client Bitcoin Core RPC wallet",
+        "Start one client-server container per wallet",
+        "Pass maker/taker role into client wrapper",
+        "Pass delay and stop settings",
+        "Use proxy/control host mapping consistently",
+        "Wait for wallet readiness"
+      ],
+      "files": [
+        "manager/engine/joinmarket/lifecycle.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_lifecycle.py"
+      ]
+    },
+    {
+      "number": 51,
+      "phase": "joinmarket-engine",
+      "message": "fix(joinmarket): require at least one maker and taker",
+      "type": "fix",
+      "scope": "joinmarket",
+      "description": "Fail early when a JoinMarket scenario cannot produce a CoinJoin.",
+      "changes": [
+        "Validate started client count",
+        "Require at least one taker",
+        "Require at least one maker",
+        "Return clear errors"
+      ],
+      "files": [
+        "manager/engine/joinmarket/lifecycle.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_lifecycle.py tests/test_joinmarket_engine.py"
+      ]
+    },
+    {
+      "number": 52,
+      "phase": "joinmarket-engine",
+      "message": "feat(joinmarket): fund client invoices directly from Bitcoin Core",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Bypass JoinMarket distributor pre-funding and fund deposit invoices directly from the Bitcoin Core funding wallet.",
+      "changes": [
+        "Override fund_distributor for JoinMarket",
+        "Pay addressed invoices with BtcNode.fund_address",
+        "Mine confirmation block after funding",
+        "Log funding progress"
+      ],
+      "files": [
+        "manager/engine/joinmarket/funding.py",
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_funding.py tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 53,
+      "phase": "joinmarket-engine",
+      "message": "feat(joinmarket): orchestrate maker startup and taker rounds",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Implement the main JoinMarket emulation behavior.",
+      "changes": [
+        "Start makers after configured delay",
+        "Wait for maker confirmed balance",
+        "Wait for enough running makers",
+        "Start taker coinjoin when balance and maker conditions are met",
+        "Limit to one active taker round",
+        "Track started round count"
+      ],
+      "files": [
+        "manager/engine/joinmarket/rounds.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_runner.py tests/test_joinmarket_engine.py"
+      ]
+    },
+    {
+      "number": 54,
+      "phase": "joinmarket-engine",
+      "message": "feat(joinmarket): fail stalled or inactive rounds",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Record failures when JoinMarket rounds stop or do not produce mined outputs.",
+      "changes": [
+        "Expire rounds after timeout blocks",
+        "Mark inactive taker rounds as failed",
+        "Stop affected taker client",
+        "Record failure reason"
+      ],
+      "files": [
+        "manager/engine/joinmarket/rounds.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_runner.py"
+      ]
+    },
+    {
+      "number": 55,
+      "phase": "joinmarket-engine",
+      "message": "feat(joinmarket): mine blocks during runner loop",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Drive JoinMarket progress by mining regtest blocks during the engine loop.",
+      "changes": [
+        "Mine initial confirmation blocks",
+        "Update block height each loop",
+        "Update invoice payments",
+        "Update JoinMarket round state",
+        "Mine blocks until round/block limit",
+        "Add final settlement blocks"
+      ],
+      "files": [
+        "manager/engine/joinmarket/runner.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_runner.py"
+      ]
+    },
+    {
+      "number": 56,
+      "phase": "joinmarket-ground-truth",
+      "message": "feat(joinmarket): record round lifecycle events",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Store emulator-level JoinMarket round events for downstream evaluation.",
+      "changes": [
+        "Record round id",
+        "Record taker",
+        "Record candidate makers",
+        "Record amount",
+        "Record counterparties",
+        "Record mixdepth",
+        "Record destination address",
+        "Record start block and chain height"
+      ],
+      "files": [
+        "manager/engine/joinmarket/rounds.py",
+        "manager/engine/joinmarket/events.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_events.py"
+      ]
+    },
+    {
+      "number": 57,
+      "phase": "joinmarket-ground-truth",
+      "message": "feat(joinmarket): confirm round events from mined transactions",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Match started JoinMarket events to mined block transactions by destination output.",
+      "changes": [
+        "Scan blocks from start height to tip",
+        "Inspect transaction outputs",
+        "Match destination address",
+        "Attach txid",
+        "Attach block height",
+        "Mark event confirmed"
+      ],
+      "files": [
+        "manager/engine/joinmarket/events.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_events.py"
+      ]
+    },
+    {
+      "number": 58,
+      "phase": "joinmarket-ground-truth",
+      "message": "feat(joinmarket): export round events JSON artifact",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Persist JoinMarket ground-truth events into the emulator artifact layout.",
+      "changes": [
+        "Write joinmarket_round_events.json",
+        "Sort events deterministically",
+        "Preserve unmatched events",
+        "Include txid and block height when matched"
+      ],
+      "files": [
+        "manager/engine/joinmarket/events.py"
+      ],
+      "outputs": [
+        "coinjoin_emulator_data/data/joinmarket_round_events.json"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_events.py",
+        "Run JoinMarket scenario and inspect JSON artifact"
+      ]
+    },
+    {
+      "number": 59,
+      "phase": "wasabi-preservation",
+      "message": "refactor(wasabi): adapt Wasabi wrappers to typed base API",
+      "type": "refactor",
+      "scope": "wasabi",
+      "description": "Keep Wasabi behavior compatible after EngineBase, protocol, and driver interface changes.",
+      "changes": [
+        "Use image_ref helper",
+        "Use structured logging",
+        "Use typed client/distributor expectations",
+        "Add protocol types for backend/coordinator wrappers",
+        "Preserve existing Wasabi startup flow"
+      ],
+      "files": [
+        "manager/engine/wasabi_engine.py",
+        "manager/wasabi_backend.py",
+        "manager/wasabi_backend_26.py",
+        "manager/wasabi_backend_factory.py",
+        "manager/wasabi_backend_protocol.py",
+        "manager/wasabi_coordinator.py",
+        "manager/wasabi_coordinator_protocol.py",
+        "manager/wasabi_clients/__init__.py",
+        "manager/wasabi_clients/wasabi_client_base.py",
+        "manager/wasabi_clients/wasabi_client_v1.py",
+        "manager/wasabi_clients/wasabi_client_v2.py",
+        "manager/wasabi_clients/wasabi_client_v204.py",
+        "manager/wasabi_clients/wasabi_client_v26.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_wasabi_engine.py tests/test_wasabi_client_base.py",
+        "Run default Wasabi scenario"
+      ]
+    },
+    {
+      "number": 60,
+      "phase": "wasabi-images",
+      "message": "build(wasabi): update Wasabi Docker image base variants",
+      "type": "build",
+      "scope": "wasabi",
+      "description": "Apply Wasabi Dockerfile base image changes in an isolated commit.",
+      "changes": [
+        "Update Wasabi backend Dockerfiles",
+        "Update Wasabi client Dockerfiles",
+        "Update Wasabi coordinator Dockerfile",
+        "Keep runtime stages on aspnet/runtime images unless SDK is proven necessary",
+        "Document any SDK-runtime exception explicitly"
+      ],
+      "files": [
+        "containers/wasabi-backend/2.0.4/Dockerfile",
+        "containers/wasabi-backend/2.6.0/Dockerfile",
+        "containers/wasabi-clients/2.0.2/Dockerfile",
+        "containers/wasabi-clients/2.0.2.1/Dockerfile",
+        "containers/wasabi-clients/2.0.2.2/Dockerfile",
+        "containers/wasabi-clients/2.0.3/Dockerfile",
+        "containers/wasabi-clients/2.0.4/Dockerfile",
+        "containers/wasabi-clients/2.0.4.1/Dockerfile",
+        "containers/wasabi-clients/2.0.5/Dockerfile",
+        "containers/wasabi-clients/2.6.0/Dockerfile",
+        "containers/wasabi-coordinator/2.6.0/Dockerfile"
+      ],
+      "verification": [
+        "Build all touched Wasabi images",
+        "Run at least one Wasabi scenario",
+        "Confirm final image stages do not unnecessarily use SDK images"
+      ]
+    },
+    {
+      "number": 61,
+      "phase": "image-publishing",
+      "message": "build: add root manager Docker image",
+      "type": "build",
+      "scope": "docker",
+      "description": "Add a top-level image for running the Python manager in a container.",
+      "changes": [
+        "Add root Dockerfile",
+        "Install uv/project dependencies",
+        "Set manager command entrypoint or working directory"
+      ],
+      "files": [
+        "Dockerfile"
+      ],
+      "verification": [
+        "docker build -t coinjoin-emulator-manager .",
+        "Run manager --help inside image"
+      ]
+    },
+    {
+      "number": 62,
+      "phase": "image-publishing",
+      "message": "ci(images): publish btc-node image to GHCR",
+      "type": "ci",
+      "scope": "github-actions",
+      "description": "Publish the btc-node image through GitHub Container Registry.",
+      "changes": [
+        "Add workflow_dispatch trigger",
+        "Trigger on btc-node container changes",
+        "Login to ghcr.io",
+        "Build with Buildx",
+        "Publish latest and sha tags",
+        "Use lowercase owner"
+      ],
+      "files": [
+        ".github/workflows/btc-node.yaml"
+      ],
+      "verification": [
+        "Run workflow manually",
+        "Confirm ghcr.io image is published"
+      ]
+    },
+    {
+      "number": 63,
+      "phase": "image-publishing",
+      "message": "ci(images): publish IRC server image to GHCR",
+      "type": "ci",
+      "scope": "github-actions",
+      "description": "Publish the IRC server image needed by JoinMarket.",
+      "changes": [
+        "Add irc-server workflow",
+        "Trigger on container changes",
+        "Build amd64 and arm64 where supported",
+        "Publish latest and sha tags"
+      ],
+      "files": [
+        ".github/workflows/irc-server.yaml"
+      ],
+      "verification": [
+        "Run workflow manually",
+        "Confirm irc-server image is published"
+      ]
+    },
+    {
+      "number": 64,
+      "phase": "image-publishing",
+      "message": "ci(images): publish JoinMarket client-server image to GHCR",
+      "type": "ci",
+      "scope": "github-actions",
+      "description": "Build the JoinMarket base image and publish the emulator JoinMarket client-server image.",
+      "changes": [
+        "Clone JoinMarket upstream in workflow",
+        "Build joinmarket-test base image",
+        "Push joinmarket-test to GHCR",
+        "Build joinmarket-client-server using build arg",
+        "Publish latest and sha tags"
+      ],
+      "files": [
+        ".github/workflows/joinmarket-client-server.yaml"
+      ],
+      "verification": [
+        "Run workflow manually",
+        "Pull and start published joinmarket-client-server image"
+      ]
+    },
+    {
+      "number": 65,
+      "phase": "image-publishing",
+      "message": "ci(images): publish manager image to GHCR",
+      "type": "ci",
+      "scope": "github-actions",
+      "description": "Publish the repository root manager image.",
+      "changes": [
+        "Add root image workflow",
+        "Build from repository root",
+        "Publish multi-arch image",
+        "Publish latest and sha tags"
+      ],
+      "files": [
+        ".github/workflows/main.yaml"
+      ],
+      "verification": [
+        "Run workflow manually",
+        "Pull published manager image"
+      ]
+    },
+    {
+      "number": 66,
+      "phase": "image-publishing",
+      "message": "ci(images): publish Wasabi images to GHCR",
+      "type": "ci",
+      "scope": "github-actions",
+      "description": "Update Wasabi image publishing workflows from Docker Hub style publishing to GHCR.",
+      "changes": [
+        "Publish Wasabi backend images",
+        "Publish Wasabi client images",
+        "Publish Wasabi coordinator images",
+        "Use GHCR login",
+        "Use Buildx metadata tags",
+        "Use workflow_dispatch triggers"
+      ],
+      "files": [
+        ".github/workflows/wasabi-backend.yaml",
+        ".github/workflows/wasabi-clients.yaml",
+        ".github/workflows/wasabi-coordinator.yaml"
+      ],
+      "verification": [
+        "Run workflows manually",
+        "Pull each published image tag"
+      ]
+    },
+    {
+      "number": 67,
+      "phase": "tests",
+      "message": "test(cli): cover parser dispatch application and logging behavior",
+      "type": "test",
+      "scope": "cli",
+      "description": "Add tests for command parsing, driver creation, engine creation, dispatch paths, cleanup, and logging.",
+      "changes": [
+        "Test default driver and engine",
+        "Test image override arguments",
+        "Test btcFolder and download arguments",
+        "Test clean dispatch",
+        "Test genscen dispatch",
+        "Test invalid driver and engine errors",
+        "Test application cleanup after failure",
+        "Test structured log formatting"
+      ],
+      "files": [
+        "tests/test_cli.py",
+        "tests/test_manager.py",
+        "tests/test_application.py",
+        "tests/test_log_output.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_cli.py tests/test_manager.py tests/test_application.py tests/test_log_output.py"
+      ]
+    },
+    {
+      "number": 68,
+      "phase": "tests",
+      "message": "test(bitcoin): cover Bitcoin Core wallet behavior",
+      "type": "test",
+      "scope": "btc-node",
+      "description": "Add tests for Bitcoin RPC wrapper changes.",
+      "changes": [
+        "Test wallet RPC path",
+        "Test RPC error handling",
+        "Test funding wallet loading",
+        "Test wallet creation",
+        "Test descriptor fallback"
+      ],
+      "files": [
+        "tests/test_btc_node.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_btc_node.py"
+      ]
+    },
+    {
+      "number": 69,
+      "phase": "tests",
+      "message": "test(config): cover scenario parsing and artifact serialization",
+      "type": "test",
+      "scope": "config",
+      "description": "Add scenario-model tests for Wasabi and JoinMarket config.",
+      "changes": [
+        "Test typed scenario validation",
+        "Test nested Wasabi config",
+        "Test nested JoinMarket config",
+        "Test invalid JoinMarket role rejection",
+        "Test enum-safe serialization"
+      ],
+      "files": [
+        "tests/test_configuration.py",
+        "tests/test_joinmarket_scenario.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_configuration.py tests/test_joinmarket_scenario.py"
+      ]
+    },
+    {
+      "number": 70,
+      "phase": "tests",
+      "message": "test(driver): cover Docker Podman and Kubernetes driver changes",
+      "type": "test",
+      "scope": "driver",
+      "description": "Add unit tests for driver command rendering and lifecycle behavior.",
+      "changes": [
+        "Test Docker volume and command options",
+        "Test Docker logs and cleanup",
+        "Test Podman CLI commands",
+        "Test Kubernetes volume manifest rendering",
+        "Test Kubernetes port-forward behavior",
+        "Test Kubernetes cleanup labels"
+      ],
+      "files": [
+        "tests/test_docker_driver.py",
+        "tests/test_podman_driver.py",
+        "tests/test_kubernetes_driver.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_docker_driver.py tests/test_podman_driver.py tests/test_kubernetes_driver.py"
+      ]
+    },
+    {
+      "number": 71,
+      "phase": "tests",
+      "message": "test(joinmarket): cover container entrypoint and client RPC wrapper",
+      "type": "test",
+      "scope": "joinmarket",
+      "description": "Test JoinMarket container and client behavior without requiring a full run.",
+      "changes": [
+        "Test boolean parsing",
+        "Test descriptor fallback install",
+        "Test no-keys getnewaddress detection",
+        "Test argv passthrough to jmwalletd",
+        "Test RPC auth",
+        "Test wallet creation and unlock",
+        "Test balance parsing",
+        "Test maker start/stop",
+        "Test taker coinjoin start/stop"
+      ],
+      "files": [
+        "tests/test_joinmarket_jmwalletd_entrypoint.py",
+        "tests/test_joinmarket_client.py",
+        "tests/test_joinmarket_rpc.py",
+        "tests/test_joinmarket_wallet.py",
+        "tests/test_joinmarket_maker.py",
+        "tests/test_joinmarket_taker.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_jmwalletd_entrypoint.py tests/test_joinmarket_client.py tests/test_joinmarket_rpc.py tests/test_joinmarket_wallet.py tests/test_joinmarket_maker.py tests/test_joinmarket_taker.py"
+      ]
+    },
+    {
+      "number": 72,
+      "phase": "tests",
+      "message": "test(joinmarket): cover scenario lifecycle funding rounds and events",
+      "type": "test",
+      "scope": "joinmarket",
+      "description": "Add tests for JoinMarket engine behavior without launching real containers.",
+      "changes": [
+        "Test default scenario",
+        "Test lifecycle startup",
+        "Test missing maker/taker validation",
+        "Test invoice funding",
+        "Test maker/taker orchestration",
+        "Test round timeout/failure",
+        "Test round event matching/export",
+        "Test runner loop"
+      ],
+      "files": [
+        "tests/joinmarket_helpers.py",
+        "tests/test_default_joinmarket_scenario.py",
+        "tests/test_joinmarket_engine.py",
+        "tests/test_joinmarket_environment.py",
+        "tests/test_joinmarket_events.py",
+        "tests/test_joinmarket_funding.py",
+        "tests/test_joinmarket_lifecycle.py",
+        "tests/test_joinmarket_runner.py",
+        "tests/test_joinmarket_scenario.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_default_joinmarket_scenario.py tests/test_joinmarket_engine.py tests/test_joinmarket_environment.py tests/test_joinmarket_events.py tests/test_joinmarket_funding.py tests/test_joinmarket_lifecycle.py tests/test_joinmarket_runner.py tests/test_joinmarket_scenario.py"
+      ]
+    },
+    {
+      "number": 73,
+      "phase": "tests",
+      "message": "test(export): cover log archive and artifact layout",
+      "type": "test",
+      "scope": "export",
+      "description": "Test that emulator output layout remains usable for downstream analysis.",
+      "changes": [
+        "Test scenario artifact export",
+        "Test decoded block export",
+        "Test archive creation",
+        "Test historical archive compatibility",
+        "Test failed-run cleanup behavior"
+      ],
+      "files": [
+        "tests/test_historical_archive_integration.py",
+        "tests/test_historical_run_archives.py",
+        "tests/test_engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_historical_archive_integration.py tests/test_historical_run_archives.py tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 74,
+      "phase": "tests",
+      "message": "test(wasabi): cover compatibility after base refactors",
+      "type": "test",
+      "scope": "wasabi",
+      "description": "Add regression tests showing existing Wasabi behavior survived the shared engine/driver changes.",
+      "changes": [
+        "Test Wasabi engine startup wiring",
+        "Test Wasabi client base expectations",
+        "Test image reference handling",
+        "Test protocol wrapper compatibility"
+      ],
+      "files": [
+        "tests/test_wasabi_engine.py",
+        "tests/test_wasabi_client_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_wasabi_engine.py tests/test_wasabi_client_base.py"
+      ]
+    },
+    {
+      "number": 75,
+      "phase": "types",
+      "message": "test(types): add local stubs for optional dependencies",
+      "type": "test",
+      "scope": "typing",
+      "description": "Add minimal stubs needed for mypy over external packages used by the emulator.",
+      "changes": [
+        "Add docker stubs",
+        "Add kubernetes stubs",
+        "Add jmclient stubs",
+        "Add numpy stubs",
+        "Add requests and urllib3 stubs where needed"
+      ],
+      "files": [
+        "stubs/docker/__init__.pyi",
+        "stubs/docker/errors.pyi",
+        "stubs/jmclient/__init__.pyi",
+        "stubs/jmclient/blockchaininterface.pyi",
+        "stubs/kubernetes/__init__.pyi",
+        "stubs/kubernetes/client/__init__.pyi",
+        "stubs/kubernetes/client/exceptions.pyi",
+        "stubs/kubernetes/config/__init__.pyi",
+        "stubs/kubernetes/stream/__init__.pyi",
+        "stubs/numpy/__init__.pyi",
+        "stubs/numpy/random.pyi",
+        "stubs/requests/__init__.pyi",
+        "stubs/urllib3/__init__.pyi",
+        "stubs/urllib3/exceptions.pyi"
+      ],
+      "verification": [
+        "uv run mypy ."
+      ]
+    },
+    {
+      "number": 76,
+      "phase": "docs",
+      "message": "docs: update README for uv runtime options and drivers",
+      "type": "docs",
+      "scope": "docs",
+      "description": "Update user-facing setup and run instructions.",
+      "changes": [
+        "Replace pip install instructions with uv sync where appropriate",
+        "Replace python commands with uv run python",
+        "Document Docker/Podman/Kubernetes driver behavior",
+        "Document image override options",
+        "Document btcFolder and raw Bitcoin data export",
+        "Document --download-btc-data and --download-path",
+        "Document JoinMarket support and current limitations"
+      ],
+      "files": [
+        "README.md"
+      ],
+      "verification": [
+        "Copy-paste README commands on a clean checkout"
+      ]
+    },
+    {
+      "number": 77,
+      "phase": "docs",
+      "message": "docs: document cleanup and feature TODOs",
+      "type": "docs",
+      "scope": "docs",
+      "description": "Add explicit TODO files only if they are intended to remain in the reviewed MR.",
+      "changes": [
+        "Add cleanup TODO list",
+        "Add feature TODO list",
+        "Document known scenario validation gaps",
+        "Document JoinMarket limitations",
+        "Remove TODO items already fixed by this branch"
+      ],
+      "files": [
+        "TODO.md",
+        "FEATURE_TODO.md"
+      ],
+      "verification": [
+        "Review TODOs for accuracy",
+        "Confirm maintainers want TODO files in repository"
+      ]
+    },
+    {
+      "number": 78,
+      "phase": "developer-guidance",
+      "message": "docs(codex): add repository reading and test-writing skills",
+      "type": "docs",
+      "scope": "codex",
+      "description": "Add Codex guidance only if the project intentionally wants AI-assistant repository instructions committed.",
+      "changes": [
+        "Add coinjoin reading guide skill",
+        "Add repo Python tests skill",
+        "Add OpenAI agent metadata for both skills"
+      ],
+      "files": [
+        ".codex/skills/coinjoin-reading-guide/SKILL.md",
+        ".codex/skills/coinjoin-reading-guide/agents/openai.yaml",
+        ".codex/skills/repo-python-tests/SKILL.md",
+        ".codex/skills/repo-python-tests/agents/openai.yaml"
+      ],
+      "verification": [
+        "Confirm maintainers actually want .codex files in the repository",
+        "Otherwise drop this commit from the reviewable MR"
+      ]
+    },
+    {
+      "number": 79,
+      "phase": "cleanup",
+      "message": "chore: remove planning artifacts from review branch",
+      "type": "chore",
+      "scope": "repo",
+      "description": "Remove files useful for planning but not for the final reviewed implementation.",
+      "changes": [
+        "Remove newCommits.md unless converted into real documentation",
+        "Remove temporary notes",
+        "Ensure TODO files do not duplicate fixed issues"
+      ],
+      "files": [
+        "newCommits.md"
+      ],
+      "verification": [
+        "git status shows no planning-only files",
+        "PR diff contains only implementation, tests, CI, and intentional docs"
+      ]
+    },
+    {
+      "number": 80,
+      "phase": "final-verification",
+      "message": "test: add local all-check script",
+      "type": "test",
+      "scope": "verification",
+      "description": "Provide a single local command for reviewers to run the same quality gate.",
+      "changes": [
+        "Add test-all-locally.sh",
+        "Run uv sync",
+        "Run pytest",
+        "Run Ruff",
+        "Run mypy",
+        "Run pylint"
+      ],
+      "files": [
+        "test-all-locally.sh"
+      ],
+      "verification": [
+        "./test-all-locally.sh"
+      ]
+    }
+  ],
+  "things_i_would_change_from_the_current_mr": [
+    "Do not keep chronological commits like Update, Fix, Try fix it, Another day another coinjoin fix. Rebase into semantic commits.",
+    "Do not mix GHCR publishing, JoinMarket behavior, Wasabi Dockerfile changes, and Kubernetes refactors in one giant commit.",
+    "Do not make ghcr.io/ondrejman the default image prefix unless the MR title/body explicitly says this is a behavior change.",
+    "Do not switch final Wasabi runtime stages to SDK images unless there is a concrete runtime dependency that requires the SDK.",
+    "Keep .codex skills and TODO files optional; they are not necessary for the emulator functionality.",
+    "Remove newCommits.md from the final reviewed branch.",
+    "Keep tests close to the feature commits, or at least make sure each phase has its own tests before moving to the next phase."
+  ],
+  "possibly_missing_or_underemphasized_in_the_pasted_plan": [
+    "requirements.txt is changed in the PR and should be intentionally synced with pyproject.toml or deprecated.",
+    "managePythonVirtualEnvironment.sh is changed and should be updated or removed after uv adoption.",
+    "manager/commands/genscen.py is changed and deserves its own CLI/command commit.",
+    "manager/wasabi_backend_protocol.py and manager/wasabi_coordinator_protocol.py should be mentioned in the Wasabi typing/refactor commit.",
+    "manager/wasabi_coordinator.py and manager/wasabi_clients/__init__.py should be included in the Wasabi preservation/refactor phase.",
+    "tests/test_log_output.py, tests/test_wasabi_engine.py, and tests/test_wasabi_client_base.py should be explicitly covered by the test plan."
+  ]
+}
