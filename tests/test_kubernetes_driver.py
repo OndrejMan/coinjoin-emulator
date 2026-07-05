@@ -4,7 +4,7 @@ import types
 from types import SimpleNamespace
 from typing import cast
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from manager.driver.kubernetes import KubernetesDriver, PortForwardServer
 
@@ -36,6 +36,16 @@ if importlib.util.find_spec("kubernetes") is None:
 
 
 class KubernetesDriverTest(TestCase):
+    @patch("manager.driver.kubernetes.config.load_incluster_config")
+    @patch("manager.driver.kubernetes.config.load_kube_config")
+    def test_falls_back_to_incluster_auth(self, load_kube_config, load_incluster_config):
+        from kubernetes.config.config_exception import ConfigException
+
+        load_kube_config.side_effect = ConfigException("no kubeconfig")
+        with patch.object(KubernetesDriver, "_new_client", return_value=Mock()):
+            KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+        load_incluster_config.assert_called_once_with()
+
     def test_port_forward_retries_transient_handshake_failure(self) -> None:
         class FakeClientSocket:
             closed = False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from manager.engine.wasabi_engine import WasabiEngine
 
 DEFAULT_IMAGE_PREFIX = ""
 DEFAULT_RUN_TIMEZONE = "Europe/Prague"
+RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 ParsedArgs = argparse.Namespace | SimpleNamespace
 DriverFactory = Callable[[ParsedArgs], Driver]
@@ -79,6 +81,14 @@ def timezone_name(value: str) -> str:
     return value
 
 
+def run_id(value: str) -> str:
+    if len(value) > 63 or ".." in value or not RUN_ID_PATTERN.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            "run ID must be at most 63 characters, match [A-Za-z0-9][A-Za-z0-9._-]*, and must not contain '..'"
+        )
+    return value
+
+
 def _add_console_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     console_subparser = subparsers.add_parser("console", help="run console")
     _add_runtime_arguments(console_subparser)
@@ -99,6 +109,22 @@ def _add_run_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPars
     _add_runtime_arguments(run_subparser)
     run_subparser.add_argument(
         "--scenario", type=str, help="scenario specification file"
+    )
+    run_subparser.add_argument(
+        "--run-id",
+        type=run_id,
+        default=None,
+        help="Deterministic output directory name instead of the timestamp/scenario name.",
+    )
+    run_subparser.add_argument(
+        "--controller-done-marker",
+        default="",
+        help="Write this marker after logs and requested Bitcoin data are stored.",
+    )
+    run_subparser.add_argument(
+        "--controller-failed-marker",
+        default="",
+        help="Write this marker when the emulation or artifact collection fails.",
     )
     run_subparser.add_argument(
         "--btcFolder", type=str, help="folder with btc node data", default=""

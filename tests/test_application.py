@@ -150,3 +150,43 @@ def test_run_engine_returns_keyboard_interrupt_exit_code() -> None:
     assert exit_code == 130
     engine.stop_coinjoins.assert_called_once_with()
     driver.cleanup.assert_called_once_with("")
+
+
+def test_run_engine_writes_controller_done_marker(tmp_path: Path) -> None:
+    args = run_args(no_logs=True)
+    args.controller_done_marker = str(tmp_path / "controller.done")
+    args.controller_failed_marker = str(tmp_path / "controller.failed")
+    exit_code = run_engine(args, Mock(), Mock())
+    assert exit_code == 0
+    assert (tmp_path / "controller.done").read_text() == "done\n"
+    assert not (tmp_path / "controller.failed").exists()
+
+
+def test_run_engine_writes_controller_failed_marker(tmp_path: Path) -> None:
+    args = run_args(no_logs=True)
+    args.controller_done_marker = str(tmp_path / "controller.done")
+    args.controller_failed_marker = str(tmp_path / "controller.failed")
+    engine = Mock()
+    engine.run.side_effect = RuntimeError("emulation failed")
+    exit_code = run_engine(args, Mock(), engine)
+    assert exit_code == 1
+    assert (tmp_path / "controller.failed").read_text() == "done\n"
+    assert not (tmp_path / "controller.done").exists()
+
+
+def test_run_engine_falls_back_to_failed_marker_when_done_marker_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = run_args(no_logs=True)
+    args.controller_done_marker = str(tmp_path / "controller.done")
+    args.controller_failed_marker = str(tmp_path / "controller.failed")
+
+    def write_marker(path: str) -> None:
+        if path.endswith("controller.done"):
+            raise OSError("done marker unavailable")
+        Path(path).write_text("done\n")
+
+    monkeypatch.setattr("manager.application.write_controller_marker", write_marker)
+    exit_code = run_engine(args, Mock(), Mock())
+    assert exit_code == 1
+    assert (tmp_path / "controller.failed").read_text() == "done\n"

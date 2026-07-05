@@ -303,6 +303,21 @@ class EngineBaseTest(unittest.TestCase):
             finally:
                 os.chdir(previous_cwd)
 
+    def test_store_logs_uses_requested_run_id(self) -> None:
+        engine = MinimalEngine(self.engine_args(run_id="wasabi-test-001"), Mock(), "/tmp")
+        engine.node = Mock()
+        engine.node.get_block_count.return_value = 0
+        engine.node.get_block_hash.return_value = "block-hash"
+        engine.node.get_block_info.return_value = {"height": 0, "tx": []}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            previous_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                engine.store_logs()
+            finally:
+                os.chdir(previous_cwd)
+            self.assertTrue((Path(tmpdir) / "logs/wasabi-test-001/coinjoin_emulator_data/scenario.json").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,7 @@ from typing import Protocol
 
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
+from kubernetes.config.config_exception import ConfigException  # type: ignore[import-untyped]
 from kubernetes.stream import portforward, stream
 
 from manager import log_output as log
@@ -135,7 +136,10 @@ class PortForwardServer:
 
 class KubernetesDriver(Driver):
     def __init__(self, namespace: str = "coinjoin", reuse_namespace: bool = False, port_forward: bool = True) -> None:
-        config.load_kube_config()
+        try:
+            config.load_kube_config()
+        except ConfigException:
+            getattr(config, "load_incluster_config")()
         self.client = self._new_client()
         self._namespace = namespace
         self.reuse_namespace = reuse_namespace
@@ -274,16 +278,12 @@ class KubernetesDriver(Driver):
             },
         }
 
-        resp = self.client.create_namespaced_pod(
-            body=pod_manifest, namespace=self.namespace
-        )
+        resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
 
         pod_ip = None
         if not skip_ip:
             while pod_ip is None:
-                pod_ip = self.client.read_namespaced_pod_status(
-                    name=name, namespace=self.namespace
-                ).status.pod_ip
+                pod_ip = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace).status.pod_ip
                 sleep(1)
 
         if not ports:
@@ -308,9 +308,7 @@ class KubernetesDriver(Driver):
             },
         }
 
-        resp = self.client.create_namespaced_service(
-            body=service_manifest, namespace=self.namespace
-        )
+        resp = self.client.create_namespaced_service(body=service_manifest, namespace=self.namespace)
         if self.port_forward_enabled:
             port_mapping = self.start_port_forwards(
                 name,
@@ -344,9 +342,7 @@ class KubernetesDriver(Driver):
         except ApiException:
             pass
         try:
-            self.client.delete_namespaced_service(
-                f"{name}-service", namespace=self._namespace
-            )
+            self.client.delete_namespaced_service(f"{name}-service", namespace=self._namespace)
         except ApiException:
             pass
 
@@ -439,9 +435,7 @@ class KubernetesDriver(Driver):
         cleanup_client = self._new_client()
         if not self.reuse_namespace:
             try:
-                cleanup_client.delete_namespace(
-                    name=self._namespace, body=client.V1DeleteOptions()
-                )
+                cleanup_client.delete_namespace(name=self._namespace, body=client.V1DeleteOptions())
             except ApiException as error:
                 if getattr(error, "status", None) != 404:
                     raise
@@ -451,18 +445,14 @@ class KubernetesDriver(Driver):
         for pod in pods.items:
             if self._is_managed_resource(pod):
                 try:
-                    cleanup_client.delete_namespaced_pod(
-                        name=pod.metadata.name, namespace=self._namespace
-                    )
+                    cleanup_client.delete_namespaced_pod(name=pod.metadata.name, namespace=self._namespace)
                 except ApiException:
                     pass
         services = cleanup_client.list_namespaced_service(namespace=self._namespace)
         for service in services.items:
             if self._is_managed_resource(service):
                 try:
-                    cleanup_client.delete_namespaced_service(
-                        name=service.metadata.name, namespace=self._namespace
-                    )
+                    cleanup_client.delete_namespaced_service(name=service.metadata.name, namespace=self._namespace)
                 except ApiException:
                     pass
 

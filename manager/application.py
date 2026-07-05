@@ -15,18 +15,25 @@ class RunArgs(Protocol):
     download_btc_data: str
     download_path: str
     image_prefix: str
+    controller_done_marker: str
+    controller_failed_marker: str
+
+
+def write_controller_marker(path: str) -> None:
+    if not path:
+        return
+    marker = os.path.abspath(path)
+    os.makedirs(os.path.dirname(marker), exist_ok=True)
+    with open(marker, "w", encoding="utf-8") as stream:
+        stream.write("done\n")
 
 
 def parse_download_path(download_path: str) -> tuple[str, str]:
     if ":" not in download_path:
-        raise ValueError(
-            "download path must use '<container-or-pod>:<source-path>' format"
-        )
+        raise ValueError("download path must use '<container-or-pod>:<source-path>' format")
     name, src_path = download_path.split(":", 1)
     if not name or not src_path:
-        raise ValueError(
-            "download path must include both container/pod name and source path"
-        )
+        raise ValueError("download path must include both container/pod name and source path")
     return name, src_path
 
 
@@ -95,4 +102,17 @@ def run_engine(
                 print_exception(e)
                 exit_code = 1
 
+    done_marker = getattr(args, "controller_done_marker", "")
+    failed_marker = getattr(args, "controller_failed_marker", "")
+    marker = done_marker if exit_code == 0 else failed_marker
+    try:
+        write_controller_marker(marker)
+    except OSError as error:
+        log.error(f"- failed to write controller marker {marker}: {error}")
+        if exit_code == 0:
+            try:
+                write_controller_marker(failed_marker)
+            except OSError as failed_error:
+                log.error(f"- failed to write controller failure marker {failed_marker}: {failed_error}")
+        exit_code = 1
     return exit_code

@@ -377,9 +377,13 @@ class EngineBase:
 
     def store_logs(self) -> None:
         log.info("Storing logs")
-        run_timezone = getattr(self.args, "run_timezone", "Europe/Prague")
-        time = datetime.datetime.now(ZoneInfo(run_timezone)).strftime("%Y-%m-%d_%H-%M")
-        run_path = f"./logs/{time}_{self.scenario.name}"
+        requested_run_id = getattr(self.args, "run_id", "")
+        if requested_run_id:
+            run_path = f"./logs/{requested_run_id}"
+        else:
+            run_timezone = getattr(self.args, "run_timezone", "Europe/Prague")
+            time = datetime.datetime.now(ZoneInfo(run_timezone)).strftime("%Y-%m-%d_%H-%M")
+            run_path = f"./logs/{time}_{self.scenario.name}"
         experiment_path = os.path.join(run_path, "coinjoin_emulator_data")
         data_path = os.path.join(experiment_path, "data")
         os.makedirs(data_path)

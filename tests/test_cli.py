@@ -64,6 +64,23 @@ def test_main_uses_default_download_path() -> None:
     assert args.run_timezone == DEFAULT_RUN_TIMEZONE
 
 
+def test_main_accepts_deterministic_run_and_controller_markers() -> None:
+    dispatch = Mock(return_value=0)
+    cli.main([
+        "run", "--run-id", "wasabi-test-001",
+        "--controller-done-marker", "/artifacts/controller.done",
+        "--controller-failed-marker", "/artifacts/controller.failed",
+    ], dispatcher=dispatch)
+    args = dispatch.call_args.args[0]
+    assert args.run_id == "wasabi-test-001"
+    assert args.controller_done_marker == "/artifacts/controller.done"
+
+
+def test_main_rejects_unsafe_run_id() -> None:
+    with pytest.raises(SystemExit, match="2"):
+        cli.main(["run", "--run-id", "../unsafe"])
+
+
 def test_main_accepts_run_timezone_override() -> None:
     dispatch = Mock(return_value=0)
 
