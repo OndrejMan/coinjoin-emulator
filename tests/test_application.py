@@ -184,7 +184,7 @@ def test_run_engine_falls_back_to_failed_marker_when_done_marker_write_fails(
     def write_marker(path: str) -> None:
         if path.endswith("controller.done"):
             raise OSError("done marker unavailable")
-        Path(path).write_text("done\n")
+        Path(path).write_text("done\n", encoding="utf-8")
 
     monkeypatch.setattr("manager.application.write_controller_marker", write_marker)
     exit_code = run_engine(args, Mock(), Mock())

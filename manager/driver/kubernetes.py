@@ -10,7 +10,7 @@ from typing import Protocol
 
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
-from kubernetes.config.config_exception import ConfigException  # type: ignore[import-untyped]
+from kubernetes.config.config_exception import ConfigException
 from kubernetes.stream import portforward, stream
 
 from manager import log_output as log

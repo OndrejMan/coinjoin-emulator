@@ -14,8 +14,12 @@ if importlib.util.find_spec("kubernetes") is None:
     config_module = types.ModuleType("kubernetes.config")
     stream_module = types.ModuleType("kubernetes.stream")
     exceptions_module = types.ModuleType("kubernetes.client.exceptions")
+    config_exception_module = types.ModuleType("kubernetes.config.config_exception")
 
     class ApiException(Exception):
+        pass
+
+    class _FakeConfigException(Exception):
         pass
 
     setattr(client_module, "CoreV1Api", object)
@@ -24,6 +28,7 @@ if importlib.util.find_spec("kubernetes") is None:
     setattr(stream_module, "portforward", lambda *args, **kwargs: None)
     setattr(stream_module, "stream", lambda *args, **kwargs: None)
     setattr(exceptions_module, "ApiException", ApiException)
+    setattr(config_exception_module, "ConfigException", _FakeConfigException)
 
     setattr(kubernetes_module, "client", client_module)
     setattr(kubernetes_module, "config", config_module)
@@ -33,13 +38,16 @@ if importlib.util.find_spec("kubernetes") is None:
     sys.modules["kubernetes.config"] = config_module
     sys.modules["kubernetes.stream"] = stream_module
     sys.modules["kubernetes.client.exceptions"] = exceptions_module
+    sys.modules["kubernetes.config.config_exception"] = config_exception_module
 
 
 class KubernetesDriverTest(TestCase):
     @patch("manager.driver.kubernetes.config.load_incluster_config")
     @patch("manager.driver.kubernetes.config.load_kube_config")
-    def test_falls_back_to_incluster_auth(self, load_kube_config, load_incluster_config):
-        from kubernetes.config.config_exception import ConfigException
+    def test_falls_back_to_incluster_auth(
+        self, load_kube_config: Mock, load_incluster_config: Mock
+    ) -> None:
+        from kubernetes.config.config_exception import ConfigException  # pylint: disable=import-outside-toplevel
 
         load_kube_config.side_effect = ConfigException("no kubeconfig")
         with patch.object(KubernetesDriver, "_new_client", return_value=Mock()):

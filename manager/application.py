@@ -58,6 +58,21 @@ def download_btc_data(
         raise
 
 
+def _finalize_controller_marker(exit_code: int, done_marker: str, failed_marker: str) -> int:
+    marker = done_marker if exit_code == 0 else failed_marker
+    try:
+        write_controller_marker(marker)
+    except OSError as error:
+        log.error(f"- failed to write controller marker {marker}: {error}")
+        if exit_code == 0:
+            try:
+                write_controller_marker(failed_marker)
+            except OSError as failed_error:
+                log.error(f"- failed to write controller failure marker {failed_marker}: {failed_error}")
+        exit_code = 1
+    return exit_code
+
+
 def run_engine(
     args: RunArgs,
     driver: Driver,
@@ -104,15 +119,4 @@ def run_engine(
 
     done_marker = getattr(args, "controller_done_marker", "")
     failed_marker = getattr(args, "controller_failed_marker", "")
-    marker = done_marker if exit_code == 0 else failed_marker
-    try:
-        write_controller_marker(marker)
-    except OSError as error:
-        log.error(f"- failed to write controller marker {marker}: {error}")
-        if exit_code == 0:
-            try:
-                write_controller_marker(failed_marker)
-            except OSError as failed_error:
-                log.error(f"- failed to write controller failure marker {failed_marker}: {failed_error}")
-        exit_code = 1
-    return exit_code
+    return _finalize_controller_marker(exit_code, done_marker, failed_marker)
