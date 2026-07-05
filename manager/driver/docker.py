@@ -41,7 +41,7 @@ class DockerDriver(Driver):
     def _remove_existing_container(self, name: str) -> bool:
         try:
             old_container = self.client.containers.get(name)
-            old_container.remove(force=True)
+            old_container.remove(force=True, v=True)
             return True
         except docker.errors.NotFound:
             return False
@@ -101,7 +101,7 @@ class DockerDriver(Driver):
         try:
             container = self.client.containers.get(name)
             container.stop()
-            container.remove(force=True)
+            container.remove(force=True, v=True)
             log.info(f"- stopped {name}")
         except docker.errors.NotFound:
             pass

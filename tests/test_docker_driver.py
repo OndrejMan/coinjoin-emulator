@@ -56,7 +56,7 @@ class DockerDriverTest(unittest.TestCase):
             driver.run("btc-node", "btc-node:latest")
 
         client.containers.get.assert_called_once_with("btc-node")
-        stale_container.remove.assert_called_once_with(force=True)
+        stale_container.remove.assert_called_once_with(force=True, v=True)
         client.containers.run.assert_called_once()
 
     def test_run_retries_after_docker_name_conflict(self) -> None:
@@ -75,7 +75,7 @@ class DockerDriverTest(unittest.TestCase):
             driver.run("btc-node", "btc-node:latest")
 
         self.assertEqual(client.containers.get.call_count, 2)
-        stale_container.remove.assert_called_once_with(force=True)
+        stale_container.remove.assert_called_once_with(force=True, v=True)
         self.assertEqual(client.containers.run.call_count, 2)
 
     def test_cleanup_includes_exited_emulator_containers(self) -> None:
@@ -100,7 +100,7 @@ class DockerDriverTest(unittest.TestCase):
         client.containers.list.assert_called_once_with(all=True)
         client.containers.get.assert_called_once_with("joinmarket-distributor")
         matching_container.stop.assert_called_once_with()
-        matching_container.remove.assert_called_once_with(force=True)
+        matching_container.remove.assert_called_once_with(force=True, v=True)
         other_container.stop.assert_not_called()
         other_container.remove.assert_not_called()
 
