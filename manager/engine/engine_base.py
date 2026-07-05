@@ -273,19 +273,16 @@ class EngineBase:
                     self.start_client,
                     ((idx, wallets[idx - len(self.clients)]) for idx in restart_idx),
                 )
-                for idx, client in enumerate(restarted_clients):
+                for idx, client in zip(restart_idx, restarted_clients, strict=True):
                     if client is not None:
-                        new_clients[restart_idx[idx]] = client
-            else:
-                started_clients = [client for client in new_clients if client is not None]
-                failed_count = len(wallets) - len(started_clients)
+                        new_clients[idx - len(self.clients)] = client
+
+            failed_count = sum(client is None for client in new_clients)
+            if failed_count:
                 raise RuntimeError(
                     f"Failed to start {failed_count} clients after retries; aborting experiment"
                 )
         self.clients.extend(client for client in new_clients if client is not None)
-
-        if len(new_clients) == 0 and len(wallets) > 0:
-            raise RuntimeError("No emulator clients started successfully")
 
     def validate_clients(self) -> None:
         expected = len(self.scenario.wallets)

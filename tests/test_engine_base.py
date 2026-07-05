@@ -182,6 +182,34 @@ class EngineBaseTest(unittest.TestCase):
 
         self.assertIsNone(engine.node)
 
+    def test_start_clients_accepts_success_on_final_retry(self) -> None:
+        engine = MinimalEngine(self.engine_args(), Mock(), "/tmp")
+        wallet = WalletConfig(funds=[])
+        client = Mock()
+
+        with (
+            patch.object(engine, "start_client", side_effect=[None, None, None, client]) as start_client,
+            patch("manager.engine.engine_base.sleep"),
+        ):
+            engine.start_clients([wallet])
+
+        self.assertEqual(engine.clients, [client])
+        self.assertEqual(start_client.call_count, 4)
+
+    def test_start_clients_raises_after_retry_budget_is_exhausted(self) -> None:
+        engine = MinimalEngine(self.engine_args(), Mock(), "/tmp")
+        wallet = WalletConfig(funds=[])
+
+        with (
+            patch.object(engine, "start_client", return_value=None) as start_client,
+            patch("manager.engine.engine_base.sleep"),
+            self.assertRaisesRegex(RuntimeError, "Failed to start 1 client"),
+        ):
+            engine.start_clients([wallet])
+
+        self.assertEqual(engine.clients, [])
+        self.assertEqual(start_client.call_count, 4)
+
     def test_failed_invoice_payment_remains_pending(self) -> None:
         engine = MinimalEngine(Mock(), Mock(), "/tmp")
         engine.current_block = 0
