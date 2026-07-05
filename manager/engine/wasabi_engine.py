@@ -32,6 +32,8 @@ from .engine_base import (
     InvoiceDistributor,
 )
 
+WASABI_CLIENT_START_TIMEOUT_SECONDS = 180
+
 
 class WasabiEngine(EngineBase):
     def __init__(self, args: EngineArgs, driver: DriverProtocol) -> None:
@@ -301,7 +303,7 @@ class WasabiEngine(EngineBase):
         )
 
         start = time()
-        if not client.wait_wallet(timeout=120):
+        if not client.wait_wallet(timeout=WASABI_CLIENT_START_TIMEOUT_SECONDS):
             log.warning(f"- could not start {name} (application timeout {time() - start} seconds)")
             return None
         log.info(f"- started {client.name} (wait took {time() - start} seconds)")

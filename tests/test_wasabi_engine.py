@@ -5,7 +5,8 @@ from unittest.mock import Mock
 import pytest
 
 from manager.btc_node import BtcNode
-from manager.engine.wasabi_engine import WasabiEngine
+from manager.engine.configuration import WalletConfig
+from manager.engine.wasabi_engine import WASABI_CLIENT_START_TIMEOUT_SECONDS, WasabiEngine
 from manager.exceptions import StartupError
 from manager.wasabi_backend_factory import BackendArchitecture
 
@@ -59,3 +60,14 @@ def test_legacy_distributor_environment_is_unchanged() -> None:
     engine.start_distributor()
 
     assert "ADDR_WASABI_COORDINATOR" not in driver.run.call_args.kwargs["env"]
+
+
+def test_client_readiness_allows_slow_kubernetes_startup() -> None:
+    engine, _, client = configured_engine(BackendArchitecture.SPLIT)
+    engine.scenario.default_version = "2.6.0"
+
+    started_client = engine.start_client(1, WalletConfig(funds=[]))
+
+    assert started_client is client
+    client.wait_wallet.assert_called_once_with(timeout=WASABI_CLIENT_START_TIMEOUT_SECONDS)
+    assert WASABI_CLIENT_START_TIMEOUT_SECONDS == 180
