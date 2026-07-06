@@ -106,6 +106,31 @@ def test_run_engine_cleans_up_when_log_storage_fails() -> None:
     driver.cleanup.assert_called_once_with("")
 
 
+def test_run_engine_collects_diagnostics_before_failure_cleanup() -> None:
+    args = run_args()
+    calls: list[str] = []
+    driver = Mock()
+
+    def diagnostics() -> str:
+        calls.append("diagnostics")
+        return "pod missing"
+
+    driver.diagnostics.side_effect = diagnostics
+    driver.cleanup.side_effect = lambda _prefix: calls.append("cleanup")
+    engine = Mock()
+    engine.node = Mock()
+    engine.run.side_effect = RuntimeError("primary emulation failure")
+    engine.stop_coinjoins.side_effect = lambda: calls.append("stop")
+    engine.store_logs.side_effect = RuntimeError("secondary log failure")
+
+    exit_code = run_engine(args, driver, engine)
+
+    assert exit_code == 1
+    assert calls == ["diagnostics", "stop", "cleanup"]
+    driver.diagnostics.assert_called_once_with()
+    engine.store_logs.assert_called_once_with()
+
+
 def test_run_engine_downloads_btc_data_before_cleanup() -> None:
     args = run_args(
         no_logs=True,

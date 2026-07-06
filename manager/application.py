@@ -80,18 +80,28 @@ def run_engine(
     btc_data_downloader: Callable[[Driver, str, str], None] = download_btc_data,
 ) -> int:
     exit_code = 0
+    diagnostics_required = False
     try:
         engine.run()
     except KeyboardInterrupt:
         log.blank_line()
         log.warning("KeyboardInterrupt received")
         exit_code = 130
+        diagnostics_required = True
     except (RuntimeError, OSError, ValueError, TypeError) as e:
         log.error(f"Terminating exception: {e}")
         print_exception(e)
         exit_code = 1
+        diagnostics_required = True
     finally:
         try:
+            if diagnostics_required:
+                try:
+                    diagnostics = driver.diagnostics()
+                    if diagnostics:
+                        log.error(diagnostics)
+                except Exception as error:  # pylint: disable=broad-exception-caught
+                    log.error(f"- failed to collect driver diagnostics: {error}")
             engine.stop_coinjoins()
             if not args.no_logs and engine.node is not None:
                 try:

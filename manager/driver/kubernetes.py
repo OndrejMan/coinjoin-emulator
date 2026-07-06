@@ -6,10 +6,12 @@ import threading
 from functools import cached_property
 from io import BytesIO
 from time import sleep
-from typing import Protocol
+from typing import Protocol, cast
 
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
+from kubernetes.client.models.core_v1_event import CoreV1Event  # type: ignore[import-untyped]
+from kubernetes.client.models.v1_pod import V1Pod  # type: ignore[import-untyped]
 from kubernetes.config.config_exception import ConfigException
 from kubernetes.stream import portforward, stream
 
@@ -39,6 +41,29 @@ class SocketLike(Protocol):
     def recv(self, size: int) -> bytes: ...
     def sendall(self, data: bytes) -> None: ...
     def fileno(self) -> int: ...
+
+
+class PodListLike(Protocol):
+    items: list[V1Pod]
+
+
+class EventListLike(Protocol):
+    items: list[CoreV1Event]
+
+
+class DiagnosticsClient(Protocol):
+    def list_namespaced_pod(self, namespace: str) -> PodListLike: ...
+
+    def read_namespaced_pod_log(
+        self,
+        name: str,
+        namespace: str,
+        container: str,
+        tail_lines: int,
+        timestamps: bool,
+    ) -> str: ...
+
+    def list_namespaced_event(self, namespace: str) -> EventListLike: ...
 
 
 class PortForwardServer:
@@ -146,6 +171,7 @@ class KubernetesDriver(Driver):
         self.control_host = "127.0.0.1"
         self.port_forwards: dict[tuple[str, int], PortForwardServer] = {}
         self.port_forward_enabled = port_forward
+        self.managed_pod_names: set[str] = set()
 
     def _new_client(self) -> client.CoreV1Api:
         return client.CoreV1Api()
@@ -279,6 +305,7 @@ class KubernetesDriver(Driver):
         }
 
         resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+        self.managed_pod_names.add(name)
 
         pod_ip = None
         if not skip_ip:
@@ -352,6 +379,99 @@ class KubernetesDriver(Driver):
             self.client.delete_namespaced_service(name=name, namespace=self._namespace)
         except ApiException:
             pass
+        self.managed_pod_names.discard(name)
+
+    @staticmethod
+    def _container_state_summary(state: object) -> str:
+        for state_name in ("terminated", "waiting", "running"):
+            value = getattr(state, state_name, None)
+            if value is None:
+                continue
+            details = []
+            for attribute in ("reason", "message", "exit_code", "signal", "started_at", "finished_at"):
+                item = getattr(value, attribute, None)
+                if item is not None and item != "":
+                    details.append(f"{attribute}={item}")
+            return f"{state_name}" + (f" ({', '.join(details)})" if details else "")
+        return "unknown"
+
+    def diagnostics(self) -> str:
+        lines = [f"Kubernetes diagnostics for namespace {self._namespace}:"]
+        # The generated Kubernetes client accepts these methods dynamically,
+        # while its bundled type information does not expose their full surface.
+        diagnostics_client = cast(DiagnosticsClient, self._new_client())
+        try:
+            pods = diagnostics_client.list_namespaced_pod(namespace=self._namespace).items
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            lines.append(f"- unable to list pods: {error}")
+            pods = []
+
+        present_names = {
+            pod.metadata.name
+            for pod in pods
+            if getattr(getattr(pod, "metadata", None), "name", None)
+        }
+        for missing_name in sorted(self.managed_pod_names - present_names):
+            lines.append(f"- pod {missing_name}: NotFound")
+
+        for pod in sorted(pods, key=lambda item: item.metadata.name or ""):
+            name = pod.metadata.name or "<unknown>"
+            status = pod.status
+            lines.append(
+                f"- pod {name}: phase={status.phase or 'Unknown'}, "
+                f"reason={status.reason or '-'}, message={status.message or '-'}"
+            )
+            container_statuses = [
+                *(status.init_container_statuses or []),
+                *(status.container_statuses or []),
+            ]
+            for container_status in container_statuses:
+                lines.append(
+                    f"  container {container_status.name}: ready={container_status.ready}, "
+                    f"restarts={container_status.restart_count}, "
+                    f"state={self._container_state_summary(container_status.state)}, "
+                    f"last_state={self._container_state_summary(container_status.last_state)}"
+                )
+                try:
+                    pod_logs = diagnostics_client.read_namespaced_pod_log(
+                        name=name,
+                        namespace=self._namespace,
+                        container=container_status.name,
+                        tail_lines=200,
+                        timestamps=True,
+                    )
+                except Exception as error:  # pylint: disable=broad-exception-caught
+                    lines.append(f"  {container_status.name} logs unavailable: {error}")
+                else:
+                    if pod_logs:
+                        lines.append(f"  last 200 log lines for {container_status.name}:")
+                        lines.extend(f"    {line}" for line in str(pod_logs).splitlines())
+
+        try:
+            events = diagnostics_client.list_namespaced_event(namespace=self._namespace).items
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            lines.append(f"- unable to list events: {error}")
+        else:
+            lines.append("- namespace events:")
+            for event in sorted(
+                events,
+                key=lambda item: str(
+                    getattr(item, "event_time", None)
+                    or getattr(item, "last_timestamp", None)
+                    or getattr(item, "first_timestamp", None)
+                    or ""
+                ),
+            ):
+                involved = getattr(event, "involved_object", None)
+                resource = getattr(involved, "name", None) or "<unknown>"
+                event_type = getattr(event, "type", None) or "Unknown"
+                reason = getattr(event, "reason", None) or "Unknown"
+                message = getattr(event, "message", None) or ""
+                count = getattr(event, "count", None) or 1
+                lines.append(
+                    f"  {event_type} {resource}: {reason}: {message} (count={count})"
+                )
+        return "\n".join(lines)
 
     def download(self, name: str, src_path: str, dst_path: str) -> None:
         if src_path[-1] == "/":

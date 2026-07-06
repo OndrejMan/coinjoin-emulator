@@ -23,6 +23,7 @@ BTC = 100_000_000
 DISTRIBUTOR_BALANCE_RPC_TIMEOUT = 5
 DISTRIBUTOR_FUNDING_TIMEOUT = 360
 DISTRIBUTOR_FUNDING_PROGRESS_INTERVAL = 15
+CLIENT_HEALTHCHECK_TIMEOUT = 15
 
 
 class EngineArgs(Protocol):
@@ -98,6 +99,7 @@ class EmulatorClient(Protocol):
     def list_unspent_coins(self) -> object: ...
     def list_keys(self) -> object: ...
     def stop_coinjoin(self) -> object: ...
+    def wait_wallet(self, timeout: int | None) -> bool: ...
 
 
 class InvoiceDistributor(Protocol):
@@ -292,6 +294,25 @@ class EngineBase:
                 f"Expected {expected} clients, but only {actual} started"
             )
 
+        def healthcheck(client: EmulatorClient) -> tuple[str, bool, str | None]:
+            try:
+                healthy = client.wait_wallet(timeout=CLIENT_HEALTHCHECK_TIMEOUT)
+            except (CoinjoinEmulatorError, OSError, TypeError, ValueError) as error:
+                return client.name, False, str(error)
+            return client.name, healthy, None
+
+        with multiprocessing.pool.ThreadPool() as pool:
+            results = pool.map(healthcheck, self.clients)
+        failed = [
+            f"{name} ({detail or 'RPC health-check timed out'})"
+            for name, healthy, detail in results
+            if not healthy
+        ]
+        if failed:
+            raise RuntimeError(
+                "Client RPC health-check failed before funding: " + ", ".join(failed)
+            )
+
     def fund_distributor(self, btc_amount: int | float) -> None:
         log.info("Funding distributor")
         if self.node is None:
@@ -413,7 +434,10 @@ class EngineBase:
 
         # TODO parallelize (driver cannot be simply passed to new threads)
         for client in self.clients:
-            self.store_client_logs(client, data_path)
+            try:
+                self.store_client_logs(client, data_path)
+            except (CoinjoinEmulatorError, RuntimeError, OSError, ValueError, TypeError) as error:
+                log.warning(f"- could not store {client.name} artifacts: {error}")
 
         archive_base = os.path.join(run_path, ".emulation_logs")
         archive_path = shutil.make_archive(archive_base, "zip", run_path, "coinjoin_emulator_data")

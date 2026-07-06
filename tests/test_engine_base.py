@@ -210,6 +210,27 @@ class EngineBaseTest(unittest.TestCase):
         self.assertEqual(engine.clients, [])
         self.assertEqual(start_client.call_count, 4)
 
+    def test_validate_clients_fails_without_restarting_unavailable_client(self) -> None:
+        driver = Mock()
+        engine = MinimalEngine(self.engine_args(), driver, "/tmp")
+        engine.scenario.wallets = [WalletConfig(funds=[])]
+        client = Mock()
+        client.name = "wasabi-client-002"
+        client.wait_wallet.return_value = False
+        engine.clients = [client]
+
+        with (
+            patch("manager.engine.engine_base.CLIENT_HEALTHCHECK_TIMEOUT", 1),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "Client RPC health-check failed before funding: wasabi-client-002",
+            ),
+        ):
+            engine.validate_clients()
+
+        client.wait_wallet.assert_called_once_with(timeout=1)
+        driver.stop.assert_not_called()
+
     def test_failed_invoice_payment_remains_pending(self) -> None:
         engine = MinimalEngine(Mock(), Mock(), "/tmp")
         engine.current_block = 0
@@ -345,6 +366,38 @@ class EngineBaseTest(unittest.TestCase):
             finally:
                 os.chdir(previous_cwd)
             self.assertTrue((Path(tmpdir) / "logs/wasabi-test-001/coinjoin_emulator_data/scenario.json").is_file())
+
+    def test_store_logs_archives_healthy_clients_when_one_client_is_unavailable(self) -> None:
+        engine = MinimalEngine(self.engine_args(run_id="partial-client-logs"), Mock(), "/tmp")
+        engine.node = Mock()
+        engine.node.get_block_count.return_value = 0
+        engine.node.get_block_hash.return_value = "block-hash"
+        engine.node.get_block_info.return_value = {"height": 0, "tx": []}
+        unavailable = Mock(name="unavailable")
+        unavailable.name = "wasabi-client-002"
+        healthy = Mock(name="healthy")
+        healthy.name = "wasabi-client-003"
+        engine.clients = [unavailable, healthy]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            previous_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with patch.object(
+                    engine,
+                    "store_client_logs",
+                    side_effect=[OSError("pod not found"), None],
+                ) as store_client_logs:
+                    engine.store_logs()
+            finally:
+                os.chdir(previous_cwd)
+
+            archive = (
+                Path(tmpdir)
+                / "logs/partial-client-logs/coinjoin_emulator_data/emulation_logs.zip"
+            )
+            self.assertTrue(archive.is_file())
+            self.assertEqual(store_client_logs.call_count, 2)
 
 
 if __name__ == "__main__":

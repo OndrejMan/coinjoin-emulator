@@ -58,3 +58,7 @@ class Driver(ABC):
     @abstractmethod
     def cleanup(self, image_prefix: str = "") -> object:
         pass
+
+    def diagnostics(self) -> str:
+        """Return runtime diagnostics before cleanup removes managed resources."""
+        return ""

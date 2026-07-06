@@ -288,6 +288,97 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(deleted_pods, ["btc-node"])
         self.assertEqual(deleted_services, ["btc-node"])
 
+    def test_diagnostics_reports_missing_running_oomkilled_and_evicted_pods(self) -> None:
+        def state(**kwargs: object) -> SimpleNamespace:
+            values: dict[str, object] = {"terminated": None, "waiting": None, "running": None}
+            values.update(kwargs)
+            return SimpleNamespace(**values)
+
+        def pod(
+            name: str,
+            phase: str,
+            reason: str | None = None,
+            container_state: SimpleNamespace | None = None,
+            last_state: SimpleNamespace | None = None,
+        ) -> SimpleNamespace:
+            return SimpleNamespace(
+                metadata=SimpleNamespace(name=name),
+                status=SimpleNamespace(
+                    phase=phase,
+                    reason=reason,
+                    message=None,
+                    init_container_statuses=[],
+                    container_statuses=[
+                        SimpleNamespace(
+                            name=name,
+                            ready=phase == "Running",
+                            restart_count=1 if last_state else 0,
+                            state=container_state or state(running=SimpleNamespace(started_at="now")),
+                            last_state=last_state or state(),
+                        )
+                    ],
+                ),
+            )
+
+        running = pod("wasabi-client-000", "Running")
+        oomkilled = pod(
+            "wasabi-client-001",
+            "Running",
+            last_state=state(
+                terminated=SimpleNamespace(
+                    reason="OOMKilled",
+                    message=None,
+                    exit_code=137,
+                    signal=9,
+                    started_at="before",
+                    finished_at="after",
+                )
+            ),
+        )
+        evicted = pod("wasabi-client-003", "Failed", reason="Evicted")
+        event = SimpleNamespace(
+            event_time=None,
+            last_timestamp="2026-07-06T17:45:00Z",
+            first_timestamp=None,
+            involved_object=SimpleNamespace(name="wasabi-client-002"),
+            type="Warning",
+            reason="NotFound",
+            message="pod was deleted",
+            count=1,
+        )
+        regular_client = Mock()
+        diagnostics_client = SimpleNamespace(
+            list_namespaced_pod=lambda **_kwargs: SimpleNamespace(
+                items=[running, oomkilled, evicted]
+            ),
+            read_namespaced_pod_log=lambda **kwargs: f"logs for {kwargs['name']}",
+            list_namespaced_event=lambda **_kwargs: SimpleNamespace(items=[event]),
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                side_effect=[regular_client, diagnostics_client],
+            ),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            driver.managed_pod_names.update(
+                {
+                    "wasabi-client-000",
+                    "wasabi-client-001",
+                    "wasabi-client-002",
+                    "wasabi-client-003",
+                }
+            )
+            diagnostics = driver.diagnostics()
+
+        self.assertIn("pod wasabi-client-000: phase=Running", diagnostics)
+        self.assertIn("reason=OOMKilled", diagnostics)
+        self.assertIn("pod wasabi-client-002: NotFound", diagnostics)
+        self.assertIn("pod wasabi-client-003: phase=Failed, reason=Evicted", diagnostics)
+        self.assertIn("Warning wasabi-client-002: NotFound: pod was deleted", diagnostics)
+
     def test_cleanup_uses_fresh_client_and_deletes_managed_resources(self) -> None:
         closed_forwards: list[str] = []
         deleted_pods: list[str] = []
