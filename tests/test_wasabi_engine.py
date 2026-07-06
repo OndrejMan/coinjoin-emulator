@@ -1,12 +1,16 @@
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
 from manager.btc_node import BtcNode
 from manager.engine.configuration import WalletConfig
-from manager.engine.wasabi_engine import WASABI_CLIENT_START_TIMEOUT_SECONDS, WasabiEngine
+from manager.engine.wasabi_engine import (
+    WASABI_CLIENT_START_TIMEOUT_SECONDS,
+    WASABI_COORDINATOR_START_TIMEOUT_SECONDS,
+    WasabiEngine,
+)
 from manager.exceptions import StartupError
 from manager.wasabi_backend_factory import BackendArchitecture
 
@@ -71,3 +75,23 @@ def test_client_readiness_allows_slow_kubernetes_startup() -> None:
     assert started_client is client
     client.wait_wallet.assert_called_once_with(timeout=WASABI_CLIENT_START_TIMEOUT_SECONDS)
     assert WASABI_CLIENT_START_TIMEOUT_SECONDS == 180
+
+
+def test_coordinator_timeout_includes_container_logs() -> None:
+    engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
+    coordinator = Mock()
+    coordinator.wait_ready.side_effect = TimeoutError("coordinator endpoint unavailable")
+    driver.logs.return_value = "CRITICAL Bitcoin Node is not fully synchronized."
+
+    with (
+        patch("manager.engine.wasabi_engine.sleep"),
+        patch("manager.engine.wasabi_engine.create_coordinator", return_value=coordinator),
+    ):
+        with pytest.raises(StartupError, match="Bitcoin Node is not fully synchronized"):
+            engine.start_wasabi_coordinator()
+
+    coordinator.wait_ready.assert_called_once_with(
+        timeout=WASABI_COORDINATOR_START_TIMEOUT_SECONDS
+    )
+    driver.logs.assert_called_once_with("wasabi-coordinator")
+    assert WASABI_COORDINATOR_START_TIMEOUT_SECONDS == 120

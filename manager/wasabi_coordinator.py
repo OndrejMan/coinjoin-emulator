@@ -1,4 +1,4 @@
-from time import sleep
+from time import monotonic, sleep
 from traceback import print_exception
 from typing import cast
 
@@ -50,15 +50,19 @@ class WasabiCoordinator:
             print_exception(e)
             return None
 
-    def wait_ready(self) -> None:
+    def wait_ready(self, timeout: int = 120) -> None:
         """Wait for coordinator to be ready"""
         log.info("Waiting for coordinator to be ready...")
-        while True:
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
             try:
                 status = self._get_status()
                 if status:
                     log.info(f"Coordinator ready: {status}")
-                    break
+                    return
             except (requests.exceptions.RequestException, ValueError):
                 pass
             sleep(0.1)
+        raise TimeoutError(
+            f"Wasabi coordinator at {self.host}:{self.port} was not ready after {timeout}s"
+        )

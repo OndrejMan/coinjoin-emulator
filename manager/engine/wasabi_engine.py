@@ -33,6 +33,7 @@ from .engine_base import (
 )
 
 WASABI_CLIENT_START_TIMEOUT_SECONDS = 180
+WASABI_COORDINATOR_START_TIMEOUT_SECONDS = 120
 
 
 class WasabiEngine(EngineBase):
@@ -166,7 +167,17 @@ class WasabiEngine(EngineBase):
             internal_ip=wasabi_coordinator_ip,
             proxy=self.args.proxy,
         )
-        self.coordinator.wait_ready()
+        try:
+            self.coordinator.wait_ready(timeout=WASABI_COORDINATOR_START_TIMEOUT_SECONDS)
+        except TimeoutError as exc:
+            try:
+                coordinator_logs = self.driver.logs("wasabi-coordinator").strip()
+            except Exception as log_error:  # pylint: disable=broad-exception-caught
+                coordinator_logs = f"<unable to read coordinator logs: {log_error}>"
+            raise StartupError(
+                f"Wasabi coordinator failed to start: {exc}\n"
+                f"Coordinator logs:\n{coordinator_logs}"
+            ) from exc
         log.info("- started wasabi-coordinator")
 
     def start_distributor(self) -> None:

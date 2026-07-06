@@ -71,6 +71,13 @@ class BtcNode:
         }
         return cast(int, self._rpc(request))
 
+    def get_blockchain_info(self) -> dict[str, object]:
+        request: dict[str, object] = {
+            "method": "getblockchaininfo",
+            "params": [],
+        }
+        return cast(dict[str, object], self._rpc(request))
+
     def get_block_hash(self, height: int) -> str:
         request: dict[str, object] = {
             "method": "getblockhash",
@@ -113,19 +120,33 @@ class BtcNode:
         deadline = monotonic() + timeout
         last_error = None
         last_block_count = None
+        last_initial_block_download = None
+        last_verification_progress = None
 
         while monotonic() < deadline:
             try:
                 block_count = self.get_block_count()
+                blockchain_info = self.get_blockchain_info()
                 last_block_count = block_count
-                if block_count > 200:
+                last_initial_block_download = blockchain_info.get("initialblockdownload")
+                last_verification_progress = blockchain_info.get("verificationprogress")
+                if (
+                    block_count > 200
+                    and last_initial_block_download is False
+                    and isinstance(last_verification_progress, (int, float))
+                    and last_verification_progress >= 1.0
+                ):
                     self.ensure_funding_wallet_ready()
                     break
             except (requests.exceptions.RequestException, RpcError) as exc:
                 last_error = exc
             sleep(0.1)
         else:
-            detail = f"last block count: {last_block_count}"
+            detail = (
+                f"last block count: {last_block_count}, "
+                f"initial block download: {last_initial_block_download}, "
+                f"verification progress: {last_verification_progress}"
+            )
             if last_error is not None:
                 detail = f"last error: {last_error}"
             raise TimeoutError(
