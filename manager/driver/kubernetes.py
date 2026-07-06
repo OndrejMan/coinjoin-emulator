@@ -292,7 +292,11 @@ class KubernetesDriver(Driver):
         service_manifest = {
             "apiVersion": "v1",
             "kind": "Service",
-            "metadata": {"name": f"{name}-service", "labels": {"app": name, **MANAGED_LABELS}},
+            # Keep the service name identical to the Docker/Podman container
+            # name. Emulator images use these stable names for in-cluster DNS
+            # (for example, JoinMarket connects to ``btc-node`` and
+            # ``irc-server``).
+            "metadata": {"name": name, "labels": {"app": name, **MANAGED_LABELS}},
             "spec": {
                 "type": "NodePort",
                 "selector": {"app": name},
@@ -342,7 +346,7 @@ class KubernetesDriver(Driver):
         except ApiException:
             pass
         try:
-            self.client.delete_namespaced_service(f"{name}-service", namespace=self._namespace)
+            self.client.delete_namespaced_service(name=name, namespace=self._namespace)
         except ApiException:
             pass
 

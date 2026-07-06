@@ -197,6 +197,7 @@ class KubernetesDriverTest(TestCase):
         self.assertNotIn("nodePort", service_ports[0])
         service_metadata = cast(dict[str, object], service_bodies[0]["metadata"])
         service_labels = cast(dict[str, object], service_metadata["labels"])
+        self.assertEqual(service_metadata["name"], "btc-node")
         self.assertEqual(service_labels["app.kubernetes.io/managed-by"], "coinjoin-emulator")
 
         pod_metadata = cast(dict[str, object], pod_bodies[0]["metadata"])
@@ -264,6 +265,27 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(pod_ip, "")
         self.assertEqual(ports, {})
         self.assertEqual(created_pods[0]["kind"], "Pod")
+
+    def test_stop_deletes_service_with_container_dns_name(self) -> None:
+        deleted_pods: list[str] = []
+        deleted_services: list[str] = []
+        kube_client = SimpleNamespace(
+            delete_namespaced_pod=lambda **kwargs: deleted_pods.append(cast(str, kwargs["name"])),
+            delete_namespaced_service=lambda **kwargs: deleted_services.append(cast(str, kwargs["name"])),
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                return_value=kube_client,
+            ),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            driver.stop("btc-node")
+
+        self.assertEqual(deleted_pods, ["btc-node"])
+        self.assertEqual(deleted_services, ["btc-node"])
 
     def test_cleanup_uses_fresh_client_and_deletes_managed_resources(self) -> None:
         closed_forwards: list[str] = []
