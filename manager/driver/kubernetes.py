@@ -298,7 +298,10 @@ class KubernetesDriver(Driver):
             # ``irc-server``).
             "metadata": {"name": name, "labels": {"app": name, **MANAGED_LABELS}},
             "spec": {
-                "type": "NodePort",
+                # Pod access from the external manager is handled through the
+                # Kubernetes port-forward API. ClusterIP is sufficient for
+                # stable in-cluster DNS without reserving host NodePorts.
+                "type": "ClusterIP",
                 "selector": {"app": name},
                 "ports": [
                     {

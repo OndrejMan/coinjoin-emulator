@@ -94,7 +94,7 @@ To run the simulation on a [Kubernetes](https://kubernetes.io/) cluster, use the
 
 The `kubernetes` driver relies on used images being accessible publicly from [DockerHub](https://hub.docker.com/). For that, build the images in `containers` directory manually and upload them to the registry. Afterwards, specify the image prefix using `--image-prefix` option when starting the simulation.
 
-In case *NodePorts* are not supported by your cluster, you may also need to run a proxy to access the services, e.g., [Shadowsocks](https://shadowsocks.org/). Use the `--proxy` option to specify the address of the proxy.
+The manager reaches pod ports through the Kubernetes port-forward API. Services use `ClusterIP` for stable in-cluster DNS, so Kubernetes mode does not require host `NodePort` mappings.
 
 If you need to specify custom namespace, use the `--namespace` option. If you also need to reuse existing namespace, use the `--reuse-namespace` option.
 

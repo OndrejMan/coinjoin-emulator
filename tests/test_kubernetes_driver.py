@@ -194,6 +194,7 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(FakePortForwardServer.started[0].remote_port, 18443)
         service_spec = cast(dict[str, object], service_bodies[0]["spec"])
         service_ports = cast(list[dict[str, object]], service_spec["ports"])
+        self.assertEqual(service_spec["type"], "ClusterIP")
         self.assertNotIn("nodePort", service_ports[0])
         service_metadata = cast(dict[str, object], service_bodies[0]["metadata"])
         service_labels = cast(dict[str, object], service_metadata["labels"])
