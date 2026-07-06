@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 RUN_SCRIPT = Path(__file__).parents[1] / "containers" / "wasabi-coordinator" / "2.6.0" / "run.sh"
 
 
