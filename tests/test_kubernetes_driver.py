@@ -1,10 +1,16 @@
 import importlib.util
+import socket
 import sys
 import types
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, cast
 from unittest import TestCase
 from unittest.mock import Mock, patch
+
+if TYPE_CHECKING:
+    from kubernetes.client import CoreV1Api as CoreV1ApiClass
+    from manager.driver.kubernetes import KubernetesDriver as KubernetesDriverClass
+    from manager.driver.kubernetes import PortForwardServer as PortForwardServerClass
 
 
 def _install_fake_kubernetes_modules() -> None:
@@ -52,10 +58,13 @@ def _install_fake_kubernetes_modules() -> None:
     sys.modules["kubernetes.client.models.v1_pod"] = v1_pod_module
 
 
-def _load_kubernetes_symbols() -> tuple[type[Any], type[Any]]:
+def _load_kubernetes_symbols() -> tuple[type["KubernetesDriverClass"], type["PortForwardServerClass"]]:
     _install_fake_kubernetes_modules()
     module = importlib.import_module("manager.driver.kubernetes")
-    return module.KubernetesDriver, module.PortForwardServer
+    return (
+        cast(type["KubernetesDriverClass"], module.KubernetesDriver),
+        cast(type["PortForwardServerClass"], module.PortForwardServer),
+    )
 
 
 class FakePortForwardServer:
@@ -103,7 +112,7 @@ def _capture_service_body(
 
 
 def _run_driver_with_mapped_volume(
-) -> tuple[object, str, dict[int, int], list[dict[str, object]], list[dict[str, object]]]:
+) -> tuple["KubernetesDriverClass", str, dict[int, int], list[dict[str, object]], list[dict[str, object]]]:
     KubernetesDriver, _ = _load_kubernetes_symbols()
     FakePortForwardServer.reset()
     pod_bodies: list[dict[str, object]] = []
@@ -168,12 +177,6 @@ class KubernetesDriverTest(TestCase):
     def test_port_forward_retries_transient_handshake_failure(self) -> None:
         _, PortForwardServer = _load_kubernetes_symbols()
 
-        class FakeClientSocket:
-            closed = False
-
-            def close(self) -> None:
-                self.closed = True
-
         class FakeForward:
             closed = False
 
@@ -183,34 +186,32 @@ class KubernetesDriverTest(TestCase):
             def close(self) -> None:
                 self.closed = True
 
-        server = PortForwardServer.__new__(PortForwardServer)
-        server.kube_client = SimpleNamespace(  # type: ignore[assignment]
-            connect_get_namespaced_pod_portforward=object()
+        fake_kube_client = cast(
+            "CoreV1ApiClass",
+            SimpleNamespace(connect_get_namespaced_pod_portforward=object()),
         )
-        server.namespace = "coinjoin-test"
-        server.pod_name = "wasabi-client-005"
-        server.remote_port = 37128
-        fake_socket = FakeClientSocket()
+        server = PortForwardServer(fake_kube_client, "coinjoin-test", "wasabi-client-005", 37128)
+        self.addCleanup(server.close)
+        client_socket = Mock(spec=socket.socket)
         fake_forward = FakeForward()
         bridge_calls: list[tuple[object, object]] = []
 
-        def bridge(client_socket: object, upstream_socket: object) -> None:
-            bridge_calls.append((client_socket, upstream_socket))
-
-        server.bridge = bridge  # type: ignore[method-assign]
+        def bridge(client_socket_obj: object, upstream_socket: object) -> None:
+            bridge_calls.append((client_socket_obj, upstream_socket))
 
         with (
+            patch.object(server, "bridge", side_effect=bridge),
             patch(
                 "manager.driver.kubernetes.portforward",
                 side_effect=[RuntimeError("Handshake status 502 Bad Gateway"), fake_forward],
             ) as portforward,
             patch("manager.driver.kubernetes.sleep"),
         ):
-            server.handle_connection(fake_socket)  # type: ignore[arg-type]
+            server.handle_connection(cast(socket.socket, client_socket))
 
         self.assertEqual(portforward.call_count, 2)
-        self.assertEqual(bridge_calls, [(fake_socket, {"remote_port": 37128})])
-        self.assertTrue(fake_socket.closed)
+        self.assertEqual(bridge_calls, [(client_socket, {"remote_port": 37128})])
+        client_socket.close.assert_called_once_with()
         self.assertTrue(fake_forward.closed)
 
     def test_run_accepts_and_maps_docker_style_volumes(self) -> None:
@@ -421,14 +422,12 @@ class KubernetesDriverTest(TestCase):
         self.assertIn("Warning wasabi-client-002: NotFound: pod was deleted", diagnostics)
 
     def test_cleanup_uses_fresh_client_and_deletes_managed_resources(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, PortForwardServer = _load_kubernetes_symbols()
         closed_forwards: list[str] = []
         deleted_pods: list[str] = []
         deleted_services: list[str] = []
-
-        class FakeForward:
-            def close(self) -> None:
-                closed_forwards.append("closed")
+        fake_forward = Mock(spec=PortForwardServer)
+        fake_forward.close.side_effect = lambda: closed_forwards.append("closed")
 
         def corrupted_list_pods(**_kwargs: object) -> None:
             raise ValueError("Missing required parameter `ports`")
@@ -471,7 +470,7 @@ class KubernetesDriverTest(TestCase):
             ),
         ):
             driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
-            driver.port_forwards[("btc-node", 18443)] = FakeForward()  # type: ignore[assignment]
+            driver.port_forwards[("btc-node", 18443)] = cast("PortForwardServerClass", fake_forward)
             driver.cleanup()
 
         self.assertEqual(closed_forwards, ["closed"])
