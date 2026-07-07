@@ -2,11 +2,15 @@ import importlib.util
 import sys
 import types
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
-if importlib.util.find_spec("kubernetes") is None:
+
+def _install_fake_kubernetes_modules() -> None:
+    if importlib.util.find_spec("kubernetes") is not None:
+        return
+
     kubernetes_module = types.ModuleType("kubernetes")
     client_module = types.ModuleType("kubernetes.client")
     config_module = types.ModuleType("kubernetes.config")
@@ -47,7 +51,104 @@ if importlib.util.find_spec("kubernetes") is None:
     sys.modules["kubernetes.client.models.core_v1_event"] = core_v1_event_module
     sys.modules["kubernetes.client.models.v1_pod"] = v1_pod_module
 
-from manager.driver.kubernetes import KubernetesDriver, PortForwardServer
+
+def _load_kubernetes_symbols() -> tuple[type[Any], type[Any]]:
+    _install_fake_kubernetes_modules()
+    module = importlib.import_module("manager.driver.kubernetes")
+    return module.KubernetesDriver, module.PortForwardServer
+
+
+class FakePortForwardServer:
+    next_port = 41000
+    started: list["FakePortForwardServer"] = []
+
+    def __init__(
+        self,
+        kube_client: object,
+        namespace: str,
+        pod_name: str,
+        remote_port: int,
+    ) -> None:
+        self.kube_client = kube_client
+        self.namespace = namespace
+        self.pod_name = pod_name
+        self.remote_port = remote_port
+        self.local_port = FakePortForwardServer.next_port
+        FakePortForwardServer.next_port += 1
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.next_port = 41000
+        cls.started = []
+
+    def start(self) -> None:
+        FakePortForwardServer.started.append(self)
+
+    def close(self) -> None:
+        pass
+
+
+def _capture_service_body(
+    service_bodies: list[dict[str, object]],
+    body: dict[str, object],
+) -> SimpleNamespace:
+    service_bodies.append(body)
+    return SimpleNamespace(
+        spec=SimpleNamespace(
+            ports=[
+                SimpleNamespace(target_port=18443, node_port=31843),
+            ]
+        )
+    )
+
+
+def _run_driver_with_mapped_volume(
+) -> tuple[object, str, dict[int, int], list[dict[str, object]], list[dict[str, object]]]:
+    KubernetesDriver, _ = _load_kubernetes_symbols()
+    FakePortForwardServer.reset()
+    pod_bodies: list[dict[str, object]] = []
+    service_bodies: list[dict[str, object]] = []
+    kube_client = SimpleNamespace(
+        create_namespaced_pod=lambda **kwargs: pod_bodies.append(cast(dict[str, object], kwargs["body"])),
+        read_namespaced_pod_status=lambda **kwargs: SimpleNamespace(
+            status=SimpleNamespace(pod_ip="10.42.0.10")
+        ),
+        create_namespaced_service=lambda **kwargs: _capture_service_body(
+            service_bodies,
+            cast(dict[str, object], kwargs["body"]),
+        ),
+    )
+
+    with (
+        patch("manager.driver.kubernetes.config.load_kube_config"),
+        patch(
+            "manager.driver.kubernetes.client.CoreV1Api",
+            return_value=kube_client,
+        ),
+        patch(
+            "manager.driver.kubernetes.PortForwardServer",
+            FakePortForwardServer,
+        ),
+    ):
+        driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+        pod_ip, ports = driver.run(
+            "btc-node",
+            "btc-node:latest",
+            ports={18443: 18443},
+            cpu=0.5,
+            cpu_request=0.1,
+            command=["./run.sh", "-blocksxor=0"],
+            volumes={
+                "/tmp/btc-data": {
+                    "bind": "/home/bitcoin/data",
+                    "mode": "rw",
+                    "uid": "1234",
+                    "gid": "5678",
+                }
+            },
+        )
+
+    return driver, pod_ip, ports, pod_bodies, service_bodies
 
 
 class KubernetesDriverTest(TestCase):
@@ -56,6 +157,7 @@ class KubernetesDriverTest(TestCase):
     def test_falls_back_to_incluster_auth(
         self, load_kube_config: Mock, load_incluster_config: Mock
     ) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
         from kubernetes.config.config_exception import ConfigException  # pylint: disable=import-outside-toplevel
 
         load_kube_config.side_effect = ConfigException("no kubeconfig")
@@ -64,6 +166,8 @@ class KubernetesDriverTest(TestCase):
         load_incluster_config.assert_called_once_with()
 
     def test_port_forward_retries_transient_handshake_failure(self) -> None:
+        _, PortForwardServer = _load_kubernetes_symbols()
+
         class FakeClientSocket:
             closed = False
 
@@ -110,92 +214,7 @@ class KubernetesDriverTest(TestCase):
         self.assertTrue(fake_forward.closed)
 
     def test_run_accepts_and_maps_docker_style_volumes(self) -> None:
-        class FakePortForwardServer:
-            next_port = 41000
-            started: list["FakePortForwardServer"] = []
-
-            def __init__(
-                self,
-                kube_client: object,
-                namespace: str,
-                pod_name: str,
-                remote_port: int,
-            ) -> None:
-                self.kube_client = kube_client
-                self.namespace = namespace
-                self.pod_name = pod_name
-                self.remote_port = remote_port
-                self.local_port = FakePortForwardServer.next_port
-                FakePortForwardServer.next_port += 1
-
-            def start(self) -> None:
-                FakePortForwardServer.started.append(self)
-
-            def close(self) -> None:
-                pass
-
-        kube_client = SimpleNamespace(
-            create_namespaced_pod=lambda **kwargs: None,
-            read_namespaced_pod_status=lambda **kwargs: SimpleNamespace(
-                status=SimpleNamespace(pod_ip="10.42.0.10")
-            ),
-            create_namespaced_service=lambda **kwargs: SimpleNamespace(
-                spec=SimpleNamespace(
-                    ports=[
-                        SimpleNamespace(target_port=18443, node_port=31843),
-                    ]
-                )
-            ),
-        )
-
-        with (
-            patch("manager.driver.kubernetes.config.load_kube_config"),
-            patch(
-                "manager.driver.kubernetes.client.CoreV1Api",
-                return_value=kube_client,
-            ),
-            patch(
-                "manager.driver.kubernetes.PortForwardServer",
-                FakePortForwardServer,
-            ),
-        ):
-            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
-            pod_bodies: list[dict[str, object]] = []
-            service_bodies: list[dict[str, object]] = []
-
-            def create_pod(**kwargs: object) -> None:
-                pod_bodies.append(cast(dict[str, object], kwargs["body"]))
-
-            def create_service(**kwargs: object) -> SimpleNamespace:
-                service_bodies.append(cast(dict[str, object], kwargs["body"]))
-                return SimpleNamespace(
-                    spec=SimpleNamespace(
-                        ports=[
-                            SimpleNamespace(target_port=18443, node_port=31843),
-                        ]
-                    )
-                )
-
-            kube_client.create_namespaced_pod = create_pod
-            kube_client.create_namespaced_service = create_service
-
-            pod_ip, ports = driver.run(
-                "btc-node",
-                "btc-node:latest",
-                ports={18443: 18443},
-                cpu=0.5,
-                cpu_request=0.1,
-                command=["./run.sh", "-blocksxor=0"],
-                volumes={
-                    "/tmp/btc-data": {
-                        "bind": "/home/bitcoin/data",
-                        "mode": "rw",
-                        "uid": "1234",
-                        "gid": "5678",
-                    }
-                },
-            )
-
+        driver, pod_ip, ports, pod_bodies, service_bodies = _run_driver_with_mapped_volume()
         self.assertEqual(pod_ip, "10.42.0.10")
         self.assertEqual(driver.control_host, "127.0.0.1")
         self.assertEqual(ports, {18443: 41000})
@@ -253,6 +272,7 @@ class KubernetesDriverTest(TestCase):
         )
 
     def test_run_does_not_create_empty_service_when_no_ports_are_exposed(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
         created_pods: list[dict[str, object]] = []
 
         def create_pod(**kwargs: object) -> None:
@@ -286,6 +306,7 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(created_pods[0]["kind"], "Pod")
 
     def test_stop_deletes_service_with_container_dns_name(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
         deleted_pods: list[str] = []
         deleted_services: list[str] = []
         kube_client = SimpleNamespace(
@@ -307,6 +328,8 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(deleted_services, ["btc-node"])
 
     def test_diagnostics_reports_missing_running_oomkilled_and_evicted_pods(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+
         def state(**kwargs: object) -> SimpleNamespace:
             values: dict[str, object] = {"terminated": None, "waiting": None, "running": None}
             values.update(kwargs)
@@ -398,6 +421,7 @@ class KubernetesDriverTest(TestCase):
         self.assertIn("Warning wasabi-client-002: NotFound: pod was deleted", diagnostics)
 
     def test_cleanup_uses_fresh_client_and_deletes_managed_resources(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
         closed_forwards: list[str] = []
         deleted_pods: list[str] = []
         deleted_services: list[str] = []
@@ -455,6 +479,7 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(deleted_services, ["wallet-helper-service", "btc-node-old-service"])
 
     def test_cleanup_deletes_owned_namespace_without_listing_resources(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
         deleted_namespaces: list[str] = []
 
         cleanup_client = SimpleNamespace(

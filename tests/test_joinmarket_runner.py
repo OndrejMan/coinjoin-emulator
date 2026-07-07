@@ -27,6 +27,9 @@ class RunnerHarness(JoinMarketRunnerMixin):
     def update_coinjoins_joinmarket(self) -> None:
         raise AssertionError("run_engine should fail before updating coinjoins")
 
+    def completion_block_limit(self) -> int:
+        return self._joinmarket_completion_block_limit()
+
 
 class TestJoinMarketRunner:
     def test_requires_initialized_bitcoin_node(self) -> None:
@@ -43,4 +46,4 @@ class TestJoinMarketRunner:
             SimpleNamespace(type="maker"),
         ]
 
-        assert runner._joinmarket_completion_block_limit() == 580
+        assert runner.completion_block_limit() == 580
