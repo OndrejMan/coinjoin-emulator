@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 if TYPE_CHECKING:
     from kubernetes.client import CoreV1Api as CoreV1ApiClass
+
     from manager.driver.kubernetes import KubernetesDriver as KubernetesDriverClass
     from manager.driver.kubernetes import PortForwardServer as PortForwardServerClass
 
