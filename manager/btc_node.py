@@ -186,6 +186,15 @@ class BtcNode:
                 wallet, descriptors=True, disable_private_keys=disable_private_keys
             )
             error = response_body.get("error")
+        if error is not None and self._is_wallet_database_exists_error(error):
+            try:
+                self._rpc({"method": "loadwallet", "params": [wallet]})
+            except RpcError as exc:
+                if not self._is_wallet_already_loaded_error(exc):
+                    raise
+            self._rpc({"method": "getwalletinfo", "params": []}, wallet)
+            log.debug(f"reused existing wallet {wallet}")
+            return
 
         if error is not None:
             log.error(response_body)
@@ -245,6 +254,16 @@ class BtcNode:
             or "not found" in message
             or "No such file or directory" in message
             or "Wallet file verification failed" in message
+        )
+
+    def _is_wallet_database_exists_error(self, error: object) -> bool:
+        if not isinstance(error, dict):
+            return False
+        message = error.get("message", "")
+        return (
+            error.get("code") == -4
+            and isinstance(message, str)
+            and "Database already exists" in message
         )
 
     def _create_wallet_request(

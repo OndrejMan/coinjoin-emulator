@@ -103,6 +103,49 @@ class BtcNodeTest(unittest.TestCase):
         self.assertEqual(rpc.call_args_list[3].args[0]["method"], "settxfee")
         self.assertEqual(rpc.call_args_list[3].args[1], "wallet")
 
+    def test_create_wallet_reuses_existing_wallet_database(self) -> None:
+        node = BtcNode(host="btc-node", port=18443)
+        existing_database = {
+            "error": {
+                "code": -4,
+                "message": (
+                    "Wallet file verification failed. Failed to create database path "
+                    "'/home/bitcoin/data/regtest/wallets/jm_wallet_jcs_000'. Database already exists."
+                ),
+            },
+            "result": None,
+        }
+
+        with patch.object(node, "_post_create_wallet_request", return_value=existing_database), \
+            patch.object(node, "_rpc", side_effect=[{"name": "jm_wallet_jcs_000"}, {"walletname": "jm_wallet_jcs_000"}]) as rpc:
+            node.create_wallet("jm_wallet_jcs_000")
+
+        self.assertEqual(rpc.call_args_list[0].args[0]["method"], "loadwallet")
+        self.assertEqual(rpc.call_args_list[0].args[0]["params"], ["jm_wallet_jcs_000"])
+        self.assertEqual(rpc.call_args_list[1].args[0]["method"], "getwalletinfo")
+        self.assertEqual(rpc.call_args_list[1].args[1], "jm_wallet_jcs_000")
+
+    def test_create_wallet_accepts_existing_loaded_wallet_database(self) -> None:
+        node = BtcNode(host="btc-node", port=18443)
+        existing_database = {
+            "error": {
+                "code": -4,
+                "message": (
+                    "Wallet file verification failed. Failed to create database path "
+                    "'/home/bitcoin/data/regtest/wallets/jm_wallet_jcs_000'. Database already exists."
+                ),
+            },
+            "result": None,
+        }
+        already_loaded = RpcError("Bitcoin Core RPC loadwallet failed: Wallet already loaded")
+
+        with patch.object(node, "_post_create_wallet_request", return_value=existing_database), \
+            patch.object(node, "_rpc", side_effect=[already_loaded, {"walletname": "jm_wallet_jcs_000"}]) as rpc:
+            node.create_wallet("jm_wallet_jcs_000")
+
+        self.assertEqual(rpc.call_count, 2)
+        self.assertEqual(rpc.call_args_list[1].args[0]["method"], "getwalletinfo")
+
     def test_wait_ready_accepts_fully_synchronized_node(self) -> None:
         node = BtcNode(host="btc-node", port=18443)
 

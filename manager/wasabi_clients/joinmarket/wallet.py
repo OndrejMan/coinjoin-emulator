@@ -64,23 +64,27 @@ class JoinMarketWalletMixin:
     def wait_wallet(self, timeout: int | None = None) -> bool:
         start = time()
         last_create_err = None
-        last_balance_err = None
+        last_readiness_err = None
+        create_attempted = False
         while timeout is None or time() - start < timeout:
-            try:
-                self._create_wallet()
-            except (requests.exceptions.RequestException, RpcError, TimeoutError, KeyError, TypeError, ValueError) as e:
-                last_create_err = e
+            if not create_attempted:
+                try:
+                    self._create_wallet()
+                except (requests.exceptions.RequestException, RpcError, TimeoutError, KeyError, TypeError, ValueError) as e:
+                    last_create_err = e
+                else:
+                    create_attempted = True
 
             try:
-                self.get_balance()
+                self.get_new_address()
                 return True
             except (requests.exceptions.RequestException, RpcError, TimeoutError, KeyError, TypeError, ValueError) as e:
-                last_balance_err = e
+                last_readiness_err = e
 
             sleep(0.1)
         log.warning(f"- {self.name} wait_wallet timed out after {timeout}s.")
         log.warning(f"  Last create error: {last_create_err}")
-        log.warning(f"  Last balance error: {last_balance_err}")
+        log.warning(f"  Last readiness error: {last_readiness_err}")
         return False
 
     def display_wallet(self) -> JsonDict:

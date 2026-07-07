@@ -34,3 +34,27 @@ class JoinMarketWalletTest(unittest.TestCase):
             return_value={"walletinfo": {"available_balance": "1.25000000"}},
         ):
             self.assertEqual(client.get_balance(), 125_000_000)
+
+    def test_wait_wallet_does_not_recreate_wallet_after_successful_create(self) -> None:
+        client = JoinMarketClientServer(host="dind")
+
+        with patch.object(client, "_create_wallet") as create_wallet, \
+            patch.object(client, "get_new_address", side_effect=[TimeoutError("timeout"), "bcrt1ready"]), \
+            patch("manager.wasabi_clients.joinmarket.wallet.sleep"):
+            self.assertTrue(client.wait_wallet(timeout=5))
+
+        create_wallet.assert_called_once_with()
+
+    def test_wait_wallet_retries_create_until_first_success(self) -> None:
+        client = JoinMarketClientServer(host="dind")
+
+        with patch.object(
+            client,
+            "_create_wallet",
+            side_effect=[TimeoutError("timeout"), {"token": "created"}],
+        ) as create_wallet, \
+            patch.object(client, "get_new_address", side_effect=[TimeoutError("timeout"), "bcrt1ready"]), \
+            patch("manager.wasabi_clients.joinmarket.wallet.sleep"):
+            self.assertTrue(client.wait_wallet(timeout=5))
+
+        self.assertEqual(create_wallet.call_count, 2)
