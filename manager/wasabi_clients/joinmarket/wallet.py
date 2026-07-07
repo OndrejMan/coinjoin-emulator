@@ -10,6 +10,8 @@ from manager import log_output as log
 from ...exceptions import RpcError
 from .types import BTC, PASSWORD, WALLET_NAME, WALLET_TYPE, JsonDict
 
+WALLET_CREATE_TIMEOUT_SECONDS = 60
+
 
 class JoinMarketWalletMixin:
     name: str
@@ -48,7 +50,14 @@ class JoinMarketWalletMixin:
             "password": PASSWORD,
             "wallettype": WALLET_TYPE,
         }
-        response = self._rpc(method, endpoint, json_data=data, auth_required=False)
+        response = self._rpc(
+            method,
+            endpoint,
+            json_data=data,
+            timeout=WALLET_CREATE_TIMEOUT_SECONDS,
+            repeat=1,
+            auth_required=False,
+        )
         self._store_tokens(response)
         return response
 
@@ -79,6 +88,8 @@ class JoinMarketWalletMixin:
                     ValueError,
                 ) as e:
                     last_create_err = e
+                    if self._is_wallet_already_unlocked_error(e):
+                        create_attempted = True
                 else:
                     create_attempted = True
 
@@ -93,6 +104,9 @@ class JoinMarketWalletMixin:
         log.warning(f"  Last create error: {last_create_err}")
         log.warning(f"  Last readiness error: {last_readiness_err}")
         return False
+
+    def _is_wallet_already_unlocked_error(self, error: Exception) -> bool:
+        return "Wallet already unlocked" in str(error)
 
     def display_wallet(self) -> JsonDict:
         """Get detailed breakdown of wallet contents by account."""

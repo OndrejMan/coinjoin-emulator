@@ -1,6 +1,9 @@
 import unittest
 from unittest.mock import patch
 
+import requests
+
+from manager.exceptions import RpcError
 from manager.wasabi_clients.joinmarket_client import JoinMarketClientServer
 from tests.joinmarket_helpers import response
 
@@ -24,6 +27,30 @@ class JoinMarketWalletTest(unittest.TestCase):
         self.assertEqual(request.call_args_list[1].kwargs["headers"], {})
         self.assertEqual(client.token, "unlocked-token")
         self.assertEqual(client.refresh_token, "unlocked-refresh")
+
+    def test_create_wallet_uses_long_single_attempt_timeout(self) -> None:
+        client = JoinMarketClientServer(host="dind")
+        create_response = response(body={"token": "created-token", "refresh_token": "created-refresh"})
+
+        with patch(
+            "manager.wasabi_clients.joinmarket.rpc.requests.request",
+            return_value=create_response,
+        ) as request:
+            client._create_wallet()
+
+        self.assertEqual(request.call_args.kwargs["timeout"], 60)
+
+    def test_create_wallet_does_not_repeat_after_timeout(self) -> None:
+        client = JoinMarketClientServer(host="dind")
+
+        with patch(
+            "manager.wasabi_clients.joinmarket.rpc.requests.request",
+            side_effect=requests.exceptions.Timeout,
+        ) as request:
+            with self.assertRaises(TimeoutError):
+                client._create_wallet()
+
+        self.assertEqual(request.call_count, 1)
 
     def test_get_balance_converts_wallet_available_balance_to_sats(self) -> None:
         client = JoinMarketClientServer(host="dind")
@@ -58,3 +85,31 @@ class JoinMarketWalletTest(unittest.TestCase):
             self.assertTrue(client.wait_wallet(timeout=5))
 
         self.assertEqual(create_wallet.call_count, 2)
+
+    def test_wait_wallet_accepts_already_unlocked_wallet_as_created(self) -> None:
+        client = JoinMarketClientServer(host="dind")
+
+        with patch.object(
+            client,
+            "_create_wallet",
+            side_effect=RpcError("Error 401: Wallet already unlocked."),
+        ) as create_wallet, \
+            patch.object(client, "get_new_address", return_value="bcrt1ready"), \
+            patch("manager.wasabi_clients.joinmarket.wallet.sleep"):
+            self.assertTrue(client.wait_wallet(timeout=5))
+
+        create_wallet.assert_called_once_with()
+
+    def test_wait_wallet_continues_after_no_wallet_loaded_readiness_error(self) -> None:
+        client = JoinMarketClientServer(host="dind")
+
+        with patch.object(client, "_create_wallet", return_value={"token": "created"}) as create_wallet, \
+            patch.object(
+                client,
+                "get_new_address",
+                side_effect=[RpcError("Error 401: No wallet loaded."), "bcrt1ready"],
+            ), \
+            patch("manager.wasabi_clients.joinmarket.wallet.sleep"):
+            self.assertTrue(client.wait_wallet(timeout=5))
+
+        create_wallet.assert_called_once_with()
