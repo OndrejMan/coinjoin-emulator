@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from manager.btc_node import BtcNode
@@ -15,6 +17,7 @@ class RunnerHarness(JoinMarketRunnerMixin):
             default_version="joinmarket",
             wallets=[],
         )
+        self.clients = []
         self.current_block = 0
         self.current_round = 0
 
@@ -31,3 +34,13 @@ class TestJoinMarketRunner:
 
         with pytest.raises(RuntimeError, match="Bitcoin node is not initialized"):
             runner.run_engine()
+
+    def test_completion_block_limit_includes_retry_attempt_budget(self) -> None:
+        runner = RunnerHarness()
+        runner.clients = [
+            SimpleNamespace(type="taker"),
+            SimpleNamespace(type="taker"),
+            SimpleNamespace(type="maker"),
+        ]
+
+        assert runner._joinmarket_completion_block_limit() == 580

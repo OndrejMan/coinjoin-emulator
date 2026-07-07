@@ -13,6 +13,8 @@ from .constants import (
     JOINMARKET_COUNTERPARTIES,
     JOINMARKET_MAKER_MIN_SIZE_SATS,
     JOINMARKET_ROUND_TIMEOUT_BLOCKS,
+    JOINMARKET_TAKER_MAX_ATTEMPTS,
+    JOINMARKET_TAKER_RETRY_COOLDOWN_BLOCKS,
 )
 
 
@@ -52,10 +54,74 @@ class JoinMarketRoundMixin:
         ]
         return max(round_ids, default=0) + 1
 
+    def _event_target_round(self, event: dict[str, object]) -> int:
+        return int(cast(int, event.get("target_round") or self.current_round + 1))
+
+    def _taker_attempt_count(self, taker_name: str, target_round: int) -> int:
+        return len([
+            event for event in self.joinmarket_round_events
+            if event.get("taker") == taker_name
+            and self._event_target_round(event) == target_round
+        ])
+
+    def _round_retry_after_block(self, target_round: int) -> int:
+        retry_blocks = [
+            int(cast(int, event.get("retry_after_block") or 0))
+            for event in self.joinmarket_round_events
+            if event.get("status") == "failed"
+            and self._event_target_round(event) == target_round
+        ]
+        return max(retry_blocks, default=0)
+
+    def _eligible_takers(self, target_round: int) -> list[EmulatorClient]:
+        takers = [
+            client for client in self.clients
+            if client.type == "taker"
+            and not client.coinjoin_in_process
+            and client.delay[0] <= self.current_block
+            and not self._active_round_for_taker(client.name)
+        ]
+        return sorted(
+            takers,
+            key=lambda client: (
+                self._taker_attempt_count(client.name, target_round),
+                client.name,
+            ),
+        )
+
+    def _restart_round_makers(self, event: dict[str, object]) -> None:
+        maker_names = {
+            str(name)
+            for name in cast(list[object], event.get("candidate_makers") or [])
+        }
+        if not maker_names:
+            return
+        for client in self.clients:
+            if client.name not in maker_names or not client.maker_running:
+                continue
+            try:
+                client.stop_maker()
+            except (
+                requests.exceptions.RequestException,
+                CoinjoinEmulatorError,
+                RuntimeError,
+                OSError,
+                TimeoutError,
+                KeyError,
+                TypeError,
+                ValueError,
+            ) as e:
+                event.setdefault("maker_restart_errors", [])
+                cast(list[str], event["maker_restart_errors"]).append(f"{client.name}: {e}")
+                log.warning(f"- could not stop JoinMarket maker {client.name} before retry: {e}")
+            finally:
+                client.maker_running = False
+
     def _mark_round_failed(self, event: dict[str, object], reason: str) -> None:
         event["status"] = "failed"
         event["stop_block"] = self.current_block
         event["failure_reason"] = reason
+        event["retry_after_block"] = self.current_block + JOINMARKET_TAKER_RETRY_COOLDOWN_BLOCKS
         taker_name = event.get("taker")
         for client in self.clients:
             if client.name == taker_name:
@@ -76,6 +142,7 @@ class JoinMarketRoundMixin:
                 finally:
                     client.coinjoin_in_process = False
                 break
+        self._restart_round_makers(event)
         log.warning(f"- JoinMarket round for {taker_name} failed: {reason}")
 
     def _expire_stalled_rounds(self) -> None:
@@ -158,14 +225,31 @@ class JoinMarketRoundMixin:
             return
 
         total_started_rounds = self._started_round_count()
-        for client in self.clients:
-            can_start_more_rounds = self.scenario.rounds == 0 or total_started_rounds < self.scenario.rounds
+        target_round = self.current_round + 1
+        retry_after_block = self._round_retry_after_block(target_round)
+        if retry_after_block > self.current_block:
+            log.info(
+                f"- waiting for JoinMarket retry cooldown "
+                f"(block {self.current_block}/{retry_after_block})"
+            )
+            return
+
+        can_start_more_rounds = self.scenario.rounds == 0 or total_started_rounds < self.scenario.rounds
+        if not can_start_more_rounds or self._has_active_round():
+            return
+
+        for client in self._eligible_takers(target_round):
+            attempt = self._taker_attempt_count(client.name, target_round) + 1
+            if attempt > JOINMARKET_TAKER_MAX_ATTEMPTS:
+                log.warning(
+                    f"- skipping JoinMarket taker {client.name}; exhausted "
+                    f"{JOINMARKET_TAKER_MAX_ATTEMPTS} attempt(s) for round {target_round}"
+                )
+                continue
             if (
                 client.type == "taker"
                 and not client.coinjoin_in_process
                 and client.delay[0] <= self.current_block
-                and can_start_more_rounds
-                and not self._has_active_round()
                 and not self._active_round_for_taker(client.name)
             ):
                 if not self._client_has_confirmed_balance(client, JOINMARKET_COINJOIN_AMOUNT_SATS, "taker"):
@@ -179,6 +263,8 @@ class JoinMarketRoundMixin:
                 total_started_rounds += 1
                 self.joinmarket_round_events.append({
                     "round_id": round_id,
+                    "target_round": target_round,
+                    "attempt": attempt,
                     "engine": "joinmarket",
                     "status": "started",
                     "taker": client.name,

@@ -12,6 +12,8 @@ from .joinmarket import (
     JOINMARKET_LOOP_SLEEP_SECONDS,
     JOINMARKET_MAKER_MIN_SIZE_SATS,
     JOINMARKET_ROUND_TIMEOUT_BLOCKS,
+    JOINMARKET_TAKER_MAX_ATTEMPTS,
+    JOINMARKET_TAKER_RETRY_COOLDOWN_BLOCKS,
     joinmarket_container_env,
 )
 from .joinmarket.events import JoinMarketRoundEventsMixin
@@ -29,6 +31,8 @@ __all__ = [
     "JOINMARKET_LOOP_SLEEP_SECONDS",
     "JOINMARKET_MAKER_MIN_SIZE_SATS",
     "JOINMARKET_ROUND_TIMEOUT_BLOCKS",
+    "JOINMARKET_TAKER_MAX_ATTEMPTS",
+    "JOINMARKET_TAKER_RETRY_COOLDOWN_BLOCKS",
     "JoinMarketClientServer",
     "JoinmarketEngine",
     "joinmarket_container_env",

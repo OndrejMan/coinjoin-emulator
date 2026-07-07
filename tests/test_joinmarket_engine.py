@@ -104,6 +104,7 @@ class FakeJoinMarketClientServer:
         self.coinjoin_in_process = False
         self.coinjoin_start = 0
         self.started_maker = False
+        self.stopped_maker = 0
         self.started_coinjoins: list[dict[str, object]] = []
         self.address_counter = 0
         self.balance = 1000000
@@ -172,6 +173,11 @@ class FakeJoinMarketClientServer:
 
     def stop_coinjoin(self) -> bool:
         self.coinjoin_in_process = False
+        return True
+
+    def stop_maker(self) -> bool:
+        self.stopped_maker += 1
+        self.maker_running = False
         return True
 
 
@@ -512,12 +518,12 @@ class JoinmarketEngineTest(unittest.TestCase):
         self.assertEqual(second_taker.started_coinjoins, [])
         self.assertEqual(len(engine.joinmarket_round_events), 1)
 
-    def test_stalled_round_is_failed_and_new_attempt_can_start(self) -> None:
+    def test_stalled_round_is_failed_and_retry_waits_for_cooldown(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
         set_fake_node(engine, FakeBtcNode(block_count=390))
         engine.scenario.rounds = 1
-        engine.current_block = 186
+        engine.current_block = 96
         taker = FakeJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
         taker.coinjoin_in_process = True
         makers = [
@@ -535,23 +541,71 @@ class JoinmarketEngineTest(unittest.TestCase):
                 "destination_address": "stalled-destination",
                 "start_block": 5,
                 "start_chain_height": 205,
+                "target_round": 1,
+                "candidate_makers": ["jcs-001", "jcs-002", "jcs-003", "jcs-004"],
             }
         ]
 
         engine.update_coinjoins_joinmarket()
 
         self.assertEqual(engine.joinmarket_round_events[0]["status"], "failed")
-        self.assertEqual(engine.joinmarket_round_events[0]["stop_block"], 186)
-        self.assertEqual(engine.joinmarket_round_events[1]["round_id"], 2)
-        self.assertEqual(engine.joinmarket_round_events[1]["status"], "started")
-        self.assertEqual(taker.started_coinjoins[-1]["destination"], "address-jcs-000-1")
+        self.assertEqual(engine.joinmarket_round_events[0]["stop_block"], 96)
+        self.assertEqual(engine.joinmarket_round_events[0]["retry_after_block"], 101)
+        self.assertEqual(len(engine.joinmarket_round_events), 1)
+        self.assertEqual([maker.stopped_maker for maker in makers], [1, 1, 1, 1])
 
-    def test_stalled_round_records_stop_timeout_and_new_attempt_can_start(self) -> None:
+    def test_retry_after_cooldown_prefers_taker_with_fewer_failed_attempts(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
         set_fake_node(engine, FakeBtcNode(block_count=390))
         engine.scenario.rounds = 1
-        engine.current_block = 186
+        engine.current_block = 101
+        first_taker = FakeJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
+        second_taker = FakeJoinMarketClientServer(name="jcs-001", role="taker", delay=(0, 0))
+        makers = [
+            FakeJoinMarketClientServer(name=f"jcs-{idx:03}", role="maker", delay=(0, 0))
+            for idx in range(2, 6)
+        ]
+        for maker in makers:
+            maker.maker_running = True
+        engine.clients = [first_taker, second_taker, *makers]
+        engine.joinmarket_round_events = [
+            {
+                "round_id": 1,
+                "target_round": 1,
+                "attempt": 1,
+                "status": "failed",
+                "taker": "jcs-000",
+                "destination_address": "stalled-destination",
+                "start_block": 5,
+                "stop_block": 96,
+                "retry_after_block": 101,
+            }
+        ]
+
+        engine.update_coinjoins_joinmarket()
+
+        self.assertEqual(first_taker.started_coinjoins, [])
+        self.assertEqual(
+            second_taker.started_coinjoins,
+            [
+                {
+                    "mixdepth": 0,
+                    "amount_sats": 40000,
+                    "counterparties": 4,
+                    "destination": "address-jcs-001-1",
+                }
+            ],
+        )
+        self.assertEqual(engine.joinmarket_round_events[1]["taker"], "jcs-001")
+        self.assertEqual(engine.joinmarket_round_events[1]["attempt"], 1)
+
+    def test_stalled_round_records_stop_timeout_and_waits_for_retry(self) -> None:
+        driver = FakeDriver()
+        engine = JoinmarketEngine(engine_args(), driver)
+        set_fake_node(engine, FakeBtcNode(block_count=390))
+        engine.scenario.rounds = 1
+        engine.current_block = 96
         taker = TimeoutOnStopJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
         taker.coinjoin_in_process = True
         makers = [
@@ -569,24 +623,24 @@ class JoinmarketEngineTest(unittest.TestCase):
                 "destination_address": "stalled-destination",
                 "start_block": 5,
                 "start_chain_height": 205,
+                "target_round": 1,
             }
         ]
 
         engine.update_coinjoins_joinmarket()
 
-        self.assertTrue(taker.coinjoin_in_process)
+        self.assertFalse(taker.coinjoin_in_process)
         self.assertEqual(engine.joinmarket_round_events[0]["status"], "failed")
         self.assertEqual(engine.joinmarket_round_events[0]["stop_error"], "timeout")
-        self.assertEqual(engine.joinmarket_round_events[1]["round_id"], 2)
-        self.assertEqual(engine.joinmarket_round_events[1]["status"], "started")
-        self.assertEqual(taker.started_coinjoins[-1]["destination"], "address-jcs-000-1")
+        self.assertEqual(engine.joinmarket_round_events[0]["retry_after_block"], 101)
+        self.assertEqual(len(engine.joinmarket_round_events), 1)
 
-    def test_stalled_round_records_stop_connection_reset_and_new_attempt_can_start(self) -> None:
+    def test_stalled_round_records_stop_connection_reset_and_waits_for_retry(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
         set_fake_node(engine, FakeBtcNode(block_count=390))
         engine.scenario.rounds = 1
-        engine.current_block = 186
+        engine.current_block = 96
         taker = ConnectionResetOnStopJoinMarketClientServer(name="jcs-000", role="taker", delay=(0, 0))
         taker.coinjoin_in_process = True
         makers = [
@@ -604,6 +658,7 @@ class JoinmarketEngineTest(unittest.TestCase):
                 "destination_address": "stalled-destination",
                 "start_block": 5,
                 "start_chain_height": 205,
+                "target_round": 1,
             }
         ]
 
@@ -611,9 +666,10 @@ class JoinmarketEngineTest(unittest.TestCase):
 
         self.assertEqual(engine.joinmarket_round_events[0]["status"], "failed")
         self.assertEqual(engine.joinmarket_round_events[0]["stop_error"], "connection reset")
-        self.assertEqual(engine.joinmarket_round_events[1]["status"], "started")
+        self.assertEqual(engine.joinmarket_round_events[0]["retry_after_block"], 101)
+        self.assertEqual(len(engine.joinmarket_round_events), 1)
 
-    def test_inactive_taker_round_is_failed_and_new_attempt_can_start(self) -> None:
+    def test_inactive_taker_round_is_failed_and_waits_for_retry(self) -> None:
         driver = FakeDriver()
         engine = JoinmarketEngine(engine_args(), driver)
         set_fake_node(engine, FakeBtcNode(block_count=210))
@@ -645,8 +701,8 @@ class JoinmarketEngineTest(unittest.TestCase):
             engine.joinmarket_round_events[0]["failure_reason"],
             "taker service stopped before a mined destination output was found",
         )
-        self.assertEqual(engine.joinmarket_round_events[1]["round_id"], 2)
-        self.assertEqual(engine.joinmarket_round_events[1]["status"], "started")
+        self.assertEqual(engine.joinmarket_round_events[0]["retry_after_block"], 13)
+        self.assertEqual(len(engine.joinmarket_round_events), 1)
 
     def test_update_waits_for_maker_confirmed_balance_before_starting(self) -> None:
         driver = FakeDriver()
