@@ -6,8 +6,6 @@ from typing import cast
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
-from manager.driver.kubernetes import KubernetesDriver, PortForwardServer
-
 if importlib.util.find_spec("kubernetes") is None:
     kubernetes_module = types.ModuleType("kubernetes")
     client_module = types.ModuleType("kubernetes.client")
@@ -15,6 +13,9 @@ if importlib.util.find_spec("kubernetes") is None:
     stream_module = types.ModuleType("kubernetes.stream")
     exceptions_module = types.ModuleType("kubernetes.client.exceptions")
     config_exception_module = types.ModuleType("kubernetes.config.config_exception")
+    models_module = types.ModuleType("kubernetes.client.models")
+    core_v1_event_module = types.ModuleType("kubernetes.client.models.core_v1_event")
+    v1_pod_module = types.ModuleType("kubernetes.client.models.v1_pod")
 
     class ApiException(Exception):
         pass
@@ -24,7 +25,10 @@ if importlib.util.find_spec("kubernetes") is None:
 
     setattr(client_module, "CoreV1Api", object)
     setattr(client_module, "V1DeleteOptions", object)
+    setattr(core_v1_event_module, "CoreV1Event", object)
+    setattr(v1_pod_module, "V1Pod", object)
     setattr(config_module, "load_kube_config", lambda: None)
+    setattr(config_module, "load_incluster_config", lambda: None)
     setattr(stream_module, "portforward", lambda *args, **kwargs: None)
     setattr(stream_module, "stream", lambda *args, **kwargs: None)
     setattr(exceptions_module, "ApiException", ApiException)
@@ -39,6 +43,11 @@ if importlib.util.find_spec("kubernetes") is None:
     sys.modules["kubernetes.stream"] = stream_module
     sys.modules["kubernetes.client.exceptions"] = exceptions_module
     sys.modules["kubernetes.config.config_exception"] = config_exception_module
+    sys.modules["kubernetes.client.models"] = models_module
+    sys.modules["kubernetes.client.models.core_v1_event"] = core_v1_event_module
+    sys.modules["kubernetes.client.models.v1_pod"] = v1_pod_module
+
+from manager.driver.kubernetes import KubernetesDriver, PortForwardServer
 
 
 class KubernetesDriverTest(TestCase):
@@ -174,6 +183,8 @@ class KubernetesDriverTest(TestCase):
                 "btc-node",
                 "btc-node:latest",
                 ports={18443: 18443},
+                cpu=0.5,
+                cpu_request=0.1,
                 command=["./run.sh", "-blocksxor=0"],
                 volumes={
                     "/tmp/btc-data": {
@@ -208,6 +219,13 @@ class KubernetesDriverTest(TestCase):
         containers = cast(list[dict[str, object]], pod_spec["containers"])
         container = containers[0]
         self.assertEqual(container["command"], ["./run.sh", "-blocksxor=0"])
+        resources = cast(dict[str, object], container["resources"])
+        limits = cast(dict[str, object], resources["limits"])
+        requests = cast(dict[str, object], resources["requests"])
+        self.assertEqual(limits["cpu"], 0.5)
+        self.assertEqual(requests["cpu"], 0.1)
+        self.assertEqual(limits["memory"], "768Mi")
+        self.assertEqual(requests["memory"], "768Mi")
         security_context = cast(dict[str, object], container["securityContext"])
         self.assertEqual(security_context["runAsUser"], 1234)
         self.assertEqual(security_context["runAsGroup"], 5678)

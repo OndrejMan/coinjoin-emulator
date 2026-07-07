@@ -89,9 +89,10 @@ class JoinMarketTakerMixin:
     def stop_coinjoin(self) -> JsonDict | bool:
         """Stop a running coinjoin attempt."""
         if self.role == "taker" and self.coinjoin_in_process:
-            response = self.stop_taker()
-            self.coinjoin_in_process = False
-            return response
+            try:
+                return self.stop_taker()
+            finally:
+                self.coinjoin_in_process = False
         if self.role == "maker" and self.maker_running:
             response = self.stop_maker()
             self.maker_running = False

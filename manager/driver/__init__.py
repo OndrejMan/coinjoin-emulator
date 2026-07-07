@@ -26,6 +26,8 @@ class Driver(ABC):
         skip_ip: bool = False,
         cpu: float = 0.1,
         memory: int = 768,
+        cpu_request: float | None = None,
+        memory_request: int | None = None,
         volumes: dict[str, dict[str, str]] | None = None,
         command: list[str] | None = None,
     ) -> tuple[str, dict[int, int]]:

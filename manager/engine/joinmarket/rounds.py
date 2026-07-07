@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING, cast
 
+import requests
+
 from manager import log_output as log
 
 from ...btc_node import BtcNode
@@ -57,8 +59,22 @@ class JoinMarketRoundMixin:
         taker_name = event.get("taker")
         for client in self.clients:
             if client.name == taker_name:
-                client.stop_coinjoin()
-                client.coinjoin_in_process = False
+                try:
+                    client.stop_coinjoin()
+                except (
+                    requests.exceptions.RequestException,
+                    CoinjoinEmulatorError,
+                    RuntimeError,
+                    OSError,
+                    TimeoutError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                ) as e:
+                    event["stop_error"] = str(e)
+                    log.warning(f"- could not stop failed JoinMarket round for {taker_name}: {e}")
+                finally:
+                    client.coinjoin_in_process = False
                 break
         log.warning(f"- JoinMarket round for {taker_name} failed: {reason}")
 

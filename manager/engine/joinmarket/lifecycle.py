@@ -152,8 +152,9 @@ class JoinMarketClientLifecycleMixin:
                 self.image_ref("joinmarket-client-server"),
                 env=joinmarket_container_env(self.args, core_wallet),
                 ports={28183: port},
-                cpu=0.1,
+                cpu=0.5,
                 memory=768,
+                cpu_request=0.1,
             )
         except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             log.warning(f"- could not start {name} ({e})")

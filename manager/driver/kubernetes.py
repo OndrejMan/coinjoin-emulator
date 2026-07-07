@@ -205,6 +205,8 @@ class KubernetesDriver(Driver):
         skip_ip: bool = False,
         cpu: float = 0.1,
         memory: int = 768,
+        cpu_request: float | None = None,
+        memory_request: int | None = None,
         volumes: dict[str, dict[str, str]] | None = None,
         command: list[str] | None = None,
     ) -> tuple[str, dict[int, int]]:
@@ -285,8 +287,8 @@ class KubernetesDriver(Driver):
                     "memory": f"{memory}Mi",
                 },
                 "requests": {
-                    "cpu": cpu,
-                    "memory": f"{memory}Mi",
+                    "cpu": cpu if cpu_request is None else cpu_request,
+                    "memory": f"{memory if memory_request is None else memory_request}Mi",
                 },
             },
         }
