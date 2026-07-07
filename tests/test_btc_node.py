@@ -116,8 +116,21 @@ class BtcNodeTest(unittest.TestCase):
             "result": None,
         }
 
-        with patch.object(node, "_post_create_wallet_request", return_value=existing_database), \
-            patch.object(node, "_rpc", side_effect=[{"name": "jm_wallet_jcs_000"}, {"walletname": "jm_wallet_jcs_000"}]) as rpc:
+        with (
+            patch.object(
+                node,
+                "_post_create_wallet_request",
+                return_value=existing_database,
+            ),
+            patch.object(
+                node,
+                "_rpc",
+                side_effect=[
+                    {"name": "jm_wallet_jcs_000"},
+                    {"walletname": "jm_wallet_jcs_000"},
+                ],
+            ) as rpc,
+        ):
             node.create_wallet("jm_wallet_jcs_000")
 
         self.assertEqual(rpc.call_args_list[0].args[0]["method"], "loadwallet")

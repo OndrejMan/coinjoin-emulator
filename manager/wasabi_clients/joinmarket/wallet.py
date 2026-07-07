@@ -70,7 +70,14 @@ class JoinMarketWalletMixin:
             if not create_attempted:
                 try:
                     self._create_wallet()
-                except (requests.exceptions.RequestException, RpcError, TimeoutError, KeyError, TypeError, ValueError) as e:
+                except (
+                    requests.exceptions.RequestException,
+                    RpcError,
+                    TimeoutError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                ) as e:
                     last_create_err = e
                 else:
                     create_attempted = True
