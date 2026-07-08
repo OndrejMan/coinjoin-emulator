@@ -520,7 +520,8 @@ class EngineBase:
 
     def run(self) -> None:
         log.info(f"=== Scenario {self.scenario.name} ===")
-        self.ensure_log_run_path_available()
+        if not getattr(self.args, "no_logs", False):
+            self.ensure_log_run_path_available()
         self.prepare_images()
         self.start_infrastructure()
         self.fund_distributor(500)

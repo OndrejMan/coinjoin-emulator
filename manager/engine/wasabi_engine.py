@@ -34,6 +34,7 @@ from .engine_base import (
 
 WASABI_CLIENT_START_TIMEOUT_SECONDS = 180
 WASABI_COORDINATOR_START_TIMEOUT_SECONDS = 120
+WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
 
 
 class WasabiEngine(EngineBase):
@@ -429,6 +430,17 @@ class WasabiEngine(EngineBase):
             sleep(1)
         log.blank_line()
         log.info("- limit reached")
+        self.mine_settlement_blocks()
+
+    def mine_settlement_blocks(self) -> None:
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        log.info(f"- mining {WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT} settlement blocks")
+        if not self.node.mine_block(WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT):
+            raise RuntimeError(
+                f"Bitcoin node did not mine {WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT} settlement blocks"
+            )
+        log.info("- settlement blocks mined")
 
     def _get_current_round(self) -> int:
         if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:

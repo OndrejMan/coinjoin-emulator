@@ -399,6 +399,48 @@ class EngineBaseTest(unittest.TestCase):
             self.assertTrue(archive.is_file())
             self.assertEqual(store_client_logs.call_count, 2)
 
+    def test_run_rejects_existing_log_dir_when_logs_enabled(self) -> None:
+        engine = MinimalEngine(self.engine_args(run_id="existing-run", no_logs=False), Mock(), "/tmp")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "logs" / "existing-run"
+            run_dir.mkdir(parents=True)
+            previous_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with self.assertRaisesRegex(RuntimeError, "Run log directory already exists"):
+                    engine.run()
+            finally:
+                os.chdir(previous_cwd)
+
+    def test_run_allows_existing_log_dir_when_logs_disabled(self) -> None:
+        engine = MinimalEngine(self.engine_args(run_id="existing-run", no_logs=True), Mock(), "/tmp")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "logs" / "existing-run"
+            run_dir.mkdir(parents=True)
+            previous_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with (
+                    patch.object(engine, "prepare_images") as prepare_images,
+                    patch.object(engine, "start_infrastructure") as start_infrastructure,
+                    patch.object(engine, "fund_distributor") as fund_distributor,
+                    patch.object(engine, "start_clients") as start_clients,
+                    patch.object(engine, "validate_clients") as validate_clients,
+                    patch.object(engine, "prepare_invoices") as prepare_invoices,
+                    patch.object(engine, "run_engine") as run_engine,
+                ):
+                    engine.run()
+            finally:
+                os.chdir(previous_cwd)
+
+        prepare_images.assert_called_once_with()
+        start_infrastructure.assert_called_once_with()
+        fund_distributor.assert_called_once_with(500)
+        start_clients.assert_called_once_with(engine.scenario.wallets)
+        validate_clients.assert_called_once_with()
+        prepare_invoices.assert_called_once_with(engine.scenario.wallets)
+        run_engine.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

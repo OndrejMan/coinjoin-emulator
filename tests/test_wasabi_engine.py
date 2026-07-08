@@ -9,6 +9,7 @@ from manager.engine.configuration import WalletConfig
 from manager.engine.wasabi_engine import (
     WASABI_CLIENT_START_TIMEOUT_SECONDS,
     WASABI_COORDINATOR_START_TIMEOUT_SECONDS,
+    WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT,
     WasabiEngine,
 )
 from manager.exceptions import StartupError
@@ -95,3 +96,19 @@ def test_coordinator_timeout_includes_container_logs() -> None:
     )
     driver.logs.assert_called_once_with("wasabi-coordinator")
     assert WASABI_COORDINATOR_START_TIMEOUT_SECONDS == 120
+
+
+def test_run_engine_mines_settlement_blocks_after_limit() -> None:
+    engine, _, _ = configured_engine(BackendArchitecture.SPLIT)
+    node = Mock()
+    node.get_block_count.side_effect = [100, 101]
+    node.mine_block.return_value = True
+    engine.node = cast(BtcNode, node)
+    engine.scenario.rounds = 0
+    engine.scenario.blocks = 1
+    engine._get_current_round = Mock(return_value=0)  # type: ignore[method-assign]
+
+    with patch("manager.engine.wasabi_engine.sleep"):
+        engine.run_engine()
+
+    node.mine_block.assert_called_once_with(WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT)
