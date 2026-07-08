@@ -1,5 +1,7 @@
 import requests
 
+from ...exceptions import RpcError
+
 WALLET_NAME = "wallet"
 PASSWORD = "password"
 WALLET_TYPE = "sw"
@@ -12,7 +14,7 @@ def is_stop_service_not_running_error(error: Exception) -> bool:
     return STOP_SERVICE_NOT_RUNNING_MESSAGE in str(error)
 
 
-class JoinmarketConflictException(Exception):
+class JoinmarketConflictException(RpcError):
     def __init__(self, message: str, response: requests.Response) -> None:
         super().__init__(message)
         self.response = response

@@ -88,7 +88,7 @@ def run_engine(
         log.warning("KeyboardInterrupt received")
         exit_code = 130
         diagnostics_required = True
-    except (RuntimeError, OSError, ValueError, TypeError) as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         log.error(f"Terminating exception: {e}")
         print_exception(e)
         exit_code = 1
@@ -106,7 +106,7 @@ def run_engine(
             if not args.no_logs and engine.node is not None:
                 try:
                     engine.store_logs()
-                except (RuntimeError, OSError, ValueError, TypeError) as e:
+                except Exception as e:  # pylint: disable=broad-exception-caught
                     log.error(f"- failed to store logs: {e}")
                     print_exception(e)
                     exit_code = 1
@@ -115,14 +115,14 @@ def run_engine(
             if args.download_btc_data:
                 try:
                     btc_data_downloader(driver, args.download_btc_data, args.download_path)
-                except (RuntimeError, OSError, ValueError, TypeError) as e:
+                except Exception as e:  # pylint: disable=broad-exception-caught
                     log.error(f"- failed to download btc data: {e}")
                     print_exception(e)
                     exit_code = 1
         finally:
             try:
                 driver.cleanup(args.image_prefix)
-            except (RuntimeError, OSError, ValueError, TypeError) as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 log.error(f"- failed to cleanup driver resources: {e}")
                 print_exception(e)
                 exit_code = 1

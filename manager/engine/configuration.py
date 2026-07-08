@@ -142,7 +142,7 @@ class ScenarioConfig:
         role_str = nested_joinmarket.get("role", wallet_data.get("type"))
         if role_str is not None:
             role_value = role_str.value if isinstance(role_str, JoinMarketRole) else str(role_str)
-            role = JoinMarketRole.MAKER if role_value == "maker" else JoinMarketRole.TAKER
+            role = JoinMarketRole(role_value)
             joinmarket_config = JoinMarketConfig(role=role)
         
         return WalletConfig(

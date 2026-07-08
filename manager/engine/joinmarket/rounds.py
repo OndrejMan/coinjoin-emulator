@@ -170,6 +170,9 @@ class JoinMarketRoundMixin:
             taker_name = str(event.get("taker") or "")
             if taker_name in active_takers:
                 continue
+            start_block = int(cast(int, event.get("start_block") or 0))
+            if self.current_block <= start_block:
+                continue
             self._mark_round_failed(
                 event,
                 "taker service stopped before a mined destination output was found",
@@ -199,7 +202,11 @@ class JoinMarketRoundMixin:
         self._expire_stalled_rounds()
 
         for client in self.clients:
-            client.get_status()
+            try:
+                client.get_status()
+            except (requests.exceptions.RequestException, CoinjoinEmulatorError, RuntimeError, OSError,
+                    KeyError, TypeError, ValueError) as e:
+                log.warning(f"- skipping JoinMarket status update for {client.name}: {e}")
         self._fail_inactive_started_rounds()
 
         for client in self.clients:
@@ -207,10 +214,16 @@ class JoinMarketRoundMixin:
                 if not self._client_has_confirmed_balance(client, JOINMARKET_MAKER_MIN_SIZE_SATS, "maker"):
                     continue
                 log.info(f"Starting maker {client.name}")
-                client.start_maker(0, 5000, 0.00004, "sw0reloffer", JOINMARKET_MAKER_MIN_SIZE_SATS)
+                try:
+                    client.start_maker(0, 5000, 0.00004, "sw0reloffer", JOINMARKET_MAKER_MIN_SIZE_SATS)
+                except (requests.exceptions.RequestException, CoinjoinEmulatorError, RuntimeError, OSError,
+                        KeyError, TypeError, ValueError) as e:
+                    log.warning(f"- failed to start JoinMarket maker {client.name}: {e}")
+                    continue
                 try:
                     client.get_status()
-                except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError):
+                except (requests.exceptions.RequestException, CoinjoinEmulatorError, RuntimeError, OSError,
+                        KeyError, TypeError, ValueError):
                     pass
 
         running_makers = [
@@ -254,9 +267,19 @@ class JoinMarketRoundMixin:
             ):
                 if not self._client_has_confirmed_balance(client, JOINMARKET_COINJOIN_AMOUNT_SATS, "taker"):
                     continue
-                address = client.get_new_address()
+                try:
+                    address = client.get_new_address()
+                except (requests.exceptions.RequestException, CoinjoinEmulatorError, RuntimeError, OSError,
+                        KeyError, TypeError, ValueError) as e:
+                    log.warning(f"- failed to get JoinMarket destination address for {client.name}: {e}")
+                    continue
                 maker_names = [maker.name for maker in running_makers]
-                client.start_coinjoin(0, JOINMARKET_COINJOIN_AMOUNT_SATS, JOINMARKET_COUNTERPARTIES, address)
+                try:
+                    client.start_coinjoin(0, JOINMARKET_COINJOIN_AMOUNT_SATS, JOINMARKET_COUNTERPARTIES, address)
+                except (requests.exceptions.RequestException, CoinjoinEmulatorError, RuntimeError, OSError,
+                        KeyError, TypeError, ValueError) as e:
+                    log.warning(f"- failed to start JoinMarket coinjoin for {client.name}: {e}")
+                    continue
                 client.coinjoin_in_process = True
                 client.coinjoin_start = self.current_block
                 round_id = self._next_round_id()

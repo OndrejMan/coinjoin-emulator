@@ -398,13 +398,7 @@ class EngineBase:
 
     def store_logs(self) -> None:
         log.info("Storing logs")
-        requested_run_id = getattr(self.args, "run_id", "")
-        if requested_run_id:
-            run_path = f"./logs/{requested_run_id}"
-        else:
-            run_timezone = getattr(self.args, "run_timezone", "Europe/Prague")
-            time = datetime.datetime.now(ZoneInfo(run_timezone)).strftime("%Y-%m-%d_%H-%M")
-            run_path = f"./logs/{time}_{self.scenario.name}"
+        run_path = self.log_run_path()
         experiment_path = os.path.join(run_path, "coinjoin_emulator_data")
         data_path = os.path.join(experiment_path, "data")
         os.makedirs(data_path)
@@ -526,6 +520,7 @@ class EngineBase:
 
     def run(self) -> None:
         log.info(f"=== Scenario {self.scenario.name} ===")
+        self.ensure_log_run_path_available()
         self.prepare_images()
         self.start_infrastructure()
         self.fund_distributor(500)
@@ -537,3 +532,16 @@ class EngineBase:
 
     def run_engine(self) -> None:
         raise NotImplementedError
+
+    def log_run_path(self) -> str:
+        requested_run_id = getattr(self.args, "run_id", "")
+        if requested_run_id:
+            return f"./logs/{requested_run_id}"
+        run_timezone = getattr(self.args, "run_timezone", "Europe/Prague")
+        time = datetime.datetime.now(ZoneInfo(run_timezone)).strftime("%Y-%m-%d_%H-%M")
+        return f"./logs/{time}_{self.scenario.name}"
+
+    def ensure_log_run_path_available(self) -> None:
+        run_path = self.log_run_path()
+        if os.path.exists(run_path):
+            raise RuntimeError(f"Run log directory already exists: {run_path}")

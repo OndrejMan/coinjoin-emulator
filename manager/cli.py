@@ -249,6 +249,8 @@ def create_driver(args: ParsedArgs) -> Driver:
             return PodmanDriver(args.namespace)
         case "kubernetes":
             disable_port_forward = getattr(args, "disable_port_forward", False)
+            if disable_port_forward and not getattr(args, "proxy", ""):
+                raise ValueError("--disable-port-forward requires --proxy so services remain reachable")
             return KubernetesDriver(args.namespace, args.reuse_namespace, port_forward=not disable_port_forward)
         case _:
             raise ValueError(f"Unknown driver '{args.driver}'")

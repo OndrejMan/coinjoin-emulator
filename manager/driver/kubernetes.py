@@ -1,11 +1,13 @@
+import base64
 import os
 import select
+import shlex
 import socket
 import tarfile
 import threading
 from functools import cached_property
 from io import BytesIO
-from time import sleep
+from time import monotonic, sleep
 from typing import Protocol, cast
 
 from kubernetes import client, config
@@ -16,6 +18,7 @@ from kubernetes.config.config_exception import ConfigException
 from kubernetes.stream import portforward, stream
 
 from manager import log_output as log
+from manager.exceptions import StartupError
 
 from . import Driver
 
@@ -25,16 +28,11 @@ MANAGED_LABELS = {
     MANAGED_BY_LABEL: MANAGED_BY_VALUE,
     "app.kubernetes.io/component": "emulator",
 }
-CLEANUP_NAME_MARKERS = (
-    "irc-server",
-    "btc-node",
-    "wasabi-backend",
-    "wasabi-coordinator",
-    "wasabi-client",
-    "joinmarket-client-server",
-)
 PORT_FORWARD_ATTEMPTS = 3
 PORT_FORWARD_RETRY_DELAY_SECONDS = 0.25
+POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "300"))
+DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
+POD_IP_TRANSIENT_API_STATUSES = {408, 409, 429, 500, 502, 503, 504}
 
 
 class SocketLike(Protocol):
@@ -309,14 +307,12 @@ class KubernetesDriver(Driver):
         resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
         self.managed_pod_names.add(name)
 
-        pod_ip = None
+        pod_ip = ""
         if not skip_ip:
-            while pod_ip is None:
-                pod_ip = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace).status.pod_ip
-                sleep(1)
+            pod_ip = self._wait_for_pod_ip(name)
 
         if not ports:
-            return pod_ip or "", {}
+            return pod_ip, {}
 
         service_manifest = {
             "apiVersion": "v1",
@@ -352,7 +348,66 @@ class KubernetesDriver(Driver):
             )
         else:
             port_mapping = {}
-        return pod_ip or "", port_mapping
+        return pod_ip, port_mapping
+
+    @staticmethod
+    def _pod_status_detail(pod: V1Pod) -> str:
+        status = pod.status
+        details = [
+            f"phase={getattr(status, 'phase', None) or 'Unknown'}",
+            f"reason={getattr(status, 'reason', None) or '-'}",
+            f"message={getattr(status, 'message', None) or '-'}",
+        ]
+        for container_status in [
+            *(getattr(status, "init_container_statuses", None) or []),
+            *(getattr(status, "container_statuses", None) or []),
+        ]:
+            details.append(
+                f"{container_status.name}: "
+                f"{KubernetesDriver._container_state_summary(container_status.state)}"
+            )
+        return "; ".join(details)
+
+    def _wait_for_pod_ip(self, name: str, timeout_seconds: int = POD_IP_WAIT_TIMEOUT_SECONDS) -> str:
+        deadline = monotonic() + timeout_seconds
+        last_status = "not read yet"
+        while monotonic() < deadline:
+            try:
+                pod = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace)
+            except ApiException as error:
+                if getattr(error, "status", None) in POD_IP_TRANSIENT_API_STATUSES:
+                    log.warning(f"- transient Kubernetes API error while waiting for pod {name}: {error}")
+                    sleep(1)
+                    continue
+                raise StartupError(f"Could not read Kubernetes pod {name} status: {error}") from error
+            status = pod.status
+            last_status = self._pod_status_detail(pod)
+            if status.pod_ip:
+                return str(status.pod_ip)
+            if getattr(status, "phase", None) in {"Failed", "Succeeded"}:
+                raise StartupError(f"Kubernetes pod {name} ended before it got an IP: {last_status}")
+            container_statuses = [
+                *(getattr(status, "init_container_statuses", None) or []),
+                *(getattr(status, "container_statuses", None) or []),
+            ]
+            waiting_reasons = {
+                getattr(container_status.state.waiting, "reason", "")
+                for container_status in container_statuses
+                if getattr(getattr(container_status, "state", None), "waiting", None) is not None
+            }
+            fatal_waiting = {
+                "CreateContainerConfigError",
+                "CreateContainerError",
+                "ErrImagePull",
+                "ImagePullBackOff",
+                "InvalidImageName",
+            }
+            if waiting_reasons & fatal_waiting:
+                raise StartupError(f"Kubernetes pod {name} cannot start: {last_status}")
+            sleep(1)
+        raise StartupError(
+            f"Kubernetes pod {name} did not get an IP within {timeout_seconds} seconds: {last_status}"
+        )
 
     def start_port_forwards(self, name: str, ports: list[int]) -> dict[int, int]:
         port_mapping = {}
@@ -479,7 +534,11 @@ class KubernetesDriver(Driver):
         if src_path[-1] == "/":
             src_path = src_path[:-1]
         src_parent, src_target = os.path.split(src_path)
-        exec_command = ["tar", "cf", "-", "-C", src_parent, src_target]
+        exec_command = [
+            "sh",
+            "-c",
+            f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64",
+        ]
         resp = stream(
             self._new_client().connect_get_namespaced_pod_exec,
             name,
@@ -492,12 +551,21 @@ class KubernetesDriver(Driver):
             _preload_content=False,
         )
 
-        fo = BytesIO()
+        encoded = ""
+        stderr = ""
+        deadline = monotonic() + DOWNLOAD_TIMEOUT_SECONDS
         while resp.is_open():
+            if monotonic() >= deadline:
+                resp.close()
+                raise TimeoutError(f"Timed out downloading {name}:{src_path}")
             resp.update(timeout=1)
             if resp.peek_stdout():
-                fo.write(resp.read_stdout().encode())
-        fo.seek(0)
+                encoded += resp.read_stdout()
+            if resp.peek_stderr():
+                stderr += resp.read_stderr()
+        if stderr.strip():
+            raise RuntimeError(f"download command wrote stderr: {stderr.strip()}")
+        fo = BytesIO(base64.b64decode(encoded))
         with tarfile.open(fileobj=fo) as tar:
             tar.extractall(dst_path)
         resp.close()
@@ -587,8 +655,5 @@ class KubernetesDriver(Driver):
 
     def _is_managed_resource(self, resource: object) -> bool:
         metadata = getattr(resource, "metadata", None)
-        name = getattr(metadata, "name", "") or ""
         labels = getattr(metadata, "labels", None) or {}
-        return labels.get(MANAGED_BY_LABEL) == MANAGED_BY_VALUE or any(
-            marker in name for marker in CLEANUP_NAME_MARKERS
-        )
+        return labels.get(MANAGED_BY_LABEL) == MANAGED_BY_VALUE

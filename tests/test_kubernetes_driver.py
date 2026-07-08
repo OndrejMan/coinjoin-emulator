@@ -475,8 +475,8 @@ class KubernetesDriverTest(TestCase):
             driver.cleanup()
 
         self.assertEqual(closed_forwards, ["closed"])
-        self.assertEqual(deleted_pods, ["wallet-helper", "btc-node-old"])
-        self.assertEqual(deleted_services, ["wallet-helper-service", "btc-node-old-service"])
+        self.assertEqual(deleted_pods, ["wallet-helper"])
+        self.assertEqual(deleted_services, ["wallet-helper-service"])
 
     def test_cleanup_deletes_owned_namespace_without_listing_resources(self) -> None:
         KubernetesDriver, _ = _load_kubernetes_symbols()

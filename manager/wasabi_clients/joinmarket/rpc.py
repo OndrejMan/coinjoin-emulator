@@ -96,7 +96,7 @@ class JoinMarketRpcMixin:
                     timeout=timeout,
                     auth_required=auth_required,
                 )
-            except requests.exceptions.Timeout:
+            except requests.exceptions.RequestException:
                 continue
             except InsecureRequestWarning:
                 continue
