@@ -197,18 +197,7 @@ class JoinMarketRoundMixin:
             return False
         return True
 
-    def update_coinjoins_joinmarket(self) -> None:
-        self.confirm_started_rounds()
-        self._expire_stalled_rounds()
-
-        for client in self.clients:
-            try:
-                client.get_status()
-            except (requests.exceptions.RequestException, CoinjoinEmulatorError, RuntimeError, OSError,
-                    KeyError, TypeError, ValueError) as e:
-                log.warning(f"- skipping JoinMarket status update for {client.name}: {e}")
-        self._fail_inactive_started_rounds()
-
+    def _start_due_makers(self) -> None:
         for client in self.clients:
             if client.type == "maker" and not client.maker_running and client.delay[0] <= self.current_block:
                 if not self._client_has_confirmed_balance(client, JOINMARKET_MAKER_MIN_SIZE_SATS, "maker"):
@@ -225,6 +214,19 @@ class JoinMarketRoundMixin:
                 except (requests.exceptions.RequestException, CoinjoinEmulatorError, RuntimeError, OSError,
                         KeyError, TypeError, ValueError):
                     pass
+
+    def update_coinjoins_joinmarket(self) -> None:
+        self.confirm_started_rounds()
+        self._expire_stalled_rounds()
+
+        for client in self.clients:
+            try:
+                client.get_status()
+            except (requests.exceptions.RequestException, CoinjoinEmulatorError, RuntimeError, OSError,
+                    KeyError, TypeError, ValueError) as e:
+                log.warning(f"- skipping JoinMarket status update for {client.name}: {e}")
+        self._fail_inactive_started_rounds()
+        self._start_due_makers()
 
         running_makers = [
             maker for maker in self.clients

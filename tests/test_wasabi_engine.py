@@ -15,6 +15,8 @@ from manager.engine.wasabi_engine import (
 from manager.exceptions import StartupError
 from manager.wasabi_backend_factory import BackendArchitecture
 
+# pylint: disable=protected-access
+
 
 def engine_args() -> SimpleNamespace:
     return SimpleNamespace(
