@@ -543,6 +543,9 @@ class EngineBase:
         return f"./logs/{time}_{self.scenario.name}"
 
     def ensure_log_run_path_available(self) -> None:
+        # The pipeline launcher may pre-create the run directory to place its
+        # host manifest there; only a directory that already holds emulator
+        # artifacts marks a genuine earlier run.
         run_path = self.log_run_path()
-        if os.path.exists(run_path):
+        if os.path.exists(os.path.join(run_path, "coinjoin_emulator_data")):
             raise RuntimeError(f"Run log directory already exists: {run_path}")

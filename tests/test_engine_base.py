@@ -403,7 +403,7 @@ class EngineBaseTest(unittest.TestCase):
         engine = MinimalEngine(self.engine_args(run_id="existing-run", no_logs=False), Mock(), "/tmp")
         with tempfile.TemporaryDirectory() as tmpdir:
             run_dir = Path(tmpdir) / "logs" / "existing-run"
-            run_dir.mkdir(parents=True)
+            (run_dir / "coinjoin_emulator_data").mkdir(parents=True)
             previous_cwd = os.getcwd()
             os.chdir(tmpdir)
             try:
@@ -411,6 +411,35 @@ class EngineBaseTest(unittest.TestCase):
                     engine.run()
             finally:
                 os.chdir(previous_cwd)
+
+    def test_run_allows_preexisting_dir_holding_only_host_manifest(self) -> None:
+        engine = MinimalEngine(self.engine_args(run_id="existing-run", no_logs=False), Mock(), "/tmp")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir) / "logs" / "existing-run"
+            run_dir.mkdir(parents=True)
+            (run_dir / "research_manifest.json").write_text("{}", encoding="utf-8")
+            previous_cwd = os.getcwd()
+            os.chdir(tmpdir)
+            try:
+                with (
+                    patch.object(engine, "prepare_images") as prepare_images,
+                    patch.object(engine, "start_infrastructure") as start_infrastructure,
+                    patch.object(engine, "fund_distributor") as fund_distributor,
+                    patch.object(engine, "start_clients") as start_clients,
+                    patch.object(engine, "validate_clients") as validate_clients,
+                    patch.object(engine, "prepare_invoices") as prepare_invoices,
+                    patch.object(engine, "run_engine") as run_engine,
+                ):
+                    engine.run()
+            finally:
+                os.chdir(previous_cwd)
+            prepare_images.assert_called_once()
+            start_infrastructure.assert_called_once()
+            fund_distributor.assert_called_once()
+            start_clients.assert_called_once()
+            validate_clients.assert_called_once()
+            prepare_invoices.assert_called_once()
+            run_engine.assert_called_once()
 
     def test_run_allows_existing_log_dir_when_logs_disabled(self) -> None:
         engine = MinimalEngine(self.engine_args(run_id="existing-run", no_logs=True), Mock(), "/tmp")
