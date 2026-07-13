@@ -46,6 +46,10 @@ Scenario definition files can be passed to the simulation script using the `--sc
 The fields are as follows:
 - `name` field is the name of the scenario used for output logs.
 - `rounds` field is the number of coinjoin rounds after which the simulation terminates. If set to 0, the simulation will run indefinitely.
+  A round is *counted* differently per engine: the Wasabi engine counts a round when the coordinator reports it in the `TransactionSigning`
+  phase (split architecture) or when its id appears in the backend's `CoinJoinIdStore.txt` (legacy architecture); the JoinMarket engine
+  counts a round when a taker's coinjoin transaction is confirmed on chain. The run loop exits as soon as the count reaches `rounds`,
+  then mines a few settlement blocks so the final round's transaction can still confirm before logs are stored.
 - `blocks` field is the number of mined blocks after which the simulation terminates. If set to 0, the simulation will run indefinitely.
 - `default_version` field is the string representing of the version of wallet wasabi used for clients without the version specification.
 - `distributor_version` field is the string representing of the version of wallet wasabi used for the distributor client.
@@ -152,6 +156,18 @@ The simulation script enables advanced configuration for running on different co
 
 ### Backend driver
 
+All drivers share the artifact-transfer contract from `manager/driver/__init__.py`:
+`download`, `peek`, and `upload` **raise on failure** instead of silently
+returning partial results, so an incomplete run cannot look successful. Callers
+decide whether a missing artifact is fatal (log capture warns and continues;
+config upload aborts startup). Current failure types differ per driver —
+Podman raises `CoinjoinEmulatorError`, Docker and Kubernetes raise
+`RuntimeError` (Kubernetes also `TimeoutError` on its download/peek/upload
+deadlines, tunable via `COINJOIN_K8S_DOWNLOAD_TIMEOUT`,
+`COINJOIN_K8S_PEEK_TIMEOUT`, and `COINJOIN_K8S_UPLOAD_TIMEOUT`). On Kubernetes,
+`peek` and `upload` also fail when the in-pod command writes to stderr or exits
+non-zero. Archives received from containers are extracted with the sanitizing
+`data` tar filter where the Python runtime supports it.
 
 #### Docker
 
