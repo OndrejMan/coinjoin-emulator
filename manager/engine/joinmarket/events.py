@@ -15,9 +15,7 @@ class JoinMarketRoundEventsMixin:
 
     def store_engine_logs(self, data_path: str) -> dict[str, object]:
         labels = self.match_joinmarket_rounds_to_blocks(data_path)
-        with open(
-            os.path.join(data_path, "joinmarket_round_events.json"), "w", encoding="utf-8"
-        ) as f:
+        with open(os.path.join(data_path, "joinmarket_round_events.json"), "w", encoding="utf-8") as f:
             json.dump(labels, f, indent=2)
             log.info("- stored JoinMarket round labels")
         return {
@@ -48,33 +46,64 @@ class JoinMarketRoundEventsMixin:
                 block = cast(dict[str, object], json.load(f))
             block_height = block.get("height")
             for tx in cast(list[dict[str, object]], block.get("tx", [])):
-                txid = tx.get("txid")
-                for output in cast(list[dict[str, object]], tx.get("vout", [])):
-                    script_pub_key = cast(dict[str, object], output.get("scriptPubKey") or {})
-                    addresses: list[object] = []
-                    if script_pub_key.get("address"):
-                        addresses.append(script_pub_key["address"])
-                    addresses.extend(cast(list[object], script_pub_key.get("addresses") or []))
-                    for address in addresses:
-                        event = labels_by_destination.get(address)
-                        if event is not None and txid:
-                            previous_status = event.get("status")
-                            previous_failure_reason = event.pop("failure_reason", None)
-                            if previous_status != "confirmed":
-                                event["status_before_chain_reconciliation"] = previous_status
-                            if previous_failure_reason:
-                                event["failure_reason_before_chain_reconciliation"] = previous_failure_reason
-                            event["status"] = "confirmed"
-                            event["txid"] = txid
-                            event["block_height"] = block_height
-                            event["match_source"] = "destination_output"
-                            event["confirmed_block"] = event.get("confirmed_block") or self.current_block
-                            event["late_confirmation"] = previous_status == "failed"
+                self._match_exported_transaction(
+                    labels_by_destination,
+                    tx,
+                    block_height,
+                )
 
         return sorted(
             labels_by_destination.values(),
             key=lambda event: (event.get("round_id", 0), event.get("taker", "")),
         )
+
+    def _match_exported_transaction(
+        self,
+        labels_by_destination: dict[object, dict[str, object]],
+        tx: dict[str, object],
+        block_height: object,
+    ) -> None:
+        txid = tx.get("txid")
+        if not txid:
+            return
+        for output in cast(list[dict[str, object]], tx.get("vout", [])):
+            for address in self._script_addresses(output):
+                event = labels_by_destination.get(address)
+                if event is not None:
+                    self._reconcile_exported_match(event, txid, block_height)
+
+    def _reconcile_exported_match(
+        self,
+        event: dict[str, object],
+        txid: object,
+        block_height: object,
+    ) -> None:
+        existing_txid = event.get("txid")
+        if existing_txid and existing_txid != txid:
+            additional_matches = cast(
+                list[dict[str, object]],
+                event.setdefault("additional_destination_matches", []),
+            )
+            candidate = {"txid": txid, "block_height": block_height}
+            if candidate not in additional_matches:
+                additional_matches.append(candidate)
+            return
+
+        previous_status = event.get("status")
+        previous_failure_reason = event.pop("failure_reason", None)
+        if previous_status != "confirmed":
+            event["status_before_chain_reconciliation"] = previous_status
+        if previous_failure_reason:
+            event["failure_reason_before_chain_reconciliation"] = previous_failure_reason
+        event["status"] = "confirmed"
+        event["txid"] = txid
+        event["block_height"] = block_height
+        event["confirmed_chain_height"] = block_height
+        event["match_source"] = "destination_output"
+        event["reconciled_at_emulator_block"] = self.current_block
+        if event.get("confirmed_block") is not None:
+            event["confirmed_emulator_block"] = event["confirmed_block"]
+        event["late_confirmation"] = event.get("late_confirmation") is True or previous_status == "failed"
 
     def _script_addresses(self, output: dict[str, object]) -> list[object]:
         script_pub_key = cast(dict[str, object], output.get("scriptPubKey") or {})
@@ -121,7 +150,9 @@ class JoinMarketRoundEventsMixin:
             event["status"] = "confirmed"
             event["txid"] = match.get("txid")
             event["block_height"] = match.get("block_height")
+            event["confirmed_chain_height"] = match.get("block_height")
             event["confirmed_block"] = self.current_block
+            event["confirmed_emulator_block"] = self.current_block
             self.current_round += 1
             confirmed += 1
             log.info(f"Confirmed coinjoin {event.get('taker')} as {event.get('txid')}")

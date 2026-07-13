@@ -11,14 +11,22 @@ transaction found in exported Bitcoin blocks.
 - `taker`, `candidate_makers`, `counterparties`, and amount/mixdepth settings;
 - `destination_address`: address used to match the attempt to an exported
   transaction output;
-- `txid`, `block_height`, and `match_source`: block-match result;
-- `confirmed_block`: emulator block counter when an event was confirmed or
-  reconciled against exported blocks;
+- `txid`, `block_height`, `confirmed_chain_height`, and `match_source`:
+  chain-domain block-match result (`block_height` is retained as a compatibility
+  alias);
+- `confirmed_emulator_block`: emulator block counter when the live confirmation
+  loop observed the transaction (`confirmed_block` is retained as a compatibility
+  alias for this live-confirmation field);
+- `reconciled_at_emulator_block`: emulator block counter when the final exported-
+  block reconciliation pass ran; it is not the transaction's confirmation height;
 - `failure_reason`, `stop_block`, and retry metadata for failed attempts.
 - `status_before_chain_reconciliation` and
   `failure_reason_before_chain_reconciliation`: preserved history when final
   block evidence changes an earlier terminal status;
-- `late_confirmation`: true when a previously failed attempt is found on chain.
+- `late_confirmation`: true when a previously failed attempt is found on chain;
+- `additional_destination_matches`: later exported transactions that reused the
+  same destination address; the first match remains authoritative and is not
+  overwritten.
 
 ## Lifecycle status versus block evidence
 
@@ -29,6 +37,11 @@ time. The final matching pass treats chain evidence as authoritative: it sets
 `status = "confirmed"`, adds `txid`, `block_height`, and
 `match_source = "destination_output"`, and preserves the former lifecycle
 state and reason in the reconciliation-history fields.
+
+The final pass records both numbering domains explicitly. The transaction's
+chain height is `confirmed_chain_height`; `reconciled_at_emulator_block` only
+states when artifact reconciliation ran. If a live confirmation already
+recorded `confirmed_emulator_block`, the final pass preserves it.
 
 Therefore:
 

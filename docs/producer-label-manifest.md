@@ -60,9 +60,10 @@ The consumer-facing semantics are documented in
 - **Wasabi, legacy combined backend (2.0.x)**: every `Logs.txt` under the
   downloaded `wasabi-backend/` tree. The positive rule in both Wasabi cases is
   a `Round (<id>): Successfully broadcast the coinjoin: <txid>.` record.
-  Note: this line format is verified against 2.6 coordinator logs; runs with
-  2.0.x images should be spot-checked once before their labels are trusted
-  (see the 2026-07-13 third-pass review, finding P3-3).
+  The consumer accepts case/spacing drift and the legacy `broadcasted` wording.
+  Because no captured 2.0.x log fixture is available, it additionally fails
+  closed if no broadcast is parsed while exported blocks contain a transaction
+  with at least five inputs.
 
 ## Writer guarantees
 
@@ -80,6 +81,8 @@ Fail closed. Labels are usable only when all of the following verify:
 schema version, engine match, `complete: true`, non-empty `sources`, every
 source present with matching size and SHA-256, and every source name allowed
 for the engine (`joinmarket_round_events.json` / `Logs.txt`). A verified but
-logically empty source (for example an empty round-event list) is valid
-evidence with zero positive labels — it means "no coinjoins", not "unknown".
-Anything less yields unknown labels and no classification metrics.
+logically empty source remains valid zero-positive evidence. For Wasabi, that
+zero-positive interpretation is rejected when exported blocks contain a
+transaction with at least five inputs. Producer-positive txids must also all be
+present in the exported block set. A Wasabi parseability candidate or unmatched
+positive yields unknown labels and no classification metrics.

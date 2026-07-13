@@ -85,8 +85,9 @@ class TestJoinMarketRoundEvents:
                 "status_before_chain_reconciliation": "started",
                 "txid": "coinjoin-txid",
                 "block_height": 7,
+                "confirmed_chain_height": 7,
                 "match_source": "destination_output",
-                "confirmed_block": 2,
+                "reconciled_at_emulator_block": 2,
                 "late_confirmation": False,
             }
         ]
@@ -128,7 +129,43 @@ class TestJoinMarketRoundEvents:
         assert labels[0]["late_confirmation"] is True
         assert labels[0]["txid"] == "late-coinjoin"
         assert labels[0]["block_height"] == 9
-        assert labels[0]["confirmed_block"] == 8
+        assert labels[0]["confirmed_chain_height"] == 9
+        assert labels[0]["reconciled_at_emulator_block"] == 8
+        assert "confirmed_block" not in labels[0]
+
+    def test_reconciliation_preserves_first_match_when_destination_is_reused(self, tmp_path: Path) -> None:
+        node_path = tmp_path / "btc-node"
+        node_path.mkdir()
+        for height, txid in ((3, "first-match"), (4, "second-match")):
+            (node_path / f"block_{height}.json").write_text(
+                json.dumps(
+                    {
+                        "height": height,
+                        "tx": [
+                            {
+                                "txid": txid,
+                                "vout": [{"scriptPubKey": {"address": "reused-destination"}}],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+        harness = EventHarness()
+        harness.joinmarket_round_events = [
+            {
+                "round_id": 4,
+                "status": "started",
+                "destination_address": "reused-destination",
+            }
+        ]
+
+        labels = harness.match_joinmarket_rounds_to_blocks(str(tmp_path))
+
+        assert labels[0]["txid"] == "first-match"
+        assert labels[0]["block_height"] == 3
+        assert labels[0]["late_confirmation"] is False
+        assert labels[0]["additional_destination_matches"] == [{"txid": "second-match", "block_height": 4}]
 
     def test_round_events_confirm_started_round_from_live_node_lookup(self) -> None:
         harness = EventHarness()
@@ -149,4 +186,6 @@ class TestJoinMarketRoundEvents:
         assert harness.joinmarket_round_events[0]["status"] == "confirmed"
         assert harness.joinmarket_round_events[0]["txid"] == "tx-5"
         assert harness.joinmarket_round_events[0]["block_height"] == 5
+        assert harness.joinmarket_round_events[0]["confirmed_chain_height"] == 5
         assert harness.joinmarket_round_events[0]["confirmed_block"] == 2
+        assert harness.joinmarket_round_events[0]["confirmed_emulator_block"] == 2
