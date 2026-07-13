@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -43,6 +44,10 @@ class MinimalEngine(EngineBase):
         pass
 
 
+class JoinmarketMinimalEngine(MinimalEngine):
+    engine_name = "joinmarket"
+
+
 class EngineBaseTest(unittest.TestCase):
     def engine_args(self, **overrides: object) -> SimpleNamespace:
         args = SimpleNamespace(
@@ -65,6 +70,23 @@ class EngineBaseTest(unittest.TestCase):
         engine = MinimalEngine(self.engine_args(), Mock(), "/tmp")
 
         self.assertEqual(engine.image_ref("btc-node"), "ghcr.io/ondrejman/btc-node")
+
+    def test_load_scenario_applies_selected_engine_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            scenario = Path(tmpdir) / "scenario.json"
+            scenario.write_text(
+                '{"name":"test","rounds":1,"blocks":0,'
+                '"default_version":"custom","wallets":[{"funds":[1000]}]}',
+                encoding="utf-8",
+            )
+            engine = JoinmarketMinimalEngine(
+                self.engine_args(command="run", scenario=str(scenario)),
+                Mock(),
+                "/tmp",
+            )
+
+            with self.assertRaisesRegex(ValueError, "explicit maker/taker role"):
+                engine.load_scenario()
 
     def test_image_ref_override_wins_over_prefix(self) -> None:
         engine = MinimalEngine(
@@ -327,12 +349,21 @@ class EngineBaseTest(unittest.TestCase):
             self.assertTrue((emulator_dir / "scenario.json").is_file())
             self.assertTrue((emulator_dir / "data" / "btc-node" / "block_0.json").is_file())
             self.assertTrue((emulator_dir / "data" / "btc-node" / "block_1.json").is_file())
+            manifest_path = emulator_dir / "data" / "coinjoin_label_manifest.json"
+            self.assertTrue(manifest_path.is_file())
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertFalse(manifest["complete"])
+            self.assertEqual(manifest["schema_version"], "1.0")
             self.assertEqual(engine.node.get_block_hash.call_count, 2)
             archive = emulator_dir / "emulation_logs.zip"
             self.assertTrue(archive.is_file())
             self.assertFalse((run_dir / "scenario.json").exists())
             with zipfile.ZipFile(archive) as contents:
                 self.assertIn("coinjoin_emulator_data/scenario.json", contents.namelist())
+                self.assertIn(
+                    "coinjoin_emulator_data/data/coinjoin_label_manifest.json",
+                    contents.namelist(),
+                )
 
     def test_store_logs_uses_requested_run_timezone(self) -> None:
         engine = MinimalEngine(self.engine_args(run_timezone="UTC"), Mock(), "/tmp")

@@ -4,6 +4,7 @@ import multiprocessing.pool
 import os
 import random
 import tempfile
+from pathlib import Path
 from time import sleep, time
 from traceback import print_exception
 from typing import cast
@@ -48,6 +49,8 @@ def version_at_least(version: str, reference: str) -> bool:
 
 
 class WasabiEngine(EngineBase):
+    engine_name = "wasabi"
+
     def __init__(self, args: EngineArgs, driver: DriverProtocol) -> None:
         self.coordinator: WasabiCoordinatorProtocol | None = None
         self.backend: WasabiBackendProtocol | None = None
@@ -342,35 +345,64 @@ class WasabiEngine(EngineBase):
     def stop_client(self, idx: int) -> None:
         self.driver.stop(f"wasabi-client-{idx:03}")
 
-    def store_engine_logs(self, data_path: str) -> None:
-        try:
-            if self.backend_architecture == BackendArchitecture.SPLIT:
+    def store_engine_logs(self, data_path: str) -> dict[str, object]:
+        if self.backend_architecture == BackendArchitecture.SPLIT:
+            try:
                 self.driver.download(
                     "wasabi-backend",
                     "/home/wasabi/.walletwasabi/backend/",
                     os.path.join(data_path, "wasabi-backend-2.6"),
                 )
                 log.info("- stored backend-2.6 logs")
+            except (CoinjoinEmulatorError, RuntimeError, OSError):
+                log.warning("- could not store backend-2.6 logs")
 
-                try:
-                    self.driver.download(
-                        "wasabi-coordinator",
-                        "/home/wasabi/.walletwasabi/coordinator/",
-                        os.path.join(data_path, "wasabi-coordinator"),
-                    )
-                    log.info("- stored coordinator logs")
-                except (CoinjoinEmulatorError, RuntimeError, OSError):
-                    log.warning("- could not store coordinator logs")
-            else:
-                # Store logs from legacy backend
+            label_root = os.path.join(data_path, "wasabi-coordinator")
+            try:
+                self.driver.download(
+                    "wasabi-coordinator",
+                    "/home/wasabi/.walletwasabi/coordinator/",
+                    label_root,
+                )
+                log.info("- stored coordinator logs")
+            except (CoinjoinEmulatorError, RuntimeError, OSError):
+                log.warning("- could not store coordinator logs")
+                return {
+                    "engine": "wasabi",
+                    "complete": False,
+                    "reason": "could not download Wasabi coordinator logs",
+                    "positive_rule": "transaction id appears in a successful coordinator broadcast record",
+                    "sources": [],
+                }
+        else:
+            label_root = os.path.join(data_path, "wasabi-backend")
+            try:
                 self.driver.download(
                     "wasabi-backend",
                     "/home/wasabi/.walletwasabi/backend/",
-                    os.path.join(data_path, "wasabi-backend"),
+                    label_root,
                 )
                 log.info("- stored backend logs")
-        except (CoinjoinEmulatorError, RuntimeError, OSError):
-            log.warning("- could not store backend logs")
+            except (CoinjoinEmulatorError, RuntimeError, OSError):
+                log.warning("- could not store backend logs")
+                return {
+                    "engine": "wasabi",
+                    "complete": False,
+                    "reason": "could not download legacy Wasabi backend logs",
+                    "positive_rule": "transaction id appears in a successful coordinator broadcast record",
+                    "sources": [],
+                }
+
+        log_paths = sorted(
+            path for path in Path(label_root).rglob("Logs.txt") if path.is_file()
+        )
+        return {
+            "engine": "wasabi",
+            "complete": bool(log_paths),
+            "reason": None if log_paths else "captured Wasabi logs contain no Logs.txt source",
+            "positive_rule": "transaction id appears in a successful coordinator broadcast record",
+            "sources": [os.path.relpath(path, data_path) for path in log_paths],
+        }
 
     def start_coinjoin(self, client: EmulatorClient) -> None:
         sleep(random.random() / 10)

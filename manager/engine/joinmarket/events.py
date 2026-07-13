@@ -13,13 +13,20 @@ class JoinMarketRoundEventsMixin:
     current_block: int
     current_round = 0
 
-    def store_engine_logs(self, data_path: str) -> None:
+    def store_engine_logs(self, data_path: str) -> dict[str, object]:
         labels = self.match_joinmarket_rounds_to_blocks(data_path)
         with open(
             os.path.join(data_path, "joinmarket_round_events.json"), "w", encoding="utf-8"
         ) as f:
             json.dump(labels, f, indent=2)
             log.info("- stored JoinMarket round labels")
+        return {
+            "engine": "joinmarket",
+            "complete": True,
+            "reason": None,
+            "positive_rule": "exported transaction matches a reconciled JoinMarket round event",
+            "sources": ["joinmarket_round_events.json"],
+        }
 
     def match_joinmarket_rounds_to_blocks(self, data_path: str) -> list[dict[str, object]]:
         labels_by_destination = {
@@ -51,9 +58,18 @@ class JoinMarketRoundEventsMixin:
                     for address in addresses:
                         event = labels_by_destination.get(address)
                         if event is not None and txid:
+                            previous_status = event.get("status")
+                            previous_failure_reason = event.pop("failure_reason", None)
+                            if previous_status != "confirmed":
+                                event["status_before_chain_reconciliation"] = previous_status
+                            if previous_failure_reason:
+                                event["failure_reason_before_chain_reconciliation"] = previous_failure_reason
+                            event["status"] = "confirmed"
                             event["txid"] = txid
                             event["block_height"] = block_height
                             event["match_source"] = "destination_output"
+                            event["confirmed_block"] = event.get("confirmed_block") or self.current_block
+                            event["late_confirmation"] = previous_status == "failed"
 
         return sorted(
             labels_by_destination.values(),

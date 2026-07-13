@@ -656,7 +656,9 @@ class KubernetesDriver(Driver):
                 log.debug(f"STDOUT: {resp.read_stdout()}")
             if resp.peek_stderr():
                 stderr_chunks.append(resp.read_stderr())
-        returncode = resp.returncode
+        # The Kubernetes client exposes this runtime property, but its bundled
+        # WSClient type stub omits it.
+        returncode = getattr(resp, "returncode", None)
         resp.close()
         stderr = "".join(stderr_chunks)
         if returncode != 0:

@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock, patch
@@ -114,3 +115,38 @@ def test_run_engine_mines_settlement_blocks_after_limit() -> None:
         engine.run_engine()
 
     node.mine_block.assert_called_once_with(WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT)
+
+
+def test_split_log_capture_declares_exact_coordinator_sources(tmp_path: Path) -> None:
+    engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
+
+    def download(name: str, _source: str, destination: str) -> None:
+        destination_path = Path(destination)
+        destination_path.mkdir(parents=True, exist_ok=True)
+        if name == "wasabi-coordinator":
+            (destination_path / "Logs.txt").write_text("", encoding="utf-8")
+
+    driver.download.side_effect = download
+
+    evidence = engine.store_engine_logs(str(tmp_path))
+
+    assert evidence["complete"] is True
+    assert evidence["engine"] == "wasabi"
+    assert evidence["sources"] == ["wasabi-coordinator/Logs.txt"]
+
+
+def test_split_log_capture_is_incomplete_when_coordinator_download_fails(tmp_path: Path) -> None:
+    engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
+
+    def download(name: str, _source: str, destination: str) -> None:
+        if name == "wasabi-coordinator":
+            raise OSError("pod disappeared")
+        Path(destination).mkdir(parents=True, exist_ok=True)
+
+    driver.download.side_effect = download
+
+    evidence = engine.store_engine_logs(str(tmp_path))
+
+    assert evidence["complete"] is False
+    assert evidence["sources"] == []
+    assert "coordinator" in str(evidence["reason"])

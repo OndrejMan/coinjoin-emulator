@@ -79,14 +79,56 @@ class TestJoinMarketRoundEvents:
         assert labels == [
             {
                 "round_id": 2,
-                "status": "started",
+                "status": "confirmed",
                 "taker": "jcs-002",
                 "destination_address": "destination-address",
+                "status_before_chain_reconciliation": "started",
                 "txid": "coinjoin-txid",
                 "block_height": 7,
                 "match_source": "destination_output",
+                "confirmed_block": 2,
+                "late_confirmation": False,
             }
         ]
+
+    def test_failed_round_is_reconciled_when_exported_blocks_contain_its_destination(self, tmp_path: Path) -> None:
+        node_path = tmp_path / "btc-node"
+        node_path.mkdir()
+        (node_path / "block_9.json").write_text(
+            json.dumps(
+                {
+                    "height": 9,
+                    "tx": [
+                        {
+                            "txid": "late-coinjoin",
+                            "vout": [{"scriptPubKey": {"address": "late-destination"}}],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        harness = EventHarness()
+        harness.current_block = 8
+        harness.joinmarket_round_events = [
+            {
+                "round_id": 3,
+                "status": "failed",
+                "failure_reason": "taker stopped before confirmation",
+                "destination_address": "late-destination",
+            }
+        ]
+
+        labels = harness.match_joinmarket_rounds_to_blocks(str(tmp_path))
+
+        assert labels[0]["status"] == "confirmed"
+        assert labels[0]["status_before_chain_reconciliation"] == "failed"
+        assert labels[0]["failure_reason_before_chain_reconciliation"] == "taker stopped before confirmation"
+        assert "failure_reason" not in labels[0]
+        assert labels[0]["late_confirmation"] is True
+        assert labels[0]["txid"] == "late-coinjoin"
+        assert labels[0]["block_height"] == 9
+        assert labels[0]["confirmed_block"] == 8
 
     def test_round_events_confirm_started_round_from_live_node_lookup(self) -> None:
         harness = EventHarness()

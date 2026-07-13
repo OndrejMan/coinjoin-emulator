@@ -74,11 +74,22 @@ objects (`manager/engine/configuration.py` supports both spellings):
   `skip_rounds` (list of round numbers the wallet skips). The nested values take
   precedence over the flat legacy fields.
 - `joinmarket` — object with `role`, either `"maker"` or `"taker"`. The legacy
-  flat spelling is `"type": "maker" | "taker"`. Every wallet in a JoinMarket
-  scenario needs a role; takers initiate coinjoins (one active round at a time),
-  makers provide liquidity. A round only starts once at least
+  flat spelling is `"type": "maker" | "taker"`. Specify a role explicitly for
+  every JoinMarket wallet; JoinMarket scenarios with a missing role are
+  rejected before containers start. Takers initiate coinjoins (one active
+  round at a time), makers provide liquidity. A round only starts once at least
   `JOINMARKET_COUNTERPARTIES` (see `manager/engine/joinmarket/constants.py`)
   makers are running and funded.
+
+### Validation boundaries
+
+Scenario parsing validates the required non-empty strings and wallet list,
+strict JSON booleans, non-negative `rounds`, `blocks`, delay, stop, and skipped
+round values, and positive fund amounts. Each wallet needs at least one fund.
+When `--engine joinmarket` is selected, every wallet additionally requires an
+explicit maker/taker role. This is keyed to the selected engine, not to the
+text of `default_version`, so custom JoinMarket image tags are validated too.
+Invalid input raises `ValueError` before any runtime resources are created.
 
 JoinMarket scenario example:
 
@@ -98,6 +109,20 @@ JoinMarket scenario example:
 ## Engine
 You can run the simulation with different CoinJoin protocols. Currently, Wasabi and Joinmarket are supported. 
 The default protocol is Wasabi. To run the simulation with Joinmarket, use the `--engine joinmarket` option.  
+
+The JoinMarket engine writes `data/joinmarket_round_events.json`. Its schema and
+the distinction between lifecycle status and a late block match are documented
+in [JoinMarket round events](docs/joinmarket-round-events.md).
+
+Every stored run also contains `data/coinjoin_label_manifest.json`. It records
+the selected engine, whether producer-label capture completed, the positive
+label rule, and the exact size and SHA-256 digest of every label source. The
+manifest is written atomically after service logs are collected and is included
+in `emulation_logs.zip`. Consumers must treat a missing, incomplete, or
+hash-mismatched manifest as unavailable labels; a verified zero-byte/logically
+empty source is a complete capture with zero positives. The full schema and
+per-engine source rules are documented in
+[Producer label manifest](docs/producer-label-manifest.md).
 
 ## Run directory naming
 

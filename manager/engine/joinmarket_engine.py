@@ -48,6 +48,8 @@ class JoinmarketEngine(
     JoinMarketRunnerMixin,
     EngineBase,
 ):
+    engine_name = "joinmarket"
+
     def __init__(self, args: EngineArgs, driver: DriverProtocol) -> None:
         super().__init__(args, driver, "/home/joinmarket")
         self.joinmarket_round_events: list[dict[str, object]] = []
