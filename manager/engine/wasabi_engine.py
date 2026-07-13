@@ -35,6 +35,16 @@ from .engine_base import (
 WASABI_CLIENT_START_TIMEOUT_SECONDS = 180
 WASABI_COORDINATOR_START_TIMEOUT_SECONDS = 120
 WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
+# Abort instead of spinning forever when round/block status stays unavailable.
+MAX_CONSECUTIVE_STATUS_FAILURES = 20
+
+
+def version_at_least(version: str, reference: str) -> bool:
+    """Compare dotted release versions numerically ("2.0.10" >= "2.0.3")."""
+    def parts(value: str) -> tuple[int, ...]:
+        return tuple(int(part) if part.isdigit() else 0 for part in value.split("."))
+
+    return parts(version) >= parts(reference)
 
 
 class WasabiEngine(EngineBase):
@@ -132,10 +142,11 @@ class WasabiEngine(EngineBase):
             print_exception(e)
             raise
 
+        backend_host, backend_port = self.service_endpoint(wasabi_backend_ip, 37127, wasabi_backend_ports)
         self.backend = create_backend(
             self.backend_architecture,
-            host=wasabi_backend_ip if self.args.proxy else self.control_host(),
-            port=37127 if self.args.proxy else wasabi_backend_ports[37127],
+            host=backend_host,
+            port=backend_port,
             internal_ip=wasabi_backend_ip,
             proxy=self.args.proxy,
         )
@@ -162,9 +173,12 @@ class WasabiEngine(EngineBase):
         )
         sleep(1)
 
+        coordinator_host, coordinator_port = self.service_endpoint(
+            wasabi_coordinator_ip, 37128, wasabi_coordinator_ports
+        )
         self.coordinator = create_coordinator(
-            host=wasabi_coordinator_ip if self.args.proxy else self.control_host(),
-            port=37128 if self.args.proxy else wasabi_coordinator_ports[37128],
+            host=coordinator_host,
+            port=coordinator_port,
             internal_ip=wasabi_coordinator_ip,
             proxy=self.args.proxy,
         )
@@ -209,10 +223,13 @@ class WasabiEngine(EngineBase):
             memory=2048,
         )
 
+        distributor_host, distributor_port = self.service_endpoint(
+            wasabi_client_distributor_ip, 37128, wasabi_client_distributor_ports
+        )
         self.distributor = cast(InvoiceDistributor, self.init_wasabi_client(
             distributor_version,
-            wasabi_client_distributor_ip if self.args.proxy else self.control_host(),
-            port=37128 if self.args.proxy else wasabi_client_distributor_ports[37128],
+            distributor_host,
+            port=distributor_port,
             name="wasabi-client-distributor",
             delay=(0, 0),
             stop=(0, 0),
@@ -257,14 +274,14 @@ class WasabiEngine(EngineBase):
             wasabi_config.redcoin_isolation if wasabi_config else self.scenario.default_redcoin_isolation
         )
 
-        if anon_score_target is not None and version < "2.0.3":
+        if anon_score_target is not None and not version_at_least(version, "2.0.3"):
             anon_score_target = None
             log.warning(
                 f"Anon Score Target is ignored for wallet {idx} as it is curently supported only for "
                 "version 2.0.3 and newer"
             )
 
-        if redcoin_isolation is not None and version < "2.0.3":
+        if redcoin_isolation is not None and not version_at_least(version, "2.0.3"):
             redcoin_isolation = None
             log.warning(
                 f"Redcoin isolation is ignored for wallet {idx} as it is curently supported only for "
@@ -296,8 +313,8 @@ class WasabiEngine(EngineBase):
                 f"{self.args.image_prefix}wasabi-client:{version}",
                 env=client_env,
                 ports={37128: 37132 + idx},
-                cpu=(0.3 if version < "2.0.4" else 0.1),
-                memory=(1024 if version < "2.0.4" else 768),
+                cpu=(0.3 if not version_at_least(version, "2.0.4") else 0.1),
+                memory=(1024 if not version_at_least(version, "2.0.4") else 768),
             )
         except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             log.warning(f"- could not start {name} ({e})")
@@ -305,10 +322,11 @@ class WasabiEngine(EngineBase):
 
         delay = (wallet.delay_blocks or 0, wallet.delay_rounds or 0)
         stop = (wallet.stop_blocks or 0, wallet.stop_rounds or 0)
+        client_host, client_port = self.service_endpoint(ip, 37128, manager_ports)
         client = self.init_wasabi_client(
             version,
-            ip if self.args.proxy else self.control_host(),
-            37128 if self.args.proxy else manager_ports[37128],
+            client_host,
+            client_port,
             f"wasabi-client-{idx:03}",
             delay,
             stop,
@@ -402,9 +420,11 @@ class WasabiEngine(EngineBase):
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         initial_block = self.node.get_block_count()
-        while (self.scenario.rounds == 0 or self.current_round <= self.scenario.rounds) and (
+        consecutive_status_failures = 0
+        while (self.scenario.rounds == 0 or self.current_round < self.scenario.rounds) and (
             self.scenario.blocks == 0 or self.current_block < self.scenario.blocks
         ):
+            status_failed = False
             for _ in range(3):
                 try:
                     self.current_round = self._get_current_round()
@@ -412,6 +432,8 @@ class WasabiEngine(EngineBase):
                 except (CoinjoinEmulatorError, RuntimeError, OSError, KeyError, TypeError, ValueError) as e:
                     log.warning("- could not get rounds".ljust(60), end="\r")
                     log.error(f"Round exception: {e}")
+            else:
+                status_failed = True
 
             for _ in range(3):
                 try:
@@ -420,6 +442,18 @@ class WasabiEngine(EngineBase):
                 except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
                     log.warning("- could not get blocks".ljust(60), end="\r")
                     log.error(f"Block exception: {e}")
+            else:
+                status_failed = True
+
+            if status_failed:
+                consecutive_status_failures += 1
+                if consecutive_status_failures >= MAX_CONSECUTIVE_STATUS_FAILURES:
+                    raise RuntimeError(
+                        "Round/block status has been unavailable for "
+                        f"{consecutive_status_failures} consecutive polls; aborting simulation"
+                    )
+            else:
+                consecutive_status_failures = 0
 
             self.update_invoice_payments()
             self.update_coinjoins()

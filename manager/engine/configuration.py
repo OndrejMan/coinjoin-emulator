@@ -71,7 +71,13 @@ class ScenarioConfig:
         """Load scenario configuration from JSON file."""
         with open(filepath, encoding="utf-8") as f:
             data = cast(dict[str, object], json.load(f))
-        
+
+        missing = [field for field in ("name", "rounds", "blocks", "default_version") if field not in data]
+        if missing:
+            raise ValueError(
+                f"Scenario file {filepath} is missing required fields: {', '.join(missing)}"
+            )
+
         # Parse wallets with engine-specific configurations
         wallets: list[WalletConfig] = []
         raw_wallets = data.get("wallets", [])

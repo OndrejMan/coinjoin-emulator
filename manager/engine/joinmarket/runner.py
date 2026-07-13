@@ -15,6 +15,9 @@ from .constants import (
     JOINMARKET_TAKER_RETRY_COOLDOWN_BLOCKS,
 )
 
+# Abort instead of spinning forever when block status stays unavailable.
+MAX_CONSECUTIVE_STATUS_FAILURES = 20
+
 
 class JoinMarketRunnerMixin:
     node: BtcNode | None
@@ -53,16 +56,25 @@ class JoinMarketRunnerMixin:
         for _ in range(5):
             self.node.mine_block()
 
+        consecutive_status_failures = 0
         while (self.scenario.rounds == 0 or self.current_round < self.scenario.rounds) and (
             self.scenario.blocks == 0 or self.current_block < self.scenario.blocks
         ):
             for _ in range(3):
                 try:
                     self.current_block = self.node.get_block_count() - initial_block
+                    consecutive_status_failures = 0
                     break
                 except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
                     log.warning("- could not get blocks".ljust(60), end="\r")
                     log.error(f"Block exception: {e}")
+            else:
+                consecutive_status_failures += 1
+                if consecutive_status_failures >= MAX_CONSECUTIVE_STATUS_FAILURES:
+                    raise RuntimeError(
+                        "Block status has been unavailable for "
+                        f"{consecutive_status_failures} consecutive polls; aborting simulation"
+                    )
 
             if (
                 self.scenario.blocks == 0

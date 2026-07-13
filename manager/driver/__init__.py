@@ -1,9 +1,23 @@
+import tarfile
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from multiprocessing.pool import ThreadPool
 
 
+def extract_tar(tar: tarfile.TarFile, dst_path: str) -> None:
+    """Extract an archive received from a container, sanitizing member paths."""
+    try:
+        tar.extractall(dst_path, filter="data")
+    except TypeError:
+        # Python without the extraction-filter parameter (< 3.10.12/3.11.4)
+        tar.extractall(dst_path)  # noqa: S202  # nosec - trusted emulator containers
+
+
 class Driver(ABC):
+    # True when the manager reaches services at their container/pod address
+    # directly (no port-forwarding or host port mapping involved).
+    direct_network: bool = False
+
     @abstractmethod
     def has_image(self, name: str) -> bool:
         pass

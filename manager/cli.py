@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from collections.abc import Callable
@@ -249,8 +250,12 @@ def create_driver(args: ParsedArgs) -> Driver:
             return PodmanDriver(args.namespace)
         case "kubernetes":
             disable_port_forward = getattr(args, "disable_port_forward", False)
-            if disable_port_forward and not getattr(args, "proxy", ""):
-                raise ValueError("--disable-port-forward requires --proxy so services remain reachable")
+            in_cluster = bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+            if disable_port_forward and not getattr(args, "proxy", "") and not in_cluster:
+                raise ValueError(
+                    "--disable-port-forward requires --proxy (or running inside the cluster) "
+                    "so services remain reachable"
+                )
             return KubernetesDriver(args.namespace, args.reuse_namespace, port_forward=not disable_port_forward)
         case _:
             raise ValueError(f"Unknown driver '{args.driver}'")

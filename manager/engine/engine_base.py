@@ -154,6 +154,23 @@ class EngineBase:
     def control_host(self) -> str:
         return str(getattr(self.driver, "control_host", self.args.control_ip))
 
+    def direct_endpoints(self) -> bool:
+        """True when services are reached at their container/pod address directly.
+
+        This holds when a proxy routes to container IPs, or when the driver
+        reports direct network access (Kubernetes with port-forwarding
+        disabled, i.e. the manager runs inside the cluster).
+        """
+        # The strict `is True` keeps mock drivers with auto-created attributes
+        # on the port-mapped path.
+        return bool(self.args.proxy) or getattr(self.driver, "direct_network", False) is True
+
+    def service_endpoint(self, ip: str, container_port: int, ports: dict[int, int]) -> tuple[str, int]:
+        """Resolve the (host, port) the manager should use to reach a service."""
+        if self.direct_endpoints():
+            return ip, container_port
+        return self.control_host(), ports[container_port]
+
     def local_build_requested(self, name: str) -> bool:
         return name in {"btc-node", "joinmarket-client-server", "irc-server"} and bool(
             getattr(self.args, "coinjoin_infrastructure_local_build", False)
@@ -226,9 +243,10 @@ class EngineBase:
         )
 
         log.debug("- middle btc-node")
+        node_host, node_port = self.service_endpoint(btc_node_ip, 18443, btc_node_ports)
         node = BtcNode(
-            host=btc_node_ip if self.args.proxy else self.control_host(),
-            port=18443 if self.args.proxy else btc_node_ports[18443],
+            host=node_host,
+            port=node_port,
             internal_ip=btc_node_ip,
             proxy=self.args.proxy,
         )
@@ -323,10 +341,13 @@ class EngineBase:
         if self.distributor is None:
             raise RuntimeError("Distributor is not initialized")
 
+        # Round each UTXO up to a whole satoshi so the total meets the target
+        # even when the amount does not divide evenly.
+        per_utxo_sats = math.ceil(btc_amount * BTC / DISTRIBUTOR_UTXOS)
         for _ in range(DISTRIBUTOR_UTXOS):
             self.node.fund_address(
                 self.distributor.get_new_address(),
-                math.ceil(btc_amount * BTC / DISTRIBUTOR_UTXOS) // BTC,
+                per_utxo_sats / BTC,
             )
 
         target_balance = int(btc_amount * BTC)

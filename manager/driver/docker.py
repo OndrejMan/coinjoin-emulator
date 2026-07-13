@@ -9,7 +9,7 @@ import docker
 
 from manager import log_output as log
 
-from . import Driver
+from . import Driver, extract_tar
 
 
 class DockerNetwork(Protocol):
@@ -117,9 +117,11 @@ class DockerDriver(Driver):
                 fo.write(d)
             fo.seek(0)
             with tarfile.open(fileobj=fo) as tar:
-                tar.extractall(dst_path)
-        except (docker.errors.APIError, docker.errors.NotFound, tarfile.TarError, OSError):
-            pass
+                extract_tar(tar, dst_path)
+        except (docker.errors.APIError, docker.errors.NotFound, tarfile.TarError, OSError) as error:
+            # Callers decide whether a missing artifact is fatal; swallowing the
+            # error here made incomplete runs look successful.
+            raise RuntimeError(f"Failed to download {name}:{src_path} to {dst_path}: {error}") from error
 
     def peek(self, name: str, path: str) -> str:
         stream, _ = self.client.containers.get(name).get_archive(path)

@@ -2,6 +2,8 @@ import importlib.util
 import socket
 import sys
 import types
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest import TestCase
@@ -328,6 +330,39 @@ class KubernetesDriverTest(TestCase):
 
         self.assertEqual(deleted_pods, ["btc-node"])
         self.assertEqual(deleted_services, ["btc-node"])
+
+    def test_upload_reports_silent_remote_command_failure(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+        response = Mock()
+        response.is_open.side_effect = [True, False]
+        response.peek_stdout.return_value = False
+        response.peek_stderr.return_value = False
+        response.returncode = 17
+        kube_client = SimpleNamespace(
+            connect_get_namespaced_pod_exec=object(),
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                return_value=kube_client,
+            ),
+            patch("manager.driver.kubernetes.stream", return_value=response),
+            TemporaryDirectory() as directory,
+        ):
+            source = Path(directory) / "Config.json"
+            source.write_text("{}", encoding="utf-8")
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+
+            with self.assertRaisesRegex(RuntimeError, "failed with exit code 17"):
+                driver.upload(
+                    "wasabi-client-000",
+                    str(source),
+                    "/root/.walletwasabi/client/Config.json",
+                )
+
+        response.close.assert_called_once_with()
 
     def test_diagnostics_reports_missing_running_oomkilled_and_evicted_pods(self) -> None:
         KubernetesDriver, _ = _load_kubernetes_symbols()

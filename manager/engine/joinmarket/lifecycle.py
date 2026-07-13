@@ -45,6 +45,7 @@ class JoinMarketClientLifecycleMixin:
     prepare_image: PrepareImage
     image_ref: Callable[[str], str]
     control_host: Callable[[], str]
+    service_endpoint: Callable[[str, int, dict[int, int]], tuple[str, int]]
     init_joinmarket_clientserver: JoinMarketClientServerFactory
 
     def prepare_images(self) -> None:
@@ -120,10 +121,11 @@ class JoinMarketClientLifecycleMixin:
             log.error(f"- could not start {name} ({e})")
             raise StartupError("Could not start distributor") from e
 
+        distributor_host, distributor_port = self.service_endpoint(ip, 28183, manager_ports)
         self.distributor = self.init_joinmarket_clientserver(
             name=name,
-            host=ip if self.args.proxy else self.control_host(),
-            port=28183 if self.args.proxy else manager_ports[28183],
+            host=distributor_host,
+            port=distributor_port,
             proxy=self.args.proxy,
         )
 
@@ -167,10 +169,11 @@ class JoinMarketClientLifecycleMixin:
         joinmarket_config = wallet.joinmarket
         role_str = joinmarket_config.role.value if joinmarket_config and joinmarket_config.role else "maker"
 
+        client_host, client_port = self.service_endpoint(ip, 28183, manager_ports)
         client = self.init_joinmarket_clientserver(
             name=name,
-            host=ip if self.args.proxy else self.control_host(),
-            port=28183 if self.args.proxy else manager_ports[28183],
+            host=client_host,
+            port=client_port,
             role=role_str,
             delay=delay,
             stop=stop,

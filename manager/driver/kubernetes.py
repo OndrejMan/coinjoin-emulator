@@ -20,7 +20,7 @@ from kubernetes.stream import portforward, stream
 from manager import log_output as log
 from manager.exceptions import StartupError
 
-from . import Driver
+from . import Driver, extract_tar
 
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
@@ -32,6 +32,9 @@ PORT_FORWARD_ATTEMPTS = 3
 PORT_FORWARD_RETRY_DELAY_SECONDS = 0.25
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "300"))
 DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
+PEEK_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_PEEK_TIMEOUT", "60"))
+UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_UPLOAD_TIMEOUT", "120"))
+NAMESPACE_CREATE_RETRY_SECONDS = 60
 POD_IP_TRANSIENT_API_STATUSES = {408, 409, 429, 500, 502, 503, 504}
 
 
@@ -169,6 +172,9 @@ class KubernetesDriver(Driver):
         self.control_host = "127.0.0.1"
         self.port_forwards: dict[tuple[str, int], PortForwardServer] = {}
         self.port_forward_enabled = port_forward
+        # Without port-forwarding the manager must reach pods at their pod IP
+        # and container port (it runs inside the cluster, or behind a proxy).
+        self.direct_network = not port_forward
         self.managed_pod_names: set[str] = set()
 
     def _new_client(self) -> client.CoreV1Api:
@@ -182,7 +188,18 @@ class KubernetesDriver(Driver):
             "metadata": {"name": self._namespace},
         }
         if not self.reuse_namespace:
-            self.client.create_namespace(body=namespace_manifest)
+            # A previous run's namespace may still be terminating; retry while
+            # the API answers 409 Conflict for the same name.
+            deadline = monotonic() + NAMESPACE_CREATE_RETRY_SECONDS
+            while True:
+                try:
+                    self.client.create_namespace(body=namespace_manifest)
+                    break
+                except ApiException as error:
+                    if getattr(error, "status", None) != 409 or monotonic() >= deadline:
+                        raise
+                    log.warning(f"- namespace {self._namespace} still exists (terminating?); retrying")
+                    sleep(2)
         return self._namespace
 
     def has_image(self, name: str) -> bool:
@@ -551,8 +568,8 @@ class KubernetesDriver(Driver):
             _preload_content=False,
         )
 
-        encoded = ""
-        stderr = ""
+        encoded_chunks: list[str] = []
+        stderr_chunks: list[str] = []
         deadline = monotonic() + DOWNLOAD_TIMEOUT_SECONDS
         while resp.is_open():
             if monotonic() >= deadline:
@@ -560,14 +577,15 @@ class KubernetesDriver(Driver):
                 raise TimeoutError(f"Timed out downloading {name}:{src_path}")
             resp.update(timeout=1)
             if resp.peek_stdout():
-                encoded += resp.read_stdout()
+                encoded_chunks.append(resp.read_stdout())
             if resp.peek_stderr():
-                stderr += resp.read_stderr()
+                stderr_chunks.append(resp.read_stderr())
+        stderr = "".join(stderr_chunks)
         if stderr.strip():
             raise RuntimeError(f"download command wrote stderr: {stderr.strip()}")
-        fo = BytesIO(base64.b64decode(encoded))
+        fo = BytesIO(base64.b64decode("".join(encoded_chunks)))
         with tarfile.open(fileobj=fo) as tar:
-            tar.extractall(dst_path)
+            extract_tar(tar, dst_path)
         resp.close()
 
     def peek(self, name: str, path: str) -> str:
@@ -584,13 +602,23 @@ class KubernetesDriver(Driver):
             _preload_content=False,
         )
 
-        output = ""
+        output_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+        deadline = monotonic() + PEEK_TIMEOUT_SECONDS
         while resp.is_open():
+            if monotonic() >= deadline:
+                resp.close()
+                raise TimeoutError(f"Timed out reading {name}:{path}")
             resp.update(timeout=1)
             if resp.peek_stdout():
-                output += resp.read_stdout()
+                output_chunks.append(resp.read_stdout())
+            if resp.peek_stderr():
+                stderr_chunks.append(resp.read_stderr())
         resp.close()
-        return output
+        stderr = "".join(stderr_chunks)
+        if stderr.strip():
+            raise RuntimeError(f"peek of {name}:{path} wrote stderr: {stderr.strip()}")
+        return "".join(output_chunks)
 
     def logs(self, name: str) -> str:
         return self.client.read_namespaced_pod_log(name=name, namespace=self.namespace)
@@ -599,33 +627,45 @@ class KubernetesDriver(Driver):
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:tar") as tar:
             tar.add(src_path, arcname=dst_path)
-        commands = [buf.getvalue()]
-
-        exec_command = ["tar", "xf", "-", "-C", "/"]
+        # Streaming over exec stdin cannot signal EOF reliably, so a
+        # previously used write-then-close approach raced tar's extraction.
+        # Uploads are small (config files); embed them in the command instead
+        # and wait for the exec to finish.
+        payload = base64.b64encode(buf.getvalue()).decode("ascii")
+        exec_command = ["sh", "-c", f"printf '%s' '{payload}' | base64 -d | tar xf - -C /"]
         resp = stream(
             self._new_client().connect_get_namespaced_pod_exec,
             name,
             self.namespace,
             command=exec_command,
             stderr=True,
-            stdin=True,
+            stdin=False,
             stdout=True,
             tty=False,
             _preload_content=False,
         )
 
+        stderr_chunks: list[str] = []
+        deadline = monotonic() + UPLOAD_TIMEOUT_SECONDS
         while resp.is_open():
+            if monotonic() >= deadline:
+                resp.close()
+                raise TimeoutError(f"Timed out uploading {src_path} to {name}:{dst_path}")
             resp.update(timeout=1)
             if resp.peek_stdout():
                 log.debug(f"STDOUT: {resp.read_stdout()}")
             if resp.peek_stderr():
-                log.error(f"STDERR: {resp.read_stderr()}")
-            if commands:
-                c = commands.pop(0)
-                resp.write_stdin(c)
-            else:
-                break
+                stderr_chunks.append(resp.read_stderr())
+        returncode = resp.returncode
         resp.close()
+        stderr = "".join(stderr_chunks)
+        if returncode != 0:
+            details = f": {stderr.strip()}" if stderr.strip() else ""
+            raise RuntimeError(
+                f"upload to {name}:{dst_path} failed with exit code {returncode}{details}"
+            )
+        if stderr.strip():
+            raise RuntimeError(f"upload to {name}:{dst_path} wrote stderr: {stderr.strip()}")
 
     def cleanup(self, image_prefix: str = "") -> None:
         self.close_port_forwards()
