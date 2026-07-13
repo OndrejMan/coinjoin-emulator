@@ -65,9 +65,60 @@ The fields are as follows:
   - `anon_score_target` is the target anon score of the wallet.
   - `redcoin_isolation` is a boolean value indicating whether the wallet should use redcoin isolation.
 
+### Nested engine-specific wallet fields
+
+Besides the flat legacy fields above, each wallet accepts nested engine-specific
+objects (`manager/engine/configuration.py` supports both spellings):
+
+- `wasabi` — object with `anon_score_target`, `redcoin_isolation`, and
+  `skip_rounds` (list of round numbers the wallet skips). The nested values take
+  precedence over the flat legacy fields.
+- `joinmarket` — object with `role`, either `"maker"` or `"taker"`. The legacy
+  flat spelling is `"type": "maker" | "taker"`. Every wallet in a JoinMarket
+  scenario needs a role; takers initiate coinjoins (one active round at a time),
+  makers provide liquidity. A round only starts once at least
+  `JOINMARKET_COUNTERPARTIES` (see `manager/engine/joinmarket/constants.py`)
+  makers are running and funded.
+
+JoinMarket scenario example:
+
+```json
+{
+    "name": "default-joinmarket",
+    "rounds": 3,
+    "blocks": 0,
+    "default_version": "joinmarket",
+    "wallets": [
+        {"funds": [200000, 100000], "joinmarket": {"role": "taker"}},
+        {"funds": [1000000, 500000], "delay_blocks": 1, "joinmarket": {"role": "maker"}}
+    ]
+}
+```
+
 ## Engine
 You can run the simulation with different CoinJoin protocols. Currently, Wasabi and Joinmarket are supported. 
 The default protocol is Wasabi. To run the simulation with Joinmarket, use the `--engine joinmarket` option.  
+
+## Run directory naming
+
+Each `run` invocation stores its artifacts under `./logs/<run-id>/`:
+
+- By default the run id is `<timestamp>_<scenario-name>`, with the timestamp
+  rendered in the timezone given by `--run-timezone` (default `Europe/Prague`)
+  at minute resolution.
+- `--run-id <id>` pins a deterministic directory name instead. The pipeline
+  launcher (`coinjoin-pipeline` / `runIt.sh`) uses this to pre-compute the run
+  directory and passes it through the `PIPELINE_RUN_ID` environment variable;
+  the id must match `[A-Za-z0-9][A-Za-z0-9._-]*`, be at most 63 characters,
+  and contain no `..`.
+- A pre-existing run directory only counts as a conflict when it already
+  contains `coinjoin_emulator_data/` — the launcher may pre-create the empty
+  directory to store its host manifest.
+
+`--controller-done-marker` / `--controller-failed-marker` write a marker file
+after logs and requested Bitcoin data are stored (or on failure). The
+Kubernetes S3 uploader sidecar polls these markers to decide when to sync
+artifacts.
 
 
 ## Advanced usage
