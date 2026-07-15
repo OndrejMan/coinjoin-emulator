@@ -120,6 +120,7 @@ class BtcNode:
         deadline = monotonic() + timeout
         last_error = None
         last_block_count = None
+        last_header_count = None
         last_initial_block_download = None
         last_verification_progress = None
 
@@ -128,10 +129,12 @@ class BtcNode:
                 block_count = self.get_block_count()
                 blockchain_info = self.get_blockchain_info()
                 last_block_count = block_count
+                last_header_count = blockchain_info.get("headers")
                 last_initial_block_download = blockchain_info.get("initialblockdownload")
                 last_verification_progress = blockchain_info.get("verificationprogress")
                 if (
                     block_count > 200
+                    and last_header_count == block_count
                     and last_initial_block_download is False
                     and isinstance(last_verification_progress, (int, float))
                     and last_verification_progress >= 1.0
@@ -144,6 +147,7 @@ class BtcNode:
         else:
             detail = (
                 f"last block count: {last_block_count}, "
+                f"last header count: {last_header_count}, "
                 f"initial block download: {last_initial_block_download}, "
                 f"verification progress: {last_verification_progress}"
             )

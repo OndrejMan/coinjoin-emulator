@@ -169,7 +169,11 @@ class BtcNodeTest(unittest.TestCase):
             patch.object(
                 node,
                 "get_blockchain_info",
-                return_value={"initialblockdownload": False, "verificationprogress": 1.0},
+                return_value={
+                    "headers": 201,
+                    "initialblockdownload": False,
+                    "verificationprogress": 1.0,
+                },
             ),
             patch.object(node, "ensure_funding_wallet_ready") as ensure_wallet,
         ):
@@ -187,7 +191,11 @@ class BtcNodeTest(unittest.TestCase):
             patch.object(
                 node,
                 "get_blockchain_info",
-                return_value={"initialblockdownload": True, "verificationprogress": 1.0},
+                return_value={
+                    "headers": 201,
+                    "initialblockdownload": True,
+                    "verificationprogress": 1.0,
+                },
             ),
         ):
             with self.assertRaisesRegex(TimeoutError, "initial block download: True"):
@@ -203,10 +211,34 @@ class BtcNodeTest(unittest.TestCase):
             patch.object(
                 node,
                 "get_blockchain_info",
-                return_value={"initialblockdownload": False, "verificationprogress": 0.99},
+                return_value={
+                    "headers": 201,
+                    "initialblockdownload": False,
+                    "verificationprogress": 0.99,
+                },
             ),
         ):
             with self.assertRaisesRegex(TimeoutError, "verification progress: 0.99"):
+                node.wait_ready(timeout=1)
+
+    def test_wait_ready_rejects_headers_ahead_of_blocks(self) -> None:
+        node = BtcNode(host="btc-node", port=18443)
+
+        with (
+            patch("manager.btc_node.monotonic", side_effect=[0, 0, 1]),
+            patch("manager.btc_node.sleep"),
+            patch.object(node, "get_block_count", return_value=201),
+            patch.object(
+                node,
+                "get_blockchain_info",
+                return_value={
+                    "headers": 202,
+                    "initialblockdownload": False,
+                    "verificationprogress": 1.0,
+                },
+            ),
+        ):
+            with self.assertRaisesRegex(TimeoutError, "last header count: 202"):
                 node.wait_ready(timeout=1)
 
     def test_wait_ready_reports_last_rpc_error(self) -> None:

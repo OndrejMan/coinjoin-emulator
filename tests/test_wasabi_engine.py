@@ -8,7 +8,9 @@ import pytest
 from manager.btc_node import BtcNode
 from manager.engine.configuration import WalletConfig
 from manager.engine.wasabi_engine import (
+    WASABI_CLIENT_DATA_PATH,
     WASABI_CLIENT_START_TIMEOUT_SECONDS,
+    WASABI_COORDINATOR_LOG_PATH,
     WASABI_COORDINATOR_START_TIMEOUT_SECONDS,
     WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT,
     WasabiEngine,
@@ -79,6 +81,42 @@ def test_client_readiness_allows_slow_kubernetes_startup() -> None:
     assert started_client is client
     client.wait_wallet.assert_called_once_with(timeout=WASABI_CLIENT_START_TIMEOUT_SECONDS)
     assert WASABI_CLIENT_START_TIMEOUT_SECONDS == 180
+
+
+def test_wasabi_clients_capture_the_client_data_directory() -> None:
+    engine, _, _ = configured_engine(BackendArchitecture.SPLIT)
+
+    assert engine.log_src_path == WASABI_CLIENT_DATA_PATH
+
+
+def test_split_round_count_uses_unique_successful_broadcasts() -> None:
+    engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
+    txid_one = "a" * 64
+    txid_two = "B" * 64
+    driver.peek.return_value = "\n".join(
+        [
+            "Round (attempt): Phase changed: OutputRegistration -> TransactionSigning",
+            f"Round (one): Successfully broadcast the coinjoin: {txid_one}.",
+            "Round (failed): Not all participants signed. Creating blame round.",
+            f"Round (one-repeated): Successfully broadcast the coinjoin: {txid_one}.",
+            f"Round (two): Successfully broadcasted the coinjoin: {txid_two}.",
+        ]
+    )
+
+    assert engine._get_current_round() == 2
+    driver.peek.assert_called_once_with("wasabi-coordinator", WASABI_COORDINATOR_LOG_PATH)
+
+
+def test_split_round_count_does_not_count_signing_or_failed_rounds() -> None:
+    engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
+    driver.peek.return_value = "\n".join(
+        [
+            "Round (attempt): Phase changed: OutputRegistration -> TransactionSigning",
+            "Round (attempt): Not all participants signed. Creating blame round.",
+        ]
+    )
+
+    assert engine._get_current_round() == 0
 
 
 def test_coordinator_timeout_includes_container_logs() -> None:

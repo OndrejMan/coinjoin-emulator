@@ -16,6 +16,11 @@ RUN uv sync --frozen --no-dev --no-cache
 # Kopírování zbytku repozitáře
 COPY . .
 
+# Local source trees can contain owner-only files (for example after a
+# restrictive umask). Kubernetes-backed runs execute the manager as a
+# non-root user, so normalize runtime readability inside the image.
+RUN chmod -R a+rX /app
+
 # Výchozí příkaz, který spustí scénář
 #  CMD ["python", "manager.py", "run", "--scenario", "scenarios/defaultCoinJoin.json", "--btcFolder", "/home/bitcoin/data"]
 CMD ["sh", "-c", "uv run python manager.py clean && uv run python manager.py run --control-ip dind"]

@@ -3,6 +3,7 @@ import multiprocessing
 import multiprocessing.pool
 import os
 import random
+import re
 import tempfile
 from pathlib import Path
 from time import sleep, time
@@ -36,6 +37,12 @@ from .engine_base import (
 WASABI_CLIENT_START_TIMEOUT_SECONDS = 180
 WASABI_COORDINATOR_START_TIMEOUT_SECONDS = 120
 WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
+WASABI_CLIENT_DATA_PATH = "/home/wasabi/.walletwasabi/client/"
+WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
+SUCCESSFUL_BROADCAST_RE = re.compile(
+    r"successfully\s+broadcast(?:ed)?\s+the\s+coinjoin:\s*([0-9a-f]{64})",
+    re.IGNORECASE,
+)
 # Abort instead of spinning forever when round/block status stays unavailable.
 MAX_CONSECUTIVE_STATUS_FAILURES = 20
 
@@ -55,8 +62,7 @@ class WasabiEngine(EngineBase):
         self.coordinator: WasabiCoordinatorProtocol | None = None
         self.backend: WasabiBackendProtocol | None = None
         self.backend_architecture: BackendArchitecture | None = None
-        self.round_ids: set[str] = set()
-        super().__init__(args, driver, "/home/wasabi/.walletwasabi/backend/")
+        super().__init__(args, driver, WASABI_CLIENT_DATA_PATH)
 
     def default_scenario(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -509,15 +515,20 @@ class WasabiEngine(EngineBase):
         log.info("- settlement blocks mined")
 
     def _get_current_round(self) -> int:
-        if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
-            resp = self.coordinator.get_status()
-            if resp is not None:
-                round_states = cast(list[dict[str, str]], resp["RoundStates"])
-                for round_state in round_states:
-                    if round_state["Phase"] == "TransactionSigning":
-                        self.round_ids.add(round_state["RoundId"])
-                return len(self.round_ids)
-            return 0
+        if self.backend_architecture == BackendArchitecture.SPLIT:
+            # TransactionSigning is not a completed CoinJoin: a signer can
+            # still fail, a blame round can be created, and the manager used
+            # to stop the final round before it broadcast. Count the same
+            # successful coordinator records that become producer labels.
+            coordinator_log = self.driver.peek(
+                "wasabi-coordinator",
+                WASABI_COORDINATOR_LOG_PATH,
+            )
+            successful_txids = {
+                match.group(1).lower()
+                for match in SUCCESSFUL_BROADCAST_RE.finditer(coordinator_log)
+            }
+            return len(successful_txids)
 
         # In legacy versions, rounds are tracked by the backend
         return sum(
