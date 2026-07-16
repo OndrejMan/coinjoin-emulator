@@ -36,6 +36,9 @@ from .engine_base import (
 
 WASABI_CLIENT_START_TIMEOUT_SECONDS = 180
 WASABI_COORDINATOR_START_TIMEOUT_SECONDS = 120
+WASABI_COORDINATOR_START_ATTEMPTS = 2
+WASABI_COORDINATOR_SYNC_RACE_MESSAGE = "Bitcoin Node is not fully synchronized"
+WASABI_COORDINATOR_NODE_QUIET_TIMEOUT_SECONDS = 30
 WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
 WASABI_CLIENT_DATA_PATH = "/home/wasabi/.walletwasabi/client/"
 WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
@@ -172,40 +175,58 @@ class WasabiEngine(EngineBase):
         if self.backend_architecture is None:
             self.backend_architecture = self.determine_backend_architecture()
         version = get_backend_version(self.backend_architecture)
-        wasabi_coordinator_ip, wasabi_coordinator_ports = self.driver.run(
-            "wasabi-coordinator",
-            f"{self.args.image_prefix}wasabi-coordinator:{version}",
-            ports={37128: 37128},
-            env={
-                "ADDR_BTC_NODE": self.args.btc_node_ip or self.node.internal_ip,
-                "WASABI_BIND": "http://0.0.0.0:37128",
-            },
-            cpu=4.0,
-            memory=4096,
-        )
-        sleep(1)
+        for attempt in range(1, WASABI_COORDINATOR_START_ATTEMPTS + 1):
+            self.node.wait_synchronized_quiet(
+                timeout=WASABI_COORDINATOR_NODE_QUIET_TIMEOUT_SECONDS
+            )
+            wasabi_coordinator_ip, wasabi_coordinator_ports = self.driver.run(
+                "wasabi-coordinator",
+                f"{self.args.image_prefix}wasabi-coordinator:{version}",
+                ports={37128: 37128},
+                env={
+                    "ADDR_BTC_NODE": self.args.btc_node_ip or self.node.internal_ip,
+                    "WASABI_BIND": "http://0.0.0.0:37128",
+                },
+                cpu=4.0,
+                memory=4096,
+            )
+            sleep(1)
 
-        coordinator_host, coordinator_port = self.service_endpoint(
-            wasabi_coordinator_ip, 37128, wasabi_coordinator_ports
-        )
-        self.coordinator = create_coordinator(
-            host=coordinator_host,
-            port=coordinator_port,
-            internal_ip=wasabi_coordinator_ip,
-            proxy=self.args.proxy,
-        )
-        try:
-            self.coordinator.wait_ready(timeout=WASABI_COORDINATOR_START_TIMEOUT_SECONDS)
-        except TimeoutError as exc:
+            coordinator_host, coordinator_port = self.service_endpoint(
+                wasabi_coordinator_ip, 37128, wasabi_coordinator_ports
+            )
+            self.coordinator = create_coordinator(
+                host=coordinator_host,
+                port=coordinator_port,
+                internal_ip=wasabi_coordinator_ip,
+                proxy=self.args.proxy,
+            )
             try:
-                coordinator_logs = self.driver.logs("wasabi-coordinator").strip()
-            except Exception as log_error:  # pylint: disable=broad-exception-caught
-                coordinator_logs = f"<unable to read coordinator logs: {log_error}>"
-            raise StartupError(
-                f"Wasabi coordinator failed to start: {exc}\n"
-                f"Coordinator logs:\n{coordinator_logs}"
-            ) from exc
-        log.info("- started wasabi-coordinator")
+                self.coordinator.wait_ready(timeout=WASABI_COORDINATOR_START_TIMEOUT_SECONDS)
+            except TimeoutError as exc:
+                try:
+                    coordinator_logs = self.driver.logs("wasabi-coordinator").strip()
+                except Exception as log_error:  # pylint: disable=broad-exception-caught
+                    coordinator_logs = f"<unable to read coordinator logs: {log_error}>"
+                # The coordinator asserts blocks == headers exactly once at
+                # startup, which can race a block the btc-node miner is still
+                # connecting; a restart gets a fresh attempt at the assert.
+                if (
+                    attempt < WASABI_COORDINATOR_START_ATTEMPTS
+                    and WASABI_COORDINATOR_SYNC_RACE_MESSAGE in coordinator_logs
+                ):
+                    log.warning(
+                        "- wasabi-coordinator raced a freshly mined block "
+                        f"(attempt {attempt}/{WASABI_COORDINATOR_START_ATTEMPTS}), restarting it"
+                    )
+                    self.driver.stop("wasabi-coordinator")
+                    continue
+                raise StartupError(
+                    f"Wasabi coordinator failed to start: {exc}\n"
+                    f"Coordinator logs:\n{coordinator_logs}"
+                ) from exc
+            log.info("- started wasabi-coordinator")
+            return
 
     def start_distributor(self) -> None:
         if self.node is None:

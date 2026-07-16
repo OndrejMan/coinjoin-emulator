@@ -74,10 +74,12 @@ class PodmanDriver(Driver):
         volumes: dict[str, dict[str, str]] | None = None,
         command: list[str] | None = None,
     ) -> tuple[str, dict[int, int]]:
+        self._remove_container(name)
+        # No --rm: a crashed container must keep its logs readable so failure
+        # handling (e.g. the coordinator sync-race retry) can inspect them.
         podman_command = [
             "run",
             "-d",
-            "--rm",
             "--name",
             name,
             "--hostname",
@@ -115,6 +117,14 @@ class PodmanDriver(Driver):
         if exists.returncode == 0:
             self._run(["stop", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             log.info(f"- stopped {name}")
+        self._remove_container(name)
+
+    def _remove_container(self, name: str) -> None:
+        self._run(
+            ["rm", "--force", "--ignore", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
     def download(self, name: str, src_path: str, dst_path: str) -> None:
         try:
@@ -156,7 +166,8 @@ class PodmanDriver(Driver):
     def cleanup(self, image_prefix: str = "") -> None:
         try:
             result = subprocess.run(
-                ["podman", "ps", "--format", "{{.Names}}\t{{.Image}}"],
+                # -a: without --rm on run, crashed containers linger as Exited
+                ["podman", "ps", "-a", "--format", "{{.Names}}\t{{.Image}}"],
                 check=True,
                 capture_output=True,
                 text=True,

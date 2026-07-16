@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, cast
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
+from manager.exceptions import CoinjoinEmulatorError
+
 if TYPE_CHECKING:
     from kubernetes.client import CoreV1Api as CoreV1ApiClass
 
@@ -309,6 +311,17 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(ports, {})
         self.assertEqual(created_pods[0]["kind"], "Pod")
 
+    @staticmethod
+    def _api_error(status: int) -> Exception:
+        module = importlib.import_module("manager.driver.kubernetes")
+        error = cast(Exception, module.ApiException())
+        setattr(error, "status", status)
+        return error
+
+    @classmethod
+    def _not_found_error(cls) -> Exception:
+        return cls._api_error(404)
+
     def test_stop_deletes_service_with_container_dns_name(self) -> None:
         KubernetesDriver, _ = _load_kubernetes_symbols()
         deleted_pods: list[str] = []
@@ -316,6 +329,8 @@ class KubernetesDriverTest(TestCase):
         kube_client = SimpleNamespace(
             delete_namespaced_pod=lambda **kwargs: deleted_pods.append(cast(str, kwargs["name"])),
             delete_namespaced_service=lambda **kwargs: deleted_services.append(cast(str, kwargs["name"])),
+            read_namespaced_pod=Mock(side_effect=self._not_found_error()),
+            read_namespaced_service=Mock(side_effect=self._not_found_error()),
         )
 
         with (
@@ -330,6 +345,159 @@ class KubernetesDriverTest(TestCase):
 
         self.assertEqual(deleted_pods, ["btc-node"])
         self.assertEqual(deleted_services, ["btc-node"])
+
+    def test_stop_waits_until_pod_and_service_are_deleted(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+        terminating_pod = SimpleNamespace(status=SimpleNamespace(phase="Terminating"))
+        read_pod = Mock(side_effect=[terminating_pod, self._not_found_error()])
+        read_service = Mock(side_effect=self._not_found_error())
+        kube_client = SimpleNamespace(
+            delete_namespaced_pod=Mock(),
+            delete_namespaced_service=Mock(),
+            read_namespaced_pod=read_pod,
+            read_namespaced_service=read_service,
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                return_value=kube_client,
+            ),
+            patch("manager.driver.kubernetes.sleep"),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            driver.stop("wasabi-coordinator")
+
+        self.assertEqual(read_pod.call_count, 2)
+        read_service.assert_called_once()
+
+    def test_stop_fails_when_pod_deletion_never_completes(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+        stuck_pod = SimpleNamespace(status=SimpleNamespace(phase="Terminating"))
+        kube_client = SimpleNamespace(
+            delete_namespaced_pod=Mock(),
+            delete_namespaced_service=Mock(),
+            read_namespaced_pod=Mock(return_value=stuck_pod),
+            read_namespaced_service=Mock(side_effect=self._not_found_error()),
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                return_value=kube_client,
+            ),
+            patch("manager.driver.kubernetes.sleep"),
+            patch("manager.driver.kubernetes.monotonic", side_effect=[0, 1, 130]),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            with self.assertRaisesRegex(
+                CoinjoinEmulatorError, "still present at the .*s deletion deadline"
+            ):
+                driver.stop("wasabi-coordinator")
+
+    def test_stop_retries_transient_delete_api_error(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+        delete_pod = Mock(side_effect=[self._api_error(500), None])
+        kube_client = SimpleNamespace(
+            delete_namespaced_pod=delete_pod,
+            delete_namespaced_service=Mock(),
+            read_namespaced_pod=Mock(side_effect=self._not_found_error()),
+            read_namespaced_service=Mock(side_effect=self._not_found_error()),
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                return_value=kube_client,
+            ),
+            patch("manager.driver.kubernetes.sleep"),
+            patch("manager.driver.kubernetes.monotonic", side_effect=[0, 1, 2]),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            driver.stop("wasabi-coordinator")
+
+        self.assertEqual(delete_pod.call_count, 2)
+
+    def test_stop_raises_non_transient_delete_api_error_immediately(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+        delete_service = Mock()
+        read_pod = Mock()
+        kube_client = SimpleNamespace(
+            delete_namespaced_pod=Mock(side_effect=self._api_error(403)),
+            delete_namespaced_service=delete_service,
+            read_namespaced_pod=read_pod,
+            read_namespaced_service=Mock(),
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                return_value=kube_client,
+            ),
+            patch("manager.driver.kubernetes.monotonic", return_value=0),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            with self.assertRaisesRegex(
+                CoinjoinEmulatorError, "Failed to delete Kubernetes pod.*API status 403"
+            ):
+                driver.stop("wasabi-coordinator")
+
+        delete_service.assert_not_called()
+        read_pod.assert_not_called()
+
+    def test_stop_retries_transient_deletion_status_read_error(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+        read_pod = Mock(side_effect=[self._api_error(500), self._not_found_error()])
+        kube_client = SimpleNamespace(
+            delete_namespaced_pod=Mock(),
+            delete_namespaced_service=Mock(),
+            read_namespaced_pod=read_pod,
+            read_namespaced_service=Mock(side_effect=self._not_found_error()),
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                return_value=kube_client,
+            ),
+            patch("manager.driver.kubernetes.sleep"),
+            patch("manager.driver.kubernetes.monotonic", side_effect=[0, 1, 2]),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            driver.stop("wasabi-coordinator")
+
+        self.assertEqual(read_pod.call_count, 2)
+
+    def test_stop_raises_non_transient_deletion_status_read_error_immediately(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+        read_service = Mock()
+        kube_client = SimpleNamespace(
+            delete_namespaced_pod=Mock(),
+            delete_namespaced_service=Mock(),
+            read_namespaced_pod=Mock(side_effect=self._api_error(403)),
+            read_namespaced_service=read_service,
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                return_value=kube_client,
+            ),
+            patch("manager.driver.kubernetes.monotonic", side_effect=[0, 1]),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            with self.assertRaisesRegex(
+                CoinjoinEmulatorError, "Failed to verify deletion of Kubernetes pod.*API status 403"
+            ):
+                driver.stop("wasabi-coordinator")
+
+        read_service.assert_not_called()
 
     def test_upload_reports_silent_remote_command_failure(self) -> None:
         KubernetesDriver, _ = _load_kubernetes_symbols()

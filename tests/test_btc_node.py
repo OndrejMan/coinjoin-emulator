@@ -163,7 +163,7 @@ class BtcNodeTest(unittest.TestCase):
         node = BtcNode(host="btc-node", port=18443)
 
         with (
-            patch("manager.btc_node.monotonic", side_effect=[0, 0]),
+            patch("manager.btc_node.monotonic", side_effect=[0, 0, 0.5]),
             patch("manager.btc_node.sleep"),
             patch.object(node, "get_block_count", return_value=201),
             patch.object(
@@ -176,10 +176,12 @@ class BtcNodeTest(unittest.TestCase):
                 },
             ),
             patch.object(node, "ensure_funding_wallet_ready") as ensure_wallet,
+            patch.object(node, "wait_fee_building_complete") as fee_building,
         ):
             node.wait_ready(timeout=1)
 
         ensure_wallet.assert_called_once_with()
+        fee_building.assert_called_once_with(timeout=0.5)
 
     def test_wait_ready_rejects_initial_block_download(self) -> None:
         node = BtcNode(host="btc-node", port=18443)
@@ -258,6 +260,118 @@ class BtcNodeTest(unittest.TestCase):
         with patch("manager.btc_node.monotonic", side_effect=[0, 1]):
             with self.assertRaisesRegex(TimeoutError, "last block count: None"):
                 node.wait_ready(timeout=1)
+
+    def test_fee_building_complete_waits_for_estimate_then_quiet_node(self) -> None:
+        node = BtcNode(host="btc-node", port=18443)
+
+        with (
+            patch("manager.btc_node.monotonic", side_effect=[0, 0.1, 0.2]),
+            patch("manager.btc_node.sleep"),
+            patch.object(node, "estimate_smart_fee", return_value={"feerate": 0.0001}),
+            patch.object(node, "wait_synchronized_quiet") as quiet,
+        ):
+            node.wait_fee_building_complete(timeout=10)
+
+        quiet.assert_called_once_with(timeout=9.8)
+
+    def test_fee_building_complete_times_out_without_fee_estimate(self) -> None:
+        node = BtcNode(host="btc-node", port=18443)
+
+        with (
+            patch("manager.btc_node.monotonic", side_effect=[0, 0.5, 11]),
+            patch("manager.btc_node.sleep"),
+            patch.object(
+                node,
+                "estimate_smart_fee",
+                return_value={"errors": ["Insufficient data or no feerate found"]},
+            ),
+        ):
+            with self.assertRaisesRegex(TimeoutError, "no smart fee estimate after 10s"):
+                node.wait_fee_building_complete(timeout=10)
+
+    def test_synchronized_quiet_requires_consecutive_samples_at_one_height(self) -> None:
+        node = BtcNode(host="btc-node", port=18443)
+        synchronized = {
+            "blocks": 210,
+            "headers": 210,
+            "initialblockdownload": False,
+            "verificationprogress": 1.0,
+        }
+
+        with (
+            patch("manager.btc_node.monotonic", side_effect=[0, 1, 2, 3, 4, 5, 6]),
+            patch("manager.btc_node.sleep"),
+            patch.object(node, "get_blockchain_info", return_value=synchronized) as info,
+        ):
+            node.wait_synchronized_quiet(timeout=30)
+
+        self.assertEqual(info.call_count, 6)
+
+    def test_synchronized_quiet_restarts_streak_after_rpc_error(self) -> None:
+        node = BtcNode(host="btc-node", port=18443)
+        synchronized = {
+            "blocks": 210,
+            "headers": 210,
+            "initialblockdownload": False,
+            "verificationprogress": 1.0,
+        }
+
+        with (
+            patch("manager.btc_node.monotonic", side_effect=list(range(14))),
+            patch("manager.btc_node.sleep"),
+            patch.object(
+                node,
+                "get_blockchain_info",
+                side_effect=[synchronized] * 5 + [RpcError("RPC unavailable")] + [synchronized] * 6,
+            ) as info,
+        ):
+            node.wait_synchronized_quiet(timeout=100)
+
+        self.assertEqual(info.call_count, 12)
+
+    def test_synchronized_quiet_restarts_streak_after_new_block(self) -> None:
+        node = BtcNode(host="btc-node", port=18443)
+
+        def at_height(height: int) -> dict[str, object]:
+            return {
+                "blocks": height,
+                "headers": height,
+                "initialblockdownload": False,
+                "verificationprogress": 1.0,
+            }
+
+        with (
+            patch("manager.btc_node.monotonic", side_effect=list(range(13))),
+            patch("manager.btc_node.sleep"),
+            patch.object(
+                node,
+                "get_blockchain_info",
+                side_effect=[at_height(210)] * 5 + [at_height(211)] * 6,
+            ) as info,
+        ):
+            node.wait_synchronized_quiet(timeout=100)
+
+        self.assertEqual(info.call_count, 11)
+
+    def test_synchronized_quiet_times_out_while_node_stays_unsynchronized(self) -> None:
+        node = BtcNode(host="btc-node", port=18443)
+
+        with (
+            patch("manager.btc_node.monotonic", side_effect=[0, 1, 11]),
+            patch("manager.btc_node.sleep"),
+            patch.object(
+                node,
+                "get_blockchain_info",
+                return_value={
+                    "blocks": 210,
+                    "headers": 211,
+                    "initialblockdownload": False,
+                    "verificationprogress": 1.0,
+                },
+            ),
+        ):
+            with self.assertRaisesRegex(TimeoutError, "not quietly synchronized after 10s"):
+                node.wait_synchronized_quiet(timeout=10)
 
 
 if __name__ == "__main__":

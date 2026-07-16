@@ -19,7 +19,7 @@ from kubernetes.config.config_exception import ConfigException
 from kubernetes.stream import portforward, stream
 
 from manager import log_output as log
-from manager.exceptions import StartupError
+from manager.exceptions import CoinjoinEmulatorError, StartupError
 
 from . import Driver, extract_tar
 
@@ -38,6 +38,8 @@ UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_UPLOAD_TIMEOUT", "120"
 UPLOAD_COMMAND_CHUNK_SIZE = 16 * 1024
 NAMESPACE_CREATE_RETRY_SECONDS = 60
 POD_IP_TRANSIENT_API_STATUSES = {408, 409, 429, 500, 502, 503, 504}
+RESOURCE_DELETE_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DELETE_TIMEOUT", "120"))
+RESOURCE_DELETE_TRANSIENT_API_STATUSES = {408, 409, 429, 500, 502, 503, 504}
 
 
 class SocketLike(Protocol):
@@ -52,6 +54,16 @@ class PodListLike(Protocol):
 
 class EventListLike(Protocol):
     items: list[CoreV1Event]
+
+
+class ResourceReader(Protocol):
+    def __call__(self, name: str, namespace: str) -> object: ...
+
+
+class ResourceReadClient(Protocol):
+    def read_namespaced_pod(self, name: str, namespace: str) -> object: ...
+
+    def read_namespaced_service(self, name: str, namespace: str) -> object: ...
 
 
 class DiagnosticsClient(Protocol):
@@ -447,15 +459,100 @@ class KubernetesDriver(Driver):
 
     def stop(self, name: str) -> None:
         self.close_port_forwards(name)
-        try:
-            self.client.delete_namespaced_pod(name=name, namespace=self._namespace)
-        except ApiException:
-            pass
-        try:
-            self.client.delete_namespaced_service(name=name, namespace=self._namespace)
-        except ApiException:
-            pass
+        deadline = monotonic() + RESOURCE_DELETE_TIMEOUT_SECONDS
+        self._delete_resource(
+            "pod",
+            name,
+            deadline,
+        )
+        self._delete_resource(
+            "service",
+            name,
+            deadline,
+        )
+        self._wait_removed(name, deadline=deadline)
         self.managed_pod_names.discard(name)
+
+    def _delete_resource(
+        self,
+        resource_kind: str,
+        name: str,
+        deadline: float,
+    ) -> None:
+        while True:
+            try:
+                if resource_kind == "pod":
+                    self.client.delete_namespaced_pod(name=name, namespace=self._namespace)
+                elif resource_kind == "service":
+                    self.client.delete_namespaced_service(name=name, namespace=self._namespace)
+                else:
+                    raise ValueError(f"Unsupported Kubernetes resource kind: {resource_kind}")
+                return
+            except ApiException as error:
+                status = getattr(error, "status", None)
+                if status == 404:
+                    return
+                if status not in RESOURCE_DELETE_TRANSIENT_API_STATUSES:
+                    raise CoinjoinEmulatorError(
+                        f"Failed to delete Kubernetes {resource_kind} {name}: "
+                        f"API status {status}: {error}"
+                    ) from error
+                if monotonic() >= deadline:
+                    raise CoinjoinEmulatorError(
+                        f"Timed out deleting Kubernetes {resource_kind} {name} after "
+                        f"{RESOURCE_DELETE_TIMEOUT_SECONDS}s (last API status: {status})"
+                    ) from error
+                log.warning(
+                    f"- transient Kubernetes API status {status} while deleting "
+                    f"{resource_kind} {name}; retrying"
+                )
+                sleep(1)
+
+    def _wait_removed(
+        self,
+        name: str,
+        timeout: int = RESOURCE_DELETE_TIMEOUT_SECONDS,
+        *,
+        deadline: float | None = None,
+    ) -> None:
+        """Block until the pod and service are gone.
+
+        Kubernetes deletes asynchronously; recreating the same name while the
+        old resources are still terminating fails with a 409 conflict.
+        """
+        # The generated Kubernetes client accepts these methods dynamically,
+        # while its bundled type information does not expose their full surface.
+        reader_client = cast(ResourceReadClient, self.client)
+        if deadline is None:
+            deadline = monotonic() + timeout
+        while monotonic() < deadline:
+            if self._resource_gone(reader_client.read_namespaced_pod, "pod", name) and self._resource_gone(
+                reader_client.read_namespaced_service, "service", name
+            ):
+                return
+            sleep(1)
+        raise CoinjoinEmulatorError(
+            f"Kubernetes pod/service {name} was still present at the {timeout}s deletion deadline"
+        )
+
+    def _resource_gone(self, reader: ResourceReader, resource_kind: str, name: str) -> bool:
+        try:
+            reader(name=name, namespace=self._namespace)
+        except ApiException as error:
+            status = getattr(error, "status", None)
+            if status == 404:
+                return True
+            if status in RESOURCE_DELETE_TRANSIENT_API_STATUSES:
+                log.warning(
+                    f"- transient Kubernetes API status {status} while checking deletion "
+                    f"of {resource_kind} {name}; retrying"
+                )
+                return False
+            raise CoinjoinEmulatorError(
+                f"Failed to verify deletion of Kubernetes {resource_kind} {name}: "
+                f"API status {status}: {error}"
+            ) from error
+        return False
 
     @staticmethod
     def _container_state_summary(state: object) -> str:

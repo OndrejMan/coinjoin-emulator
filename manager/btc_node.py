@@ -10,6 +10,9 @@ from .exceptions import RpcError
 
 WALLET = "wallet"
 FUNDING_WALLET_TX_FEE = 0.0001
+FEE_ESTIMATION_CONF_TARGET = 6
+QUIET_SAMPLE_COUNT = 6
+QUIET_SAMPLE_INTERVAL_SECONDS = 0.5
 
 
 class BtcNode:
@@ -109,6 +112,13 @@ class BtcNode:
 
         return self.get_block_count() - initial_block_count == count
 
+    def estimate_smart_fee(self, conf_target: int = FEE_ESTIMATION_CONF_TARGET) -> dict[str, object]:
+        request: dict[str, object] = {
+            "method": "estimatesmartfee",
+            "params": [conf_target],
+        }
+        return cast(dict[str, object], self._rpc(request))
+
     def fund_address(self, address: str, amount: int | float) -> None:
         request: dict[str, object] = {
             "method": "sendtoaddress",
@@ -116,7 +126,7 @@ class BtcNode:
         }
         self._rpc(request, WALLET)
 
-    def wait_ready(self, timeout: int = 300) -> None:
+    def wait_ready(self, timeout: int = 600) -> None:
         deadline = monotonic() + timeout
         last_error = None
         last_block_count = None
@@ -157,8 +167,78 @@ class BtcNode:
                 f"btc-node RPC at {self.host}:{self.port} was not ready after {timeout}s ({detail})"
             )
 
-        # wait for the fee-building transactions
-        sleep(20)
+        self.wait_fee_building_complete(timeout=max(0.0, deadline - monotonic()))
+
+    def wait_fee_building_complete(self, timeout: float = 300) -> None:
+        """Wait until the node's startup fee-building phase stops burst-mining.
+
+        mine.sh mines a block every couple of seconds until estimatesmartfee
+        returns an estimate, then a final 6-block burst. Wait for a fee
+        estimate, then for the node to be quietly synchronized.
+        """
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
+            try:
+                if self.estimate_smart_fee().get("feerate") is not None:
+                    break
+            except (requests.exceptions.RequestException, RpcError):
+                pass
+            sleep(1)
+        else:
+            raise TimeoutError(
+                f"btc-node at {self.host}:{self.port} produced no smart fee estimate after {timeout:.0f}s"
+            )
+
+        self.wait_synchronized_quiet(timeout=max(0.0, deadline - monotonic()))
+
+    def wait_synchronized_quiet(self, timeout: float = 30) -> None:
+        """Wait for consecutive fully synchronized RPC samples at one block height.
+
+        Wasabi's backend and coordinator assert blocks == headers exactly once
+        at startup, so a start attempt must not overlap a block the node is
+        still connecting. A new block or an RPC error resets the streak: an
+        unreachable node is not a quiet node.
+        """
+        deadline = monotonic() + timeout
+        streak = 0
+        quiet_height: int | None = None
+        last_state = "no samples"
+        while monotonic() < deadline:
+            try:
+                blockchain_info = self.get_blockchain_info()
+                blocks = blockchain_info.get("blocks")
+                verification_progress = blockchain_info.get("verificationprogress")
+                synchronized = (
+                    isinstance(blocks, int)
+                    and blocks == blockchain_info.get("headers")
+                    and blockchain_info.get("initialblockdownload") is False
+                    and isinstance(verification_progress, (int, float))
+                    and verification_progress >= 1.0
+                )
+                if synchronized and blocks == quiet_height:
+                    streak += 1
+                elif synchronized:
+                    streak = 1
+                    quiet_height = cast(int, blocks)
+                else:
+                    streak = 0
+                    quiet_height = None
+                if streak >= QUIET_SAMPLE_COUNT:
+                    return
+                last_state = (
+                    f"blocks={blocks} headers={blockchain_info.get('headers')} "
+                    f"initial block download={blockchain_info.get('initialblockdownload')} "
+                    f"verification progress={verification_progress}"
+                )
+            except (requests.exceptions.RequestException, RpcError) as exc:
+                streak = 0
+                quiet_height = None
+                last_state = f"rpc error: {exc}"
+            sleep(QUIET_SAMPLE_INTERVAL_SECONDS)
+        raise TimeoutError(
+            f"btc-node at {self.host}:{self.port} was not quietly synchronized "
+            f"after {timeout:.0f}s ({last_state})"
+        )
 
     def ensure_funding_wallet_ready(self) -> None:
         loaded_wallets = cast(list[str], self._rpc({"method": "listwallets", "params": []}))

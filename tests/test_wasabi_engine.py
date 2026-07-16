@@ -38,7 +38,9 @@ def configured_engine(architecture: BackendArchitecture) -> tuple[WasabiEngine, 
     driver.run.return_value = ("10.42.0.20", {37128: 30123})
     engine = WasabiEngine(engine_args(), driver)
     engine.backend_architecture = architecture
-    engine.node = cast(BtcNode, SimpleNamespace(internal_ip="10.42.0.2"))
+    node = Mock()
+    node.internal_ip = "10.42.0.2"
+    engine.node = cast(BtcNode, node)
     engine.backend = SimpleNamespace(internal_ip="10.42.0.3")
     distributor = Mock()
     distributor.wait_wallet.return_value = True
@@ -141,6 +143,48 @@ def test_coordinator_timeout_includes_container_logs() -> None:
     engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
     coordinator = Mock()
     coordinator.wait_ready.side_effect = TimeoutError("coordinator endpoint unavailable")
+    driver.logs.return_value = "CRITICAL Program.Main (20) System.IO.IOException: disk full"
+
+    with (
+        patch("manager.engine.wasabi_engine.sleep"),
+        patch("manager.engine.wasabi_engine.create_coordinator", return_value=coordinator),
+    ):
+        with pytest.raises(StartupError, match="disk full"):
+            engine.start_wasabi_coordinator()
+
+    coordinator.wait_ready.assert_called_once_with(
+        timeout=WASABI_COORDINATOR_START_TIMEOUT_SECONDS
+    )
+    driver.logs.assert_called_once_with("wasabi-coordinator")
+    driver.stop.assert_not_called()
+    assert WASABI_COORDINATOR_START_TIMEOUT_SECONDS == 120
+
+
+def test_coordinator_restarts_once_after_node_sync_race() -> None:
+    engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
+    coordinator = Mock()
+    coordinator.wait_ready.side_effect = [TimeoutError("coordinator endpoint unavailable"), None]
+    driver.logs.return_value = "CRITICAL Bitcoin Node is not fully synchronized."
+
+    with (
+        patch("manager.engine.wasabi_engine.sleep"),
+        patch("manager.engine.wasabi_engine.create_coordinator", return_value=coordinator),
+    ):
+        engine.start_wasabi_coordinator()
+
+    assert coordinator.wait_ready.call_count == 2
+    assert engine.coordinator is coordinator
+    lifecycle_calls = [name for name, _, _ in driver.method_calls if name in {"run", "stop"}]
+    assert lifecycle_calls == ["run", "stop", "run"]
+    driver.stop.assert_called_once_with("wasabi-coordinator")
+    node = cast(Mock, engine.node)
+    assert node.wait_synchronized_quiet.call_count == 2
+
+
+def test_coordinator_sync_race_fails_after_second_attempt() -> None:
+    engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
+    coordinator = Mock()
+    coordinator.wait_ready.side_effect = TimeoutError("coordinator endpoint unavailable")
     driver.logs.return_value = "CRITICAL Bitcoin Node is not fully synchronized."
 
     with (
@@ -150,11 +194,9 @@ def test_coordinator_timeout_includes_container_logs() -> None:
         with pytest.raises(StartupError, match="Bitcoin Node is not fully synchronized"):
             engine.start_wasabi_coordinator()
 
-    coordinator.wait_ready.assert_called_once_with(
-        timeout=WASABI_COORDINATOR_START_TIMEOUT_SECONDS
-    )
-    driver.logs.assert_called_once_with("wasabi-coordinator")
-    assert WASABI_COORDINATOR_START_TIMEOUT_SECONDS == 120
+    assert driver.run.call_count == 2
+    assert coordinator.wait_ready.call_count == 2
+    driver.stop.assert_called_once_with("wasabi-coordinator")
 
 
 def test_run_engine_mines_settlement_blocks_after_limit() -> None:
