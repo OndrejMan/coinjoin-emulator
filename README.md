@@ -46,8 +46,8 @@ Scenario definition files can be passed to the simulation script using the `--sc
 The fields are as follows:
 - `name` field is the name of the scenario used for output logs.
 - `rounds` field is the number of coinjoin rounds after which the simulation terminates. If set to 0, the simulation will run indefinitely.
-  A round is *counted* differently per engine: the Wasabi engine counts a round when the coordinator reports it in the `TransactionSigning`
-  phase (split architecture) or when its id appears in the backend's `CoinJoinIdStore.txt` (legacy architecture); the JoinMarket engine
+  A round is *counted* differently per engine: the Wasabi engine counts a round when the coordinator logs a successful broadcast
+  (split architecture) or when its id appears in the backend's `CoinJoinIdStore.txt` (legacy architecture); the JoinMarket engine
   counts a round when a taker's coinjoin transaction is confirmed on chain. The run loop exits as soon as the count reaches `rounds`,
   then mines a few settlement blocks so the final round's transaction can still confirm before logs are stored.
 - `blocks` field is the number of mined blocks after which the simulation terminates. If set to 0, the simulation will run indefinitely.

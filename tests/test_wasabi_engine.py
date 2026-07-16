@@ -14,6 +14,7 @@ from manager.engine.wasabi_engine import (
     WASABI_COORDINATOR_START_TIMEOUT_SECONDS,
     WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT,
     WasabiEngine,
+    version_at_least,
 )
 from manager.exceptions import StartupError
 from manager.wasabi_backend_factory import BackendArchitecture
@@ -119,6 +120,23 @@ def test_split_round_count_does_not_count_signing_or_failed_rounds() -> None:
     assert engine._get_current_round() == 0
 
 
+def test_legacy_round_count_allows_lazily_created_store() -> None:
+    engine, driver, _ = configured_engine(BackendArchitecture.LEGACY)
+    driver.peek.return_value = ""
+
+    assert engine._get_current_round() == 0
+    driver.peek.assert_called_once_with(
+        "wasabi-backend",
+        "/home/wasabi/.walletwasabi/backend/WabiSabi/CoinJoinIdStore.txt",
+        missing_ok=True,
+    )
+
+
+@pytest.mark.parametrize("version", ["2.0.3", "2.0.3-rc1", "2.0.10"])
+def test_version_at_least_keeps_numeric_release_prefix(version: str) -> None:
+    assert version_at_least(version, "2.0.3")
+
+
 def test_coordinator_timeout_includes_container_logs() -> None:
     engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
     coordinator = Mock()
@@ -171,6 +189,7 @@ def test_split_log_capture_declares_exact_coordinator_sources(tmp_path: Path) ->
     assert evidence["complete"] is True
     assert evidence["engine"] == "wasabi"
     assert evidence["sources"] == ["wasabi-coordinator/Logs.txt"]
+    assert evidence["positive_count"] == 0
 
 
 def test_split_log_capture_is_incomplete_when_coordinator_download_fails(tmp_path: Path) -> None:

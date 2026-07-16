@@ -20,6 +20,7 @@ The consumer-facing semantics are documented in
   "complete": true,
   "reason": null,
   "positive_rule": "exported transaction matches a reconciled JoinMarket round event",
+  "positive_count": 1,
   "sources": [
     {
       "path": "joinmarket_round_events.json",
@@ -40,6 +41,9 @@ The consumer-facing semantics are documented in
 - `reason`: `null` when complete, otherwise why capture is not trustworthy.
 - `positive_rule`: the rule a consumer applies to the sources to derive
   positive labels (informational; the consumer implements the rule itself).
+- `positive_count`: the number of unique positive transaction ids derived by
+  the producer. Consumers compare their parsed count with this value; zero is
+  authoritative and does not need transaction-shape guesswork.
 - `sources`: one record per evidence file, with `path` relative to `data/`
   (forward slashes), exact `size_bytes`, and the SHA-256 of the file content.
   A `complete` manifest with an empty `sources` list is rewritten as
@@ -60,10 +64,10 @@ The consumer-facing semantics are documented in
 - **Wasabi, legacy combined backend (2.0.x)**: every `Logs.txt` under the
   downloaded `wasabi-backend/` tree. The positive rule in both Wasabi cases is
   a `Round (<id>): Successfully broadcast the coinjoin: <txid>.` record.
-  The consumer accepts case/spacing drift and the legacy `broadcasted` wording.
-  Because no captured 2.0.x log fixture is available, it additionally fails
-  closed if no broadcast is parsed while exported blocks contain a transaction
-  with at least five inputs.
+  The consumer accepts case/spacing drift, an omitted `Round (...)` prefix,
+  trailing text, and the legacy `broadcasted` wording. For older manifests
+  without `positive_count`, it additionally fails closed if no broadcast is
+  parsed while exported blocks contain a transaction with at least five inputs.
 
 ## Writer guarantees
 
@@ -82,7 +86,7 @@ schema version, engine match, `complete: true`, non-empty `sources`, every
 source present with matching size and SHA-256, and every source name allowed
 for the engine (`joinmarket_round_events.json` / `Logs.txt`). A verified but
 logically empty source remains valid zero-positive evidence. For Wasabi, that
-zero-positive interpretation is rejected when exported blocks contain a
-transaction with at least five inputs. Producer-positive txids must also all be
+zero-positive interpretation from a legacy manifest is rejected when exported
+blocks contain a transaction with at least five inputs. Producer-positive txids must also all be
 present in the exported block set. A Wasabi parseability candidate or unmatched
 positive yields unknown labels and no classification metrics.

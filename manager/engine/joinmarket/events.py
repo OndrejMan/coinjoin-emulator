@@ -23,6 +23,11 @@ class JoinMarketRoundEventsMixin:
             "complete": True,
             "reason": None,
             "positive_rule": "exported transaction matches a reconciled JoinMarket round event",
+            "positive_count": len({
+                label["txid"]
+                for label in labels
+                if label.get("status") == "confirmed" and label.get("txid")
+            }),
             "sources": ["joinmarket_round_events.json"],
         }
 

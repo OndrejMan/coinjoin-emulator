@@ -123,8 +123,14 @@ class DockerDriver(Driver):
             # error here made incomplete runs look successful.
             raise RuntimeError(f"Failed to download {name}:{src_path} to {dst_path}: {error}") from error
 
-    def peek(self, name: str, path: str) -> str:
-        stream, _ = self.client.containers.get(name).get_archive(path)
+    def peek(self, name: str, path: str, *, missing_ok: bool = False) -> str:
+        container = self.client.containers.get(name)
+        try:
+            stream, _ = container.get_archive(path)
+        except docker.errors.NotFound:
+            if missing_ok:
+                return ""
+            raise
 
         fo = BytesIO()
         for d in stream:

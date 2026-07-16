@@ -137,8 +137,13 @@ class PodmanDriver(Driver):
                 message = f"{message}: {details}"
             raise CoinjoinEmulatorError(message) from error
 
-    def peek(self, name: str, path: str) -> str:
-        result = self._run(["exec", name, "cat", path], capture_output=True, text=True)
+    def peek(self, name: str, path: str, *, missing_ok: bool = False) -> str:
+        command = ["exec", name]
+        if missing_ok:
+            command.extend(["sh", "-c", 'if [ -f "$1" ]; then cat -- "$1"; fi', "sh", path])
+        else:
+            command.extend(["cat", path])
+        result = self._run(command, capture_output=True, text=True)
         return result.stdout
 
     def logs(self, name: str) -> str:

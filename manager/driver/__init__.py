@@ -60,7 +60,7 @@ class Driver(ABC):
         pass
 
     @abstractmethod
-    def peek(self, name: str, path: str) -> str:
+    def peek(self, name: str, path: str, *, missing_ok: bool = False) -> str:
         pass
 
     @abstractmethod

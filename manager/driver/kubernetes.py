@@ -5,6 +5,7 @@ import shlex
 import socket
 import tarfile
 import threading
+import uuid
 from functools import cached_property
 from io import BytesIO
 from time import monotonic, sleep
@@ -34,6 +35,7 @@ POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", 
 DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
 PEEK_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_PEEK_TIMEOUT", "60"))
 UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_UPLOAD_TIMEOUT", "120"))
+UPLOAD_COMMAND_CHUNK_SIZE = 16 * 1024
 NAMESPACE_CREATE_RETRY_SECONDS = 60
 POD_IP_TRANSIENT_API_STATUSES = {408, 409, 429, 500, 502, 503, 504}
 
@@ -588,8 +590,12 @@ class KubernetesDriver(Driver):
             extract_tar(tar, dst_path)
         resp.close()
 
-    def peek(self, name: str, path: str) -> str:
-        exec_command = ["cat", path]
+    def peek(self, name: str, path: str, *, missing_ok: bool = False) -> str:
+        exec_command = (
+            ["sh", "-c", 'if [ -f "$1" ]; then cat -- "$1"; fi', "sh", path]
+            if missing_ok
+            else ["cat", path]
+        )
         resp = stream(
             self._new_client().connect_get_namespaced_pod_exec,
             name,
@@ -627,47 +633,71 @@ class KubernetesDriver(Driver):
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:tar") as tar:
             tar.add(src_path, arcname=dst_path)
-        # Streaming over exec stdin cannot signal EOF reliably, so a
-        # previously used write-then-close approach raced tar's extraction.
-        # Uploads are small (config files); embed them in the command instead
-        # and wait for the exec to finish.
         payload = base64.b64encode(buf.getvalue()).decode("ascii")
-        exec_command = ["sh", "-c", f"printf '%s' '{payload}' | base64 -d | tar xf - -C /"]
-        resp = stream(
-            self._new_client().connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=False,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
-
-        stderr_chunks: list[str] = []
+        remote_payload = f"/tmp/coinjoin-emulator-upload-{uuid.uuid4().hex}.b64"
         deadline = monotonic() + UPLOAD_TIMEOUT_SECONDS
-        while resp.is_open():
-            if monotonic() >= deadline:
-                resp.close()
-                raise TimeoutError(f"Timed out uploading {src_path} to {name}:{dst_path}")
-            resp.update(timeout=1)
-            if resp.peek_stdout():
-                log.debug(f"STDOUT: {resp.read_stdout()}")
-            if resp.peek_stderr():
-                stderr_chunks.append(resp.read_stderr())
-        # The Kubernetes client exposes this runtime property, but its bundled
-        # WSClient type stub omits it.
-        returncode = getattr(resp, "returncode", None)
-        resp.close()
-        stderr = "".join(stderr_chunks)
-        if returncode != 0:
-            details = f": {stderr.strip()}" if stderr.strip() else ""
-            raise RuntimeError(
-                f"upload to {name}:{dst_path} failed with exit code {returncode}{details}"
+
+        def exec_checked(exec_command: list[str]) -> None:
+            resp = stream(
+                self._new_client().connect_get_namespaced_pod_exec,
+                name,
+                self.namespace,
+                command=exec_command,
+                stderr=True,
+                stdin=False,
+                stdout=True,
+                tty=False,
+                _preload_content=False,
             )
-        if stderr.strip():
-            raise RuntimeError(f"upload to {name}:{dst_path} wrote stderr: {stderr.strip()}")
+            stderr_chunks: list[str] = []
+            while resp.is_open():
+                if monotonic() >= deadline:
+                    resp.close()
+                    raise TimeoutError(f"Timed out uploading {src_path} to {name}:{dst_path}")
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    log.debug(f"STDOUT: {resp.read_stdout()}")
+                if resp.peek_stderr():
+                    stderr_chunks.append(resp.read_stderr())
+            # Older kubernetes-client WSClient versions do not expose a
+            # returncode. In that case stderr remains the available failure
+            # signal; do not turn a successful command into exit code None.
+            returncode = getattr(resp, "returncode", None)
+            resp.close()
+            stderr = "".join(stderr_chunks)
+            if returncode not in (None, 0):
+                details = f": {stderr.strip()}" if stderr.strip() else ""
+                raise RuntimeError(
+                    f"upload to {name}:{dst_path} failed with exit code {returncode}{details}"
+                )
+            if stderr.strip():
+                raise RuntimeError(f"upload to {name}:{dst_path} wrote stderr: {stderr.strip()}")
+
+        try:
+            for offset in range(0, len(payload), UPLOAD_COMMAND_CHUNK_SIZE):
+                chunk = payload[offset:offset + UPLOAD_COMMAND_CHUNK_SIZE]
+                redirect = ">" if offset == 0 else ">>"
+                exec_checked([
+                    "sh",
+                    "-c",
+                    f'printf "%s" "$1" {redirect} "$2"',
+                    "sh",
+                    chunk,
+                    remote_payload,
+                ])
+            exec_checked([
+                "sh",
+                "-c",
+                'base64 -d "$1" | tar xf - -C /; status=$?; rm -f -- "$1"; exit "$status"',
+                "sh",
+                remote_payload,
+            ])
+        except Exception:
+            try:
+                exec_checked(["rm", "-f", "--", remote_payload])
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass
+            raise
 
     def cleanup(self, image_prefix: str = "") -> None:
         self.close_port_forwards()

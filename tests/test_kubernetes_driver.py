@@ -364,6 +364,47 @@ class KubernetesDriverTest(TestCase):
 
         response.close.assert_called_once_with()
 
+    def test_upload_accepts_client_without_returncode_property(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+
+        def successful_response() -> Mock:
+            response = Mock(spec=[
+                "is_open",
+                "update",
+                "peek_stdout",
+                "read_stdout",
+                "peek_stderr",
+                "read_stderr",
+                "close",
+            ])
+            response.is_open.side_effect = [True, False]
+            response.peek_stdout.return_value = False
+            response.peek_stderr.return_value = False
+            return response
+
+        responses = [successful_response(), successful_response()]
+        kube_client = SimpleNamespace(connect_get_namespaced_pod_exec=object())
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch("manager.driver.kubernetes.client.CoreV1Api", return_value=kube_client),
+            patch("manager.driver.kubernetes.stream", side_effect=responses) as stream_mock,
+            TemporaryDirectory() as directory,
+        ):
+            source = Path(directory) / "Config.json"
+            source.write_text("{}", encoding="utf-8")
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+
+            driver.upload(
+                "wasabi-client-000",
+                str(source),
+                "/root/.walletwasabi/client/Config.json",
+            )
+
+        self.assertEqual(stream_mock.call_count, 2)
+        for response in responses:
+            response.close.assert_called_once_with()
+
     def test_diagnostics_reports_missing_running_oomkilled_and_evicted_pods(self) -> None:
         KubernetesDriver, _ = _load_kubernetes_symbols()
 

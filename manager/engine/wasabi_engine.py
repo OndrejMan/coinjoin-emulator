@@ -40,7 +40,7 @@ WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
 WASABI_CLIENT_DATA_PATH = "/home/wasabi/.walletwasabi/client/"
 WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
 SUCCESSFUL_BROADCAST_RE = re.compile(
-    r"successfully\s+broadcast(?:ed)?\s+the\s+coinjoin:\s*([0-9a-f]{64})",
+    r"successfully\s+broadcast(?:ed)?\s+(?:the\s+)?coinjoin(?:\s+transaction)?:\s*([0-9a-f]{64})",
     re.IGNORECASE,
 )
 # Abort instead of spinning forever when round/block status stays unavailable.
@@ -50,7 +50,10 @@ MAX_CONSECUTIVE_STATUS_FAILURES = 20
 def version_at_least(version: str, reference: str) -> bool:
     """Compare dotted release versions numerically ("2.0.10" >= "2.0.3")."""
     def parts(value: str) -> tuple[int, ...]:
-        return tuple(int(part) if part.isdigit() else 0 for part in value.split("."))
+        return tuple(
+            int(match.group()) if (match := re.match(r"\d+", part)) else 0
+            for part in value.split(".")
+        )
 
     return parts(version) >= parts(reference)
 
@@ -402,11 +405,19 @@ class WasabiEngine(EngineBase):
         log_paths = sorted(
             path for path in Path(label_root).rglob("Logs.txt") if path.is_file()
         )
+        successful_txids = {
+            match.group(1).lower()
+            for path in log_paths
+            for match in SUCCESSFUL_BROADCAST_RE.finditer(
+                path.read_text(encoding="utf-8", errors="replace")
+            )
+        }
         return {
             "engine": "wasabi",
             "complete": bool(log_paths),
             "reason": None if log_paths else "captured Wasabi logs contain no Logs.txt source",
             "positive_rule": "transaction id appears in a successful coordinator broadcast record",
+            "positive_count": len(successful_txids),
             "sources": [os.path.relpath(path, data_path) for path in log_paths],
         }
 
@@ -536,5 +547,6 @@ class WasabiEngine(EngineBase):
             for _ in self.driver.peek(
                 "wasabi-backend",
                 "/home/wasabi/.walletwasabi/backend/WabiSabi/CoinJoinIdStore.txt",
+                missing_ok=True,
             ).split("\n")[:-1]
         )
