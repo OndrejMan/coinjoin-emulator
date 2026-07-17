@@ -68,7 +68,8 @@ class FakeDriver:
         self.log_calls.append(name)
         return "container stderr"
 
-    def peek(self, name: str, path: str) -> str:
+    def peek(self, name: str, path: str, *, missing_ok: bool = False) -> str:
+        del missing_ok
         self.peek_calls.append((name, path))
         return "jmwalletd stderr"
 
