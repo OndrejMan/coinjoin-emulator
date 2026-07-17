@@ -346,8 +346,12 @@ class WasabiEngine(EngineBase):
                 f"{self.args.image_prefix}wasabi-client:{version}",
                 env=client_env,
                 ports={37128: 37132 + idx},
-                cpu=(0.3 if not version_at_least(version, "2.0.4") else 0.1),
+                # The .NET client needs burst CPU during cold start (a hard
+                # 100m limit stretches startup past the RPC health checks on
+                # Kubernetes); the low request keeps all clients schedulable.
+                cpu=1.0,
                 memory=(1024 if not version_at_least(version, "2.0.4") else 768),
+                cpu_request=(0.3 if not version_at_least(version, "2.0.4") else 0.1),
             )
         except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             log.warning(f"- could not start {name} ({e})")

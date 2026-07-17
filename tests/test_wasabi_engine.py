@@ -139,6 +139,25 @@ def test_version_at_least_keeps_numeric_release_prefix(version: str) -> None:
     assert version_at_least(version, "2.0.3")
 
 
+def test_client_start_requests_low_cpu_with_burst_limit() -> None:
+    engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
+    engine.coordinator = SimpleNamespace(internal_ip="10.42.0.4")
+    engine.versions = {"2.6.0"}
+    client = Mock()
+    client.wait_wallet.return_value = True
+
+    with (
+        patch("manager.engine.wasabi_engine.sleep"),
+        patch.object(engine, "init_wasabi_client", return_value=client),
+    ):
+        assert engine.start_client(0, WalletConfig(funds=[1000000])) is client
+
+    run_kwargs = driver.run.call_args.kwargs
+    assert run_kwargs["cpu"] == 1.0
+    assert run_kwargs["cpu_request"] == 0.1
+    assert run_kwargs["memory"] == 768
+
+
 def test_coordinator_timeout_includes_container_logs() -> None:
     engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
     coordinator = Mock()
