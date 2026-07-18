@@ -43,10 +43,23 @@ jobs:
           git clone --depth 1 https://github.com/JoinMarket-Org/joinmarket-clientserver.git "$JOINMARKET_CLIENTSERVER_DIR"
           echo "JOINMARKET_CLIENTSERVER_DIR=$JOINMARKET_CLIENTSERVER_DIR" >> "$GITHUB_ENV"
 
+      - name: Extract joinmarket-test metadata
+        id: base-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ env.REPO_OWNER }}/joinmarket-test
+          tags: |
+            type=raw,value=latest
+            type=sha
+
       - name: Build and push joinmarket-test base image
-        run: |
-          docker build -t ghcr.io/${{ env.REPO_OWNER }}/joinmarket-test:latest "$JOINMARKET_CLIENTSERVER_DIR"
-          docker push ghcr.io/${{ env.REPO_OWNER }}/joinmarket-test:latest
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ env.JOINMARKET_CLIENTSERVER_DIR }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.base-meta.outputs.tags }}
+          labels: ${{ steps.base-meta.outputs.labels }}
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
@@ -62,7 +75,7 @@ jobs:
         with:
           context: ./containers/joinmarket-client-server
           push: true
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           build-args: |
             JOINMARKET_TEST_IMAGE=ghcr.io/${{ env.REPO_OWNER }}/joinmarket-test:latest
           tags: ${{ steps.meta.outputs.tags }}
