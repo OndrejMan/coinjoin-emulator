@@ -39,9 +39,9 @@
       "message": "chore: align legacy dependency entrypoints with uv",
       "type": "chore",
       "scope": "tooling",
-      "description": "Make the old dependency files/scripts intentional after adding uv.",
+      "description": "Make the old dependency files/scripts intentional after adding uv: requirements.txt is removed, the venv script stays as a thin wrapper.",
       "changes": [
-        "Update or freeze requirements.txt so it does not conflict with pyproject.toml",
+        "Remove requirements.txt in favor of pyproject.toml (this matches the current tree; it was deleted in 54064ea)",
         "Update managePythonVirtualEnvironment.sh to call uv or mark it as legacy",
         "Document the preferred dependency installation path"
       ],
@@ -52,7 +52,8 @@
       ],
       "verification": [
         "uv sync --frozen",
-        "./managePythonVirtualEnvironment.sh works or is explicitly documented as deprecated"
+        "./managePythonVirtualEnvironment.sh works or is explicitly documented as deprecated",
+        "git ls-files shows no requirements.txt"
       ]
     },
     {
@@ -441,7 +442,8 @@
         "Disable immediate auto-remove",
         "Remove stale containers before start",
         "Expose container logs",
-        "Remove containers during stop/cleanup"
+        "Remove containers during stop/cleanup",
+        "Remove anonymous volumes during stop and cleanup"
       ],
       "files": [
         "manager/driver/docker.py"
@@ -522,13 +524,14 @@
       "message": "feat(kubernetes): add local port forwarding",
       "type": "feat",
       "scope": "kubernetes",
-      "description": "Expose pod services through local port forwards instead of relying only on NodePort access.",
+      "description": "Expose pod services through local port forwards; Kubernetes services are ClusterIP only (no NodePort), so external access always goes through the port-forward API or an explicit proxy.",
       "changes": [
         "Add PortForwardServer",
         "Bridge local sockets to Kubernetes portforward streams",
         "Retry failed port-forward setup",
         "Return local forwarded ports to manager",
-        "Add --disable-port-forward CLI option"
+        "Add --disable-port-forward CLI option",
+        "Require --proxy or in-cluster execution when --disable-port-forward is used"
       ],
       "files": [
         "manager/driver/kubernetes.py",
@@ -1435,7 +1438,8 @@
         "Build joinmarket-test base image",
         "Push joinmarket-test to GHCR",
         "Build joinmarket-client-server using build arg",
-        "Publish latest and sha tags"
+        "Publish latest and sha tags",
+        "Build amd64 and arm64 images with Buildx"
       ],
       "files": [
         ".github/workflows/joinmarket-client-server.yaml"
@@ -1727,6 +1731,519 @@
     },
     {
       "number": 76,
+      "phase": "run-contract",
+      "message": "feat(cli): add validated deterministic run IDs",
+      "type": "feat",
+      "scope": "cli",
+      "description": "Allow callers (the coinjoin-pipeline controller) to pin the output directory name instead of the timestamp/scenario default.",
+      "source_commits": [
+        "13a23e0"
+      ],
+      "changes": [
+        "Add --run-id option",
+        "Limit run IDs to 63 characters matching [A-Za-z0-9][A-Za-z0-9._-]*",
+        "Reject run IDs containing '..'",
+        "Use the run ID as the log directory name when provided"
+      ],
+      "files": [
+        "manager/cli.py",
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_cli.py tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 77,
+      "phase": "run-contract",
+      "message": "feat(application): write controller done and failed markers",
+      "type": "feat",
+      "scope": "application",
+      "description": "Let an external controller (PBS/S3 pipeline stage) detect run completion without parsing logs.",
+      "source_commits": [
+        "13a23e0",
+        "a61fff8"
+      ],
+      "changes": [
+        "Add --controller-done-marker written after logs and requested Bitcoin data are stored",
+        "Add --controller-failed-marker written when emulation or artifact collection fails",
+        "Finalize exactly one marker per run"
+      ],
+      "files": [
+        "manager/application.py",
+        "manager/cli.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_application.py tests/test_cli.py"
+      ]
+    },
+    {
+      "number": 78,
+      "phase": "run-contract",
+      "message": "feat(engine): allow no-log reruns with an existing log directory",
+      "type": "feat",
+      "scope": "export",
+      "description": "Permit rerunning into a directory that already holds emulator data instead of failing on collision.",
+      "source_commits": [
+        "3a05b42"
+      ],
+      "changes": [
+        "Accept an existing log directory only when it already holds emulator artifacts",
+        "Keep refusing arbitrary pre-existing directories"
+      ],
+      "files": [
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 79,
+      "phase": "driver-hardening",
+      "message": "feat(driver): capture startup diagnostics from failed containers",
+      "type": "feat",
+      "scope": "driver",
+      "description": "Dump pod/container diagnostics when clients fail to start instead of losing the evidence with cleanup.",
+      "source_commits": [
+        "2911eeb"
+      ],
+      "changes": [
+        "Add DiagnosticsClient protocol to the driver interface",
+        "Implement Kubernetes diagnostics (pod status, events, logs)",
+        "Dump diagnostics on startup timeout before cleanup",
+        "Surface diagnostics in application error handling"
+      ],
+      "files": [
+        "manager/driver/__init__.py",
+        "manager/driver/kubernetes.py",
+        "manager/engine/engine_base.py",
+        "manager/application.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_kubernetes_driver.py tests/test_engine_base.py tests/test_application.py"
+      ]
+    },
+    {
+      "number": 80,
+      "phase": "driver-hardening",
+      "message": "feat(kubernetes): use ClusterIP services with in-cluster DNS",
+      "type": "feat",
+      "scope": "kubernetes",
+      "description": "Drop NodePort services; rely on ClusterIP DNS names in-cluster and the port-forward API from outside.",
+      "source_commits": [
+        "dd67e17",
+        "f290d52"
+      ],
+      "changes": [
+        "Create ClusterIP services instead of NodePort",
+        "Fix JoinMarket IRC service discovery over cluster DNS",
+        "Install DNS tooling in the irc-server image",
+        "Update README networking section"
+      ],
+      "files": [
+        "manager/driver/kubernetes.py",
+        "containers/irc-server/Dockerfile",
+        "README.md"
+      ],
+      "verification": [
+        "uv run pytest tests/test_kubernetes_driver.py",
+        "Run JoinMarket Kubernetes scenario"
+      ]
+    },
+    {
+      "number": 81,
+      "phase": "driver-hardening",
+      "message": "fix(kubernetes): wait for pod IPs and retry namespace creation",
+      "type": "fix",
+      "scope": "kubernetes",
+      "description": "Handle slow clusters and namespaces still terminating from a previous run.",
+      "source_commits": [
+        "4b22762",
+        "601f62f"
+      ],
+      "changes": [
+        "Wait for pod IP with COINJOIN_K8S_POD_IP_TIMEOUT (default 300s)",
+        "Bound downloads with COINJOIN_K8S_DOWNLOAD_TIMEOUT (default 1800s)",
+        "Retry namespace creation while the old namespace is terminating",
+        "Include pod status detail in timeout errors"
+      ],
+      "files": [
+        "manager/driver/kubernetes.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_kubernetes_driver.py"
+      ]
+    },
+    {
+      "number": 82,
+      "phase": "driver-hardening",
+      "message": "feat(kubernetes): upload files via chunked base64 exec",
+      "type": "feat",
+      "scope": "kubernetes",
+      "description": "Make pod uploads reliable for larger payloads and verify their exit status.",
+      "source_commits": [
+        "807b45c"
+      ],
+      "changes": [
+        "Stream uploads as 16 KiB base64 chunks to a temporary pod file",
+        "Extract with tar and propagate the exit status",
+        "Fail on stderr output or timeout",
+        "Add peek(missing_ok=...) across drivers"
+      ],
+      "files": [
+        "manager/driver/kubernetes.py",
+        "manager/driver/docker.py",
+        "manager/driver/podman.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_kubernetes_driver.py tests/test_podman_driver.py"
+      ]
+    },
+    {
+      "number": 83,
+      "phase": "driver-hardening",
+      "message": "feat(driver): separate CPU and memory requests from limits",
+      "type": "feat",
+      "scope": "driver",
+      "description": "Allow Kubernetes resource requests to differ from limits so pods schedule without overcommitting.",
+      "source_commits": [
+        "b892da4"
+      ],
+      "changes": [
+        "Add cpu_request and memory_request parameters to Driver.run",
+        "Render requests separately from limits in pod manifests",
+        "Keep Docker and Podman signatures compatible"
+      ],
+      "files": [
+        "manager/driver/__init__.py",
+        "manager/driver/docker.py",
+        "manager/driver/podman.py",
+        "manager/driver/kubernetes.py",
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_kubernetes_driver.py tests/test_docker_driver.py"
+      ]
+    },
+    {
+      "number": 84,
+      "phase": "bitcoin-hardening",
+      "message": "fix(bitcoin): force miner script onto the regtest RPC port",
+      "type": "fix",
+      "scope": "btc-node",
+      "description": "Make the in-container miner use explicit regtest RPC settings instead of default-port guessing.",
+      "source_commits": [
+        "425248c"
+      ],
+      "changes": [
+        "Pass explicit regtest RPC arguments in mine.sh",
+        "Add container-level test for the miner invocation"
+      ],
+      "files": [
+        "containers/btc-node/mine.sh",
+        "tests/test_btc_node_container.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_btc_node_container.py"
+      ]
+    },
+    {
+      "number": 85,
+      "phase": "bitcoin-hardening",
+      "message": "feat(bitcoin): wait for node readiness and fee estimation",
+      "type": "feat",
+      "scope": "btc-node",
+      "description": "Block until the node is usable: RPC up, chain info readable, startup fee-building burst-mining finished.",
+      "source_commits": [
+        "87f3bca",
+        "04ca948",
+        "0bc9f27",
+        "fac94c7"
+      ],
+      "changes": [
+        "Add get_blockchain_info helper",
+        "Add estimate_smart_fee helper",
+        "Add wait_ready with overall timeout",
+        "Add wait_fee_building_complete for the startup burst-mining phase",
+        "Tolerate wallet-database-already-exists errors on reuse"
+      ],
+      "files": [
+        "manager/btc_node.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_btc_node.py"
+      ]
+    },
+    {
+      "number": 86,
+      "phase": "bitcoin-hardening",
+      "message": "fix(engine): correct final client-start retry handling",
+      "type": "fix",
+      "scope": "engine",
+      "description": "Fix retry accounting so the last client-start attempt is not silently skipped or double-counted.",
+      "source_commits": [
+        "425248c"
+      ],
+      "changes": [
+        "Fix retry-exhaustion condition in client startup",
+        "Add regression tests for the final attempt"
+      ],
+      "files": [
+        "manager/engine/engine_base.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_engine_base.py"
+      ]
+    },
+    {
+      "number": 87,
+      "phase": "wasabi-hardening",
+      "message": "fix(wasabi): synchronize coordinator startup with chain state",
+      "type": "fix",
+      "scope": "wasabi",
+      "description": "Start the coordinator only once the backend and btc-node are actually synchronized; fix the coordinator run script.",
+      "source_commits": [
+        "87f3bca",
+        "9c3420a",
+        "0bc9f27"
+      ],
+      "changes": [
+        "Wait on blockchain info before coordinator startup",
+        "Fix wasabi-coordinator 2.6.0 run.sh startup ordering",
+        "Type coordinator wait behavior in the protocol"
+      ],
+      "files": [
+        "manager/wasabi_coordinator.py",
+        "manager/wasabi_coordinator_protocol.py",
+        "manager/engine/wasabi_engine.py",
+        "containers/wasabi-coordinator/2.6.0/run.sh"
+      ],
+      "verification": [
+        "uv run pytest tests/test_wasabi_coordinator.py tests/test_wasabi_coordinator_container.py tests/test_wasabi_engine.py"
+      ]
+    },
+    {
+      "number": 88,
+      "phase": "wasabi-hardening",
+      "message": "fix(wasabi): restart coordinator on failed startup attempts",
+      "type": "fix",
+      "scope": "wasabi",
+      "description": "A coordinator that asserts during startup gets restarted for a bounded number of attempts instead of failing the run.",
+      "source_commits": [
+        "fac94c7"
+      ],
+      "changes": [
+        "Add WASABI_COORDINATOR_START_ATTEMPTS retry loop",
+        "Restart the coordinator container between attempts",
+        "Fail with the last startup error after exhaustion"
+      ],
+      "files": [
+        "manager/engine/wasabi_engine.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_wasabi_engine.py"
+      ]
+    },
+    {
+      "number": 89,
+      "phase": "wasabi-hardening",
+      "message": "fix(wasabi): harden round polling and client resources",
+      "type": "fix",
+      "scope": "wasabi",
+      "description": "Make Wasabi round-status polling tolerant of transient errors and give clients enough CPU to keep up.",
+      "source_commits": [
+        "807b45c",
+        "a238f29",
+        "b648907"
+      ],
+      "changes": [
+        "Retry transient round-status polling failures",
+        "Increase polling timeouts",
+        "Raise Wasabi client CPU allocation"
+      ],
+      "files": [
+        "manager/engine/wasabi_engine.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_wasabi_engine.py"
+      ]
+    },
+    {
+      "number": 90,
+      "phase": "wasabi-hardening",
+      "message": "feat(wasabi): mine settlement blocks after the round limit",
+      "type": "feat",
+      "scope": "wasabi",
+      "description": "Mine extra blocks after the last Wasabi round so all coinjoin transactions confirm before export.",
+      "source_commits": [
+        "3a05b42"
+      ],
+      "changes": [
+        "Add mine_settlement_blocks",
+        "Mine WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT blocks after the round limit",
+        "Fail loudly when settlement blocks cannot be mined"
+      ],
+      "files": [
+        "manager/engine/wasabi_engine.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_wasabi_engine.py"
+      ]
+    },
+    {
+      "number": 91,
+      "phase": "joinmarket-hardening",
+      "message": "fix(joinmarket): harden wallet RPC readiness and retries",
+      "type": "fix",
+      "scope": "joinmarket",
+      "description": "Survive slow jmwalletd startup and transient wallet RPC failures during funding.",
+      "source_commits": [
+        "04ca948",
+        "66cb718",
+        "4f41eef"
+      ],
+      "changes": [
+        "Retry wallet readiness checks with longer timeouts",
+        "Retry transient balance and address RPC failures",
+        "Surface the last RPC error on exhaustion"
+      ],
+      "files": [
+        "manager/wasabi_clients/joinmarket/wallet.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_wallet.py"
+      ]
+    },
+    {
+      "number": 92,
+      "phase": "joinmarket-hardening",
+      "message": "fix(joinmarket): tune round timeouts and inactivity detection",
+      "type": "fix",
+      "scope": "joinmarket",
+      "description": "Give JoinMarket rounds realistic time budgets and distinguish stalled from merely slow rounds.",
+      "source_commits": [
+        "dfeb67e",
+        "b892da4",
+        "601f62f"
+      ],
+      "changes": [
+        "Increase round timeout and settle constants",
+        "Track round activity before declaring failure",
+        "Stop takers cleanly on inactivity",
+        "Export tuning constants from the joinmarket package"
+      ],
+      "files": [
+        "manager/engine/joinmarket/constants.py",
+        "manager/engine/joinmarket/rounds.py",
+        "manager/engine/joinmarket/runner.py",
+        "manager/engine/joinmarket/__init__.py",
+        "manager/wasabi_clients/joinmarket/taker.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_engine.py tests/test_joinmarket_runner.py tests/test_joinmarket_taker.py"
+      ]
+    },
+    {
+      "number": 93,
+      "phase": "joinmarket-hardening",
+      "message": "fix(irc): keep relayed messages within the IRC 512-byte limit",
+      "type": "fix",
+      "scope": "irc",
+      "description": "Configure InspIRCd so JoinMarket handshake relays are not truncated at the 512-byte line limit (root cause of Kubernetes JoinMarket hangs).",
+      "source_commits": [
+        "575ccb0"
+      ],
+      "changes": [
+        "Raise recvq and document the 512-byte prefix arithmetic",
+        "Adjust softsendq, flood, and ping settings for relay bursts",
+        "Disable hostname resolution for deterministic prefixes"
+      ],
+      "files": [
+        "containers/irc-server/inspircd.conf"
+      ],
+      "verification": [
+        "Run JoinMarket Kubernetes scenario and confirm handshakes complete"
+      ]
+    },
+    {
+      "number": 94,
+      "phase": "ground-truth-labels",
+      "message": "feat(config): harden scenario validation",
+      "type": "feat",
+      "scope": "config",
+      "description": "Reject malformed scenarios early with actionable errors instead of failing mid-run.",
+      "source_commits": [
+        "348c0a1",
+        "4b22762"
+      ],
+      "changes": [
+        "Validate scenario field types and ranges",
+        "Report the offending field in error messages",
+        "Keep existing scenarios parsing unchanged"
+      ],
+      "files": [
+        "manager/engine/configuration.py"
+      ],
+      "verification": [
+        "uv run pytest tests/test_configuration.py"
+      ]
+    },
+    {
+      "number": 95,
+      "phase": "ground-truth-labels",
+      "message": "feat(export): write schema-1.0 producer-label manifest",
+      "type": "feat",
+      "scope": "export",
+      "description": "Every run atomically writes coinjoin_label_manifest.json describing producer-label evidence for downstream analysis.",
+      "source_commits": [
+        "348c0a1",
+        "807b45c"
+      ],
+      "changes": [
+        "Collect label evidence from store_engine_logs",
+        "Write coinjoin_label_manifest.json with sorted keys via tmp-file rename",
+        "Capture Wasabi and JoinMarket label evidence",
+        "Document the manifest schema"
+      ],
+      "files": [
+        "manager/engine/engine_base.py",
+        "manager/engine/wasabi_engine.py",
+        "manager/engine/joinmarket/events.py",
+        "docs/producer-label-manifest.md"
+      ],
+      "outputs": [
+        "coinjoin_emulator_data/coinjoin_label_manifest.json"
+      ],
+      "verification": [
+        "uv run pytest tests/test_engine_base.py tests/test_wasabi_engine.py tests/test_joinmarket_events.py"
+      ]
+    },
+    {
+      "number": 96,
+      "phase": "ground-truth-labels",
+      "message": "feat(joinmarket): make round-event reconciliation lossless",
+      "type": "feat",
+      "scope": "joinmarket",
+      "description": "Never drop exported transactions or round events during matching; keep unmatched entries visible.",
+      "source_commits": [
+        "27c05cf"
+      ],
+      "changes": [
+        "Reconcile exported transactions against round events",
+        "Preserve unmatched transactions and events in the export",
+        "Document the round-events artifact"
+      ],
+      "files": [
+        "manager/engine/joinmarket/events.py",
+        "docs/joinmarket-round-events.md"
+      ],
+      "verification": [
+        "uv run pytest tests/test_joinmarket_events.py"
+      ]
+    },
+    {
+      "number": 97,
       "phase": "docs",
       "message": "docs: update README for uv runtime options and drivers",
       "type": "docs",
@@ -1739,7 +2256,10 @@
         "Document image override options",
         "Document btcFolder and raw Bitcoin data export",
         "Document --download-btc-data and --download-path",
-        "Document JoinMarket support and current limitations"
+        "Document JoinMarket support and current limitations",
+        "Document ClusterIP-based Kubernetes networking and port forwarding",
+        "Document --run-id and controller done/failed markers",
+        "Link producer-label manifest and JoinMarket round-events docs"
       ],
       "files": [
         "README.md"
@@ -1749,7 +2269,7 @@
       ]
     },
     {
-      "number": 77,
+      "number": 98,
       "phase": "docs",
       "message": "docs: document cleanup and feature TODOs",
       "type": "docs",
@@ -1772,7 +2292,7 @@
       ]
     },
     {
-      "number": 78,
+      "number": 99,
       "phase": "developer-guidance",
       "message": "docs(codex): add repository reading and test-writing skills",
       "type": "docs",
@@ -1795,19 +2315,19 @@
       ]
     },
     {
-      "number": 79,
+      "number": 100,
       "phase": "cleanup",
       "message": "chore: remove planning artifacts from review branch",
       "type": "chore",
       "scope": "repo",
       "description": "Remove files useful for planning but not for the final reviewed implementation.",
       "changes": [
-        "Remove newCommits.md unless converted into real documentation",
+        "Remove newCommits.json unless converted into real documentation",
         "Remove temporary notes",
         "Ensure TODO files do not duplicate fixed issues"
       ],
       "files": [
-        "newCommits.md"
+        "newCommits.json"
       ],
       "verification": [
         "git status shows no planning-only files",
@@ -1815,7 +2335,7 @@
       ]
     },
     {
-      "number": 80,
+      "number": 101,
       "phase": "final-verification",
       "message": "test: add local all-check script",
       "type": "test",
@@ -1853,5 +2373,20 @@
     "manager/wasabi_backend_protocol.py and manager/wasabi_coordinator_protocol.py should be mentioned in the Wasabi typing/refactor commit.",
     "manager/wasabi_coordinator.py and manager/wasabi_clients/__init__.py should be included in the Wasabi preservation/refactor phase.",
     "tests/test_log_output.py, tests/test_wasabi_engine.py, and tests/test_wasabi_client_base.py should be explicitly covered by the test plan."
-  ]
+  ],
+  "verification_2026_07_19": {
+    "verified_against": "fdd42d6 (Make images multi arch)",
+    "notes": [
+      "Commits 1-80 verified against the working tree: every referenced file and test exists.",
+      "Commits 81+ cover history after the plan was committed (f0f4710..fdd42d6); each lists its source_commits for cherry-pick reference.",
+      "Corrected commit 79: the planning file is newCommits.json, not newCommits.md.",
+      "Corrected commit 24: Kubernetes services are ClusterIP (NodePort removed in dd67e17); port forwarding remains the default and --disable-port-forward requires --proxy or in-cluster execution.",
+      "Commit 20 now includes anonymous-volume removal during Docker cleanup (f25dd49).",
+      "Commit 64 now includes multi-arch (amd64+arm64) Buildx publishing (fdd42d6).",
+      "'add s3 support' (13a23e0) introduced --run-id validation and controller markers in this repo; the S3 logic itself lives in coinjoin-pipeline.",
+      "Test placement: new tests test_btc_node_container.py, test_wasabi_coordinator.py, test_wasabi_coordinator_container.py, and tests/conftest.py exist and belong to the hardening commits above.",
+      "Commit numbering was rewritten so the post-plan hardening phases (run-contract, driver-hardening, bitcoin-hardening, wasabi-hardening, joinmarket-hardening, ground-truth-labels) come before docs/cleanup/final-verification; source_commits fields mark entries derived from post-plan history.",
+      "Corrected commit 2: requirements.txt is deleted in the current tree (54064ea), so the commit removes it instead of freezing it."
+    ]
+  }
 }
