@@ -169,6 +169,15 @@ deadlines, tunable via `COINJOIN_K8S_DOWNLOAD_TIMEOUT`,
 non-zero. Archives received from containers are extracted with the sanitizing
 `data` tar filter where the Python runtime supports it.
 
+Pod startup waits up to `COINJOIN_K8S_POD_IP_TIMEOUT` seconds (default 1800).
+That budget covers scheduler queue time as well as container startup, because on
+a busy shared cluster a pod can sit `Pending` for a long time before any node has
+room for it. While a pod is still pending the driver logs the newest
+`FailedScheduling` message once a minute, and if the pod never lands on a node the
+resulting error names the capacity problem rather than a downstream symptom.
+`download` likewise refuses to exec into a pod that was never scheduled, instead
+of failing with an opaque websocket `400 Bad Request`.
+
 #### Docker
 
 The default driver is `docker`. Running `docker` requires [Docker](https://www.docker.com/) installed locally and running.

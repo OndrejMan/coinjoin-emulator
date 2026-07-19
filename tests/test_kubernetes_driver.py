@@ -11,6 +11,8 @@ from unittest.mock import Mock, patch
 
 from manager.exceptions import CoinjoinEmulatorError
 
+# pylint: disable=protected-access
+
 if TYPE_CHECKING:
     from kubernetes.client import CoreV1Api as CoreV1ApiClass
 
@@ -747,3 +749,63 @@ class KubernetesDriverTest(TestCase):
             driver.cleanup()
 
         self.assertEqual(deleted_namespaces, ["coinjoin-test"])
+
+    def test_wait_for_pod_ip_reports_scheduling_failure_when_pod_never_lands(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+        pending_pod = SimpleNamespace(
+            spec=SimpleNamespace(node_name=None),
+            status=SimpleNamespace(pod_ip=None, phase="Pending", container_statuses=[]),
+        )
+        kube_client = SimpleNamespace(
+            read_namespaced_pod_status=lambda **_kwargs: pending_pod,
+            list_namespaced_event=lambda **_kwargs: SimpleNamespace(
+                items=[
+                    SimpleNamespace(
+                        reason="FailedScheduling",
+                        message="0/53 nodes are available: 44 Insufficient cpu.",
+                        last_timestamp="2026-07-19T20:58:41Z",
+                    )
+                ]
+            ),
+        )
+
+        clock = iter([0.0, 0.0, 0.0, 1.0, 5.0, 5.0])
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch("manager.driver.kubernetes.client.CoreV1Api", return_value=kube_client),
+            patch("manager.driver.kubernetes.sleep"),
+            patch("manager.driver.kubernetes.monotonic", side_effect=lambda: next(clock)),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            with self.assertRaises(CoinjoinEmulatorError) as caught:
+                driver._wait_for_pod_ip("btc-node", timeout_seconds=2)
+
+        message = str(caught.exception)
+        self.assertIn("was not scheduled onto any node", message)
+        self.assertIn("Insufficient cpu", message)
+
+    def test_download_refuses_unscheduled_pod_instead_of_exec(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+        pending_pod = SimpleNamespace(
+            spec=SimpleNamespace(node_name=None),
+            status=SimpleNamespace(pod_ip=None, phase="Pending", container_statuses=[]),
+        )
+        kube_client = SimpleNamespace(
+            read_namespaced_pod_status=lambda **_kwargs: pending_pod,
+            list_namespaced_event=lambda **_kwargs: SimpleNamespace(items=[]),
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch("manager.driver.kubernetes.client.CoreV1Api", return_value=kube_client),
+            patch(
+                "manager.driver.kubernetes.stream",
+                side_effect=AssertionError("download must not exec into an unscheduled pod"),
+            ),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            with self.assertRaises(RuntimeError) as caught:
+                driver.download("btc-node", "/home/bitcoin/data/", "/tmp/out")
+
+        self.assertIn("never scheduled onto a node", str(caught.exception))

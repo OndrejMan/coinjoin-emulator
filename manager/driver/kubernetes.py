@@ -31,7 +31,10 @@ MANAGED_LABELS = {
 }
 PORT_FORWARD_ATTEMPTS = 3
 PORT_FORWARD_RETRY_DELAY_SECONDS = 0.25
-POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "300"))
+# Shared clusters routinely leave pods Pending for tens of minutes while CPU frees up,
+# so this budget covers scheduling queue time, not just container startup.
+POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
+POD_IP_WAIT_PROGRESS_LOG_SECONDS = 60
 DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
 PEEK_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_PEEK_TIMEOUT", "60"))
 UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_UPLOAD_TIMEOUT", "120"))
@@ -78,7 +81,11 @@ class DiagnosticsClient(Protocol):
         timestamps: bool,
     ) -> str: ...
 
-    def list_namespaced_event(self, namespace: str) -> EventListLike: ...
+    def list_namespaced_event(
+        self,
+        namespace: str,
+        field_selector: str | None = None,
+    ) -> EventListLike: ...
 
 
 class PortForwardServer:
@@ -402,6 +409,8 @@ class KubernetesDriver(Driver):
     def _wait_for_pod_ip(self, name: str, timeout_seconds: int = POD_IP_WAIT_TIMEOUT_SECONDS) -> str:
         deadline = monotonic() + timeout_seconds
         last_status = "not read yet"
+        next_progress_log = monotonic() + POD_IP_WAIT_PROGRESS_LOG_SECONDS
+        scheduled = False
         while monotonic() < deadline:
             try:
                 pod = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace)
@@ -435,10 +444,55 @@ class KubernetesDriver(Driver):
             }
             if waiting_reasons & fatal_waiting:
                 raise StartupError(f"Kubernetes pod {name} cannot start: {last_status}")
+            scheduled = bool(getattr(getattr(pod, "spec", None), "node_name", None))
+            if monotonic() >= next_progress_log:
+                remaining = int(deadline - monotonic())
+                stage = "starting" if scheduled else "waiting to be scheduled"
+                log.warning(
+                    f"- pod {name} still {stage} ({remaining}s of {timeout_seconds}s left): "
+                    f"{self._pending_reason(name) or last_status}"
+                )
+                next_progress_log = monotonic() + POD_IP_WAIT_PROGRESS_LOG_SECONDS
             sleep(1)
+        if not scheduled:
+            raise StartupError(
+                f"Kubernetes pod {name} was not scheduled onto any node within "
+                f"{timeout_seconds} seconds (cluster has no room for it): "
+                f"{self._pending_reason(name) or last_status}. "
+                "Retry when the cluster has free capacity, lower the pod's CPU request, "
+                "or raise COINJOIN_K8S_POD_IP_TIMEOUT."
+            )
         raise StartupError(
             f"Kubernetes pod {name} did not get an IP within {timeout_seconds} seconds: {last_status}"
         )
+
+    def _pending_reason(self, name: str) -> str:
+        """Return the newest scheduler complaint for a pod, e.g. the FailedScheduling message."""
+        events_client = cast(DiagnosticsClient, self.client)
+        try:
+            events = events_client.list_namespaced_event(
+                namespace=self.namespace,
+                field_selector=f"involvedObject.name={name}",
+            ).items
+        except ApiException:
+            return ""
+        scheduling = [
+            event
+            for event in events
+            if getattr(event, "reason", None) in {"FailedScheduling", "Preempting"}
+        ]
+        if not scheduling:
+            return ""
+        newest = max(
+            scheduling,
+            key=lambda event: str(
+                getattr(event, "event_time", None)
+                or getattr(event, "last_timestamp", None)
+                or getattr(event, "first_timestamp", None)
+                or ""
+            ),
+        )
+        return f"{getattr(newest, 'reason', '')}: {getattr(newest, 'message', '')}".strip()
 
     def start_port_forwards(self, name: str, ports: list[int]) -> dict[int, int]:
         port_mapping = {}
@@ -646,7 +700,27 @@ class KubernetesDriver(Driver):
                 )
         return "\n".join(lines)
 
+    def _require_exec_ready(self, name: str) -> None:
+        """Fail with the real reason instead of an exec websocket 400 on an unusable pod."""
+        try:
+            pod = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace)
+        except ApiException as error:
+            raise RuntimeError(f"pod {name} is unavailable: {error}") from error
+        if not getattr(getattr(pod, "spec", None), "node_name", None):
+            reason = self._pending_reason(name) or self._pod_status_detail(pod)
+            raise RuntimeError(
+                f"pod {name} was never scheduled onto a node, so there is nothing to "
+                f"download from it: {reason}"
+            )
+        phase = getattr(getattr(pod, "status", None), "phase", None)
+        if phase not in {"Running", "Succeeded"}:
+            raise RuntimeError(
+                f"pod {name} is in phase {phase}, not Running/Succeeded: "
+                f"{self._pod_status_detail(pod)}"
+            )
+
     def download(self, name: str, src_path: str, dst_path: str) -> None:
+        self._require_exec_ready(name)
         if src_path[-1] == "/":
             src_path = src_path[:-1]
         src_parent, src_target = os.path.split(src_path)
