@@ -8,3 +8,7 @@ class RpcError(CoinjoinEmulatorError):
 
 class StartupError(CoinjoinEmulatorError):
     """Raised when emulator infrastructure cannot be started."""
+
+
+class KubernetesResourceQuotaError(CoinjoinEmulatorError):
+    """Raised when Kubernetes rejects an emulator resource due to a hard quota."""

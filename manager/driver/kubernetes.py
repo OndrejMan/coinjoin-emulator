@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 import select
 import shlex
 import socket
@@ -19,7 +20,7 @@ from kubernetes.config.config_exception import ConfigException
 from kubernetes.stream import portforward, stream
 
 from manager import log_output as log
-from manager.exceptions import CoinjoinEmulatorError, StartupError
+from manager.exceptions import CoinjoinEmulatorError, KubernetesResourceQuotaError, StartupError
 
 from . import Driver, extract_tar
 
@@ -43,6 +44,39 @@ NAMESPACE_CREATE_RETRY_SECONDS = 60
 POD_IP_TRANSIENT_API_STATUSES = {408, 409, 429, 500, 502, 503, 504}
 RESOURCE_DELETE_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DELETE_TIMEOUT", "120"))
 RESOURCE_DELETE_TRANSIENT_API_STATUSES = {408, 409, 429, 500, 502, 503, 504}
+CPU_QUOTA_RE = re.compile(
+    r"exceeded quota:\s*(?P<quota>[^,]+),\s*"
+    r"requested:\s*(?P<requested>.*?),\s*"
+    r"used:\s*(?P<used>.*?),\s*"
+    r"limited:\s*(?P<limited>[^\"}\r\n]+)",
+    re.IGNORECASE,
+)
+
+
+def _raise_explicit_quota_error(error: ApiException, *, pod_name: str, namespace: str) -> None:
+    """Translate a Kubernetes CPU-quota rejection into an actionable failure."""
+    details = str(getattr(error, "body", "") or error)
+    lowered = details.lower()
+    if getattr(error, "status", None) != 403 or "exceeded quota" not in lowered:
+        return
+    if "limits.cpu" not in lowered and "requests.cpu" not in lowered:
+        return
+
+    match = CPU_QUOTA_RE.search(details)
+    if match:
+        quota_details = (
+            f"quota '{match.group('quota').strip()}' rejected "
+            f"{match.group('requested').strip()} "
+            f"(used {match.group('used').strip()}; limit {match.group('limited').strip()})"
+        )
+    else:
+        quota_details = details.strip()
+
+    raise KubernetesResourceQuotaError(
+        f"Kubernetes CPU quota exhausted while creating pod '{pod_name}' in namespace "
+        f"'{namespace}': {quota_details}. Use a smaller scenario, reduce pod CPU limits, "
+        "delete unused workloads, or request a larger namespace CPU quota."
+    ) from error
 
 
 class SocketLike(Protocol):
@@ -342,7 +376,11 @@ class KubernetesDriver(Driver):
             },
         }
 
-        resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+        try:
+            resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+        except ApiException as error:
+            _raise_explicit_quota_error(error, pod_name=name, namespace=self.namespace)
+            raise
         self.managed_pod_names.add(name)
 
         pod_ip = ""
@@ -401,8 +439,7 @@ class KubernetesDriver(Driver):
             *(getattr(status, "container_statuses", None) or []),
         ]:
             details.append(
-                f"{container_status.name}: "
-                f"{KubernetesDriver._container_state_summary(container_status.state)}"
+                f"{container_status.name}: {KubernetesDriver._container_state_summary(container_status.state)}"
             )
         return "; ".join(details)
 
@@ -462,9 +499,7 @@ class KubernetesDriver(Driver):
                 "Retry when the cluster has free capacity, lower the pod's CPU request, "
                 "or raise COINJOIN_K8S_POD_IP_TIMEOUT."
             )
-        raise StartupError(
-            f"Kubernetes pod {name} did not get an IP within {timeout_seconds} seconds: {last_status}"
-        )
+        raise StartupError(f"Kubernetes pod {name} did not get an IP within {timeout_seconds} seconds: {last_status}")
 
     def _pending_reason(self, name: str) -> str:
         """Return the newest scheduler complaint for a pod, e.g. the FailedScheduling message."""
@@ -476,11 +511,7 @@ class KubernetesDriver(Driver):
             ).items
         except ApiException:
             return ""
-        scheduling = [
-            event
-            for event in events
-            if getattr(event, "reason", None) in {"FailedScheduling", "Preempting"}
-        ]
+        scheduling = [event for event in events if getattr(event, "reason", None) in {"FailedScheduling", "Preempting"}]
         if not scheduling:
             return ""
         newest = max(
@@ -548,8 +579,7 @@ class KubernetesDriver(Driver):
                     return
                 if status not in RESOURCE_DELETE_TRANSIENT_API_STATUSES:
                     raise CoinjoinEmulatorError(
-                        f"Failed to delete Kubernetes {resource_kind} {name}: "
-                        f"API status {status}: {error}"
+                        f"Failed to delete Kubernetes {resource_kind} {name}: API status {status}: {error}"
                     ) from error
                 if monotonic() >= deadline:
                     raise CoinjoinEmulatorError(
@@ -557,8 +587,7 @@ class KubernetesDriver(Driver):
                         f"{RESOURCE_DELETE_TIMEOUT_SECONDS}s (last API status: {status})"
                     ) from error
                 log.warning(
-                    f"- transient Kubernetes API status {status} while deleting "
-                    f"{resource_kind} {name}; retrying"
+                    f"- transient Kubernetes API status {status} while deleting {resource_kind} {name}; retrying"
                 )
                 sleep(1)
 
@@ -603,8 +632,7 @@ class KubernetesDriver(Driver):
                 )
                 return False
             raise CoinjoinEmulatorError(
-                f"Failed to verify deletion of Kubernetes {resource_kind} {name}: "
-                f"API status {status}: {error}"
+                f"Failed to verify deletion of Kubernetes {resource_kind} {name}: API status {status}: {error}"
             ) from error
         return False
 
@@ -633,11 +661,7 @@ class KubernetesDriver(Driver):
             lines.append(f"- unable to list pods: {error}")
             pods = []
 
-        present_names = {
-            pod.metadata.name
-            for pod in pods
-            if getattr(getattr(pod, "metadata", None), "name", None)
-        }
+        present_names = {pod.metadata.name for pod in pods if getattr(getattr(pod, "metadata", None), "name", None)}
         for missing_name in sorted(self.managed_pod_names - present_names):
             lines.append(f"- pod {missing_name}: NotFound")
 
@@ -695,9 +719,7 @@ class KubernetesDriver(Driver):
                 reason = getattr(event, "reason", None) or "Unknown"
                 message = getattr(event, "message", None) or ""
                 count = getattr(event, "count", None) or 1
-                lines.append(
-                    f"  {event_type} {resource}: {reason}: {message} (count={count})"
-                )
+                lines.append(f"  {event_type} {resource}: {reason}: {message} (count={count})")
         return "\n".join(lines)
 
     def _require_exec_ready(self, name: str) -> None:
@@ -709,15 +731,11 @@ class KubernetesDriver(Driver):
         if not getattr(getattr(pod, "spec", None), "node_name", None):
             reason = self._pending_reason(name) or self._pod_status_detail(pod)
             raise RuntimeError(
-                f"pod {name} was never scheduled onto a node, so there is nothing to "
-                f"download from it: {reason}"
+                f"pod {name} was never scheduled onto a node, so there is nothing to download from it: {reason}"
             )
         phase = getattr(getattr(pod, "status", None), "phase", None)
         if phase not in {"Running", "Succeeded"}:
-            raise RuntimeError(
-                f"pod {name} is in phase {phase}, not Running/Succeeded: "
-                f"{self._pod_status_detail(pod)}"
-            )
+            raise RuntimeError(f"pod {name} is in phase {phase}, not Running/Succeeded: {self._pod_status_detail(pod)}")
 
     def download(self, name: str, src_path: str, dst_path: str) -> None:
         self._require_exec_ready(name)
@@ -762,11 +780,7 @@ class KubernetesDriver(Driver):
         resp.close()
 
     def peek(self, name: str, path: str, *, missing_ok: bool = False) -> str:
-        exec_command = (
-            ["sh", "-c", 'if [ -f "$1" ]; then cat -- "$1"; fi', "sh", path]
-            if missing_ok
-            else ["cat", path]
-        )
+        exec_command = ["sh", "-c", 'if [ -f "$1" ]; then cat -- "$1"; fi', "sh", path] if missing_ok else ["cat", path]
         resp = stream(
             self._new_client().connect_get_namespaced_pod_exec,
             name,
@@ -838,31 +852,33 @@ class KubernetesDriver(Driver):
             stderr = "".join(stderr_chunks)
             if returncode not in (None, 0):
                 details = f": {stderr.strip()}" if stderr.strip() else ""
-                raise RuntimeError(
-                    f"upload to {name}:{dst_path} failed with exit code {returncode}{details}"
-                )
+                raise RuntimeError(f"upload to {name}:{dst_path} failed with exit code {returncode}{details}")
             if stderr.strip():
                 raise RuntimeError(f"upload to {name}:{dst_path} wrote stderr: {stderr.strip()}")
 
         try:
             for offset in range(0, len(payload), UPLOAD_COMMAND_CHUNK_SIZE):
-                chunk = payload[offset:offset + UPLOAD_COMMAND_CHUNK_SIZE]
+                chunk = payload[offset : offset + UPLOAD_COMMAND_CHUNK_SIZE]
                 redirect = ">" if offset == 0 else ">>"
-                exec_checked([
+                exec_checked(
+                    [
+                        "sh",
+                        "-c",
+                        f'printf "%s" "$1" {redirect} "$2"',
+                        "sh",
+                        chunk,
+                        remote_payload,
+                    ]
+                )
+            exec_checked(
+                [
                     "sh",
                     "-c",
-                    f'printf "%s" "$1" {redirect} "$2"',
+                    'base64 -d "$1" | tar xf - -C /; status=$?; rm -f -- "$1"; exit "$status"',
                     "sh",
-                    chunk,
                     remote_payload,
-                ])
-            exec_checked([
-                "sh",
-                "-c",
-                'base64 -d "$1" | tar xf - -C /; status=$?; rm -f -- "$1"; exit "$status"',
-                "sh",
-                remote_payload,
-            ])
+                ]
+            )
         except Exception:
             try:
                 exec_checked(["rm", "-f", "--", remote_payload])

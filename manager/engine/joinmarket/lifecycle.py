@@ -5,7 +5,7 @@ from typing import Callable, Protocol
 from manager import log_output as log
 
 from ...btc_node import BtcNode
-from ...exceptions import CoinjoinEmulatorError, StartupError
+from ...exceptions import CoinjoinEmulatorError, KubernetesResourceQuotaError, StartupError
 from ...wasabi_clients.joinmarket_client import JoinMarketClientServer
 from ..configuration import WalletConfig
 from ..engine_base import DriverProtocol, EmulatorClient, EngineArgs, InvoiceDistributor
@@ -158,6 +158,8 @@ class JoinMarketClientLifecycleMixin:
                 memory=768,
                 cpu_request=0.1,
             )
+        except KubernetesResourceQuotaError:
+            raise
         except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             log.warning(f"- could not start {name} ({e})")
             return None

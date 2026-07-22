@@ -12,7 +12,7 @@ from typing import cast
 
 from manager import log_output as log
 
-from ..exceptions import CoinjoinEmulatorError, StartupError
+from ..exceptions import CoinjoinEmulatorError, KubernetesResourceQuotaError, StartupError
 from ..wasabi_backend_factory import (
     BackendArchitecture,
     create_backend,
@@ -52,11 +52,9 @@ MAX_CONSECUTIVE_STATUS_FAILURES = 20
 
 def version_at_least(version: str, reference: str) -> bool:
     """Compare dotted release versions numerically ("2.0.10" >= "2.0.3")."""
+
     def parts(value: str) -> tuple[int, ...]:
-        return tuple(
-            int(match.group()) if (match := re.match(r"\d+", part)) else 0
-            for part in value.split(".")
-        )
+        return tuple(int(match.group()) if (match := re.match(r"\d+", part)) else 0 for part in value.split("."))
 
     return parts(version) >= parts(reference)
 
@@ -176,9 +174,7 @@ class WasabiEngine(EngineBase):
             self.backend_architecture = self.determine_backend_architecture()
         version = get_backend_version(self.backend_architecture)
         for attempt in range(1, WASABI_COORDINATOR_START_ATTEMPTS + 1):
-            self.node.wait_synchronized_quiet(
-                timeout=WASABI_COORDINATOR_NODE_QUIET_TIMEOUT_SECONDS
-            )
+            self.node.wait_synchronized_quiet(timeout=WASABI_COORDINATOR_NODE_QUIET_TIMEOUT_SECONDS)
             wasabi_coordinator_ip, wasabi_coordinator_ports = self.driver.run(
                 "wasabi-coordinator",
                 f"{self.args.image_prefix}wasabi-coordinator:{version}",
@@ -222,8 +218,7 @@ class WasabiEngine(EngineBase):
                     self.driver.stop("wasabi-coordinator")
                     continue
                 raise StartupError(
-                    f"Wasabi coordinator failed to start: {exc}\n"
-                    f"Coordinator logs:\n{coordinator_logs}"
+                    f"Wasabi coordinator failed to start: {exc}\nCoordinator logs:\n{coordinator_logs}"
                 ) from exc
             log.info("- started wasabi-coordinator")
             return
@@ -241,9 +236,7 @@ class WasabiEngine(EngineBase):
         }
         if self.backend_architecture == BackendArchitecture.SPLIT:
             if self.coordinator is None:
-                raise StartupError(
-                    "Wasabi coordinator is not initialized for the split backend architecture"
-                )
+                raise StartupError("Wasabi coordinator is not initialized for the split backend architecture")
             distributor_env["ADDR_WASABI_COORDINATOR"] = self.coordinator.internal_ip
 
         distributor_version = self.scenario.distributor_version or self.scenario.default_version
@@ -259,14 +252,17 @@ class WasabiEngine(EngineBase):
         distributor_host, distributor_port = self.service_endpoint(
             wasabi_client_distributor_ip, 37128, wasabi_client_distributor_ports
         )
-        self.distributor = cast(InvoiceDistributor, self.init_wasabi_client(
-            distributor_version,
-            distributor_host,
-            port=distributor_port,
-            name="wasabi-client-distributor",
-            delay=(0, 0),
-            stop=(0, 0),
-        ))
+        self.distributor = cast(
+            InvoiceDistributor,
+            self.init_wasabi_client(
+                distributor_version,
+                distributor_host,
+                port=distributor_port,
+                name="wasabi-client-distributor",
+                delay=(0, 0),
+                stop=(0, 0),
+            ),
+        )
         if not self.distributor.wait_wallet(timeout=360):
             log.error("- could not start distributor (application timeout)")
             raise StartupError("Could not start distributor")
@@ -353,6 +349,8 @@ class WasabiEngine(EngineBase):
                 memory=(1024 if not version_at_least(version, "2.0.4") else 768),
                 cpu_request=(0.3 if not version_at_least(version, "2.0.4") else 0.1),
             )
+        except KubernetesResourceQuotaError:
+            raise
         except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
             log.warning(f"- could not start {name} ({e})")
             return None
@@ -427,15 +425,11 @@ class WasabiEngine(EngineBase):
                     "sources": [],
                 }
 
-        log_paths = sorted(
-            path for path in Path(label_root).rglob("Logs.txt") if path.is_file()
-        )
+        log_paths = sorted(path for path in Path(label_root).rglob("Logs.txt") if path.is_file())
         successful_txids = {
             match.group(1).lower()
             for path in log_paths
-            for match in SUCCESSFUL_BROADCAST_RE.finditer(
-                path.read_text(encoding="utf-8", errors="replace")
-            )
+            for match in SUCCESSFUL_BROADCAST_RE.finditer(path.read_text(encoding="utf-8", errors="replace"))
         }
         return {
             "engine": "wasabi",
@@ -456,6 +450,7 @@ class WasabiEngine(EngineBase):
 
     def update_coinjoins(self) -> None:
         log.debug("- updating coinjoins...".ljust(60), end="\r")
+
         def start_condition(client: EmulatorClient) -> bool:
             log.debug(
                 f"Checking client {client.name} with delay {client.delay} and stop {client.stop} "
@@ -545,9 +540,7 @@ class WasabiEngine(EngineBase):
             raise RuntimeError("Bitcoin node is not initialized")
         log.info(f"- mining {WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT} settlement blocks")
         if not self.node.mine_block(WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT):
-            raise RuntimeError(
-                f"Bitcoin node did not mine {WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT} settlement blocks"
-            )
+            raise RuntimeError(f"Bitcoin node did not mine {WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT} settlement blocks")
         log.info("- settlement blocks mined")
 
     def _get_current_round(self) -> int:
@@ -560,10 +553,7 @@ class WasabiEngine(EngineBase):
                 "wasabi-coordinator",
                 WASABI_COORDINATOR_LOG_PATH,
             )
-            successful_txids = {
-                match.group(1).lower()
-                for match in SUCCESSFUL_BROADCAST_RE.finditer(coordinator_log)
-            }
+            successful_txids = {match.group(1).lower() for match in SUCCESSFUL_BROADCAST_RE.finditer(coordinator_log)}
             return len(successful_txids)
 
         # In legacy versions, rounds are tracked by the backend

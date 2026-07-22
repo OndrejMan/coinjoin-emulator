@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
-from manager.exceptions import CoinjoinEmulatorError
+from manager.exceptions import CoinjoinEmulatorError, KubernetesResourceQuotaError
 
 # pylint: disable=protected-access
 
@@ -118,17 +118,16 @@ def _capture_service_body(
     )
 
 
-def _run_driver_with_mapped_volume(
-) -> tuple["KubernetesDriverClass", str, dict[int, int], list[dict[str, object]], list[dict[str, object]]]:
+def _run_driver_with_mapped_volume() -> tuple[
+    "KubernetesDriverClass", str, dict[int, int], list[dict[str, object]], list[dict[str, object]]
+]:
     KubernetesDriver, _ = _load_kubernetes_symbols()
     FakePortForwardServer.reset()
     pod_bodies: list[dict[str, object]] = []
     service_bodies: list[dict[str, object]] = []
     kube_client = SimpleNamespace(
         create_namespaced_pod=lambda **kwargs: pod_bodies.append(cast(dict[str, object], kwargs["body"])),
-        read_namespaced_pod_status=lambda **kwargs: SimpleNamespace(
-            status=SimpleNamespace(pod_ip="10.42.0.10")
-        ),
+        read_namespaced_pod_status=lambda **kwargs: SimpleNamespace(status=SimpleNamespace(pod_ip="10.42.0.10")),
         create_namespaced_service=lambda **kwargs: _capture_service_body(
             service_bodies,
             cast(dict[str, object], kwargs["body"]),
@@ -170,9 +169,7 @@ def _run_driver_with_mapped_volume(
 class KubernetesDriverTest(TestCase):
     @patch("manager.driver.kubernetes.config.load_incluster_config")
     @patch("manager.driver.kubernetes.config.load_kube_config")
-    def test_falls_back_to_incluster_auth(
-        self, load_kube_config: Mock, load_incluster_config: Mock
-    ) -> None:
+    def test_falls_back_to_incluster_auth(self, load_kube_config: Mock, load_incluster_config: Mock) -> None:
         KubernetesDriver, _ = _load_kubernetes_symbols()
         from kubernetes.config.config_exception import ConfigException  # pylint: disable=import-outside-toplevel
 
@@ -313,11 +310,49 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(ports, {})
         self.assertEqual(created_pods[0]["kind"], "Pod")
 
+    def test_run_reports_cpu_quota_exhaustion_explicitly(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+        quota_error = self._api_error(
+            403,
+            '{"message":"pods \\"wasabi-client-000\\" is forbidden: exceeded quota: '
+            "default-cldp6, requested: limits.cpu=1, used: limits.cpu=31500m, "
+            'limited: limits.cpu=32"}',
+        )
+        kube_client = SimpleNamespace(create_namespaced_pod=Mock(side_effect=quota_error))
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch("manager.driver.kubernetes.client.CoreV1Api", return_value=kube_client),
+        ):
+            driver = KubernetesDriver(namespace="man5-ns", reuse_namespace=True)
+            with self.assertRaisesRegex(
+                KubernetesResourceQuotaError,
+                r"Kubernetes CPU quota exhausted.*wasabi-client-000.*man5-ns.*"
+                r"default-cldp6.*limits\.cpu=1.*31500m.*limits\.cpu=32.*smaller scenario",
+            ):
+                driver.run("wasabi-client-000", "wasabi-client:2.6.0", skip_ip=True, cpu=1.0)
+
+        self.assertNotIn("wasabi-client-000", driver.managed_pod_names)
+
+    def test_run_preserves_non_quota_api_error(self) -> None:
+        KubernetesDriver, _ = _load_kubernetes_symbols()
+        forbidden = self._api_error(403, '{"message":"pods are forbidden by policy"}')
+        kube_client = SimpleNamespace(create_namespaced_pod=Mock(side_effect=forbidden))
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch("manager.driver.kubernetes.client.CoreV1Api", return_value=kube_client),
+        ):
+            driver = KubernetesDriver(namespace="man5-ns", reuse_namespace=True)
+            with self.assertRaises(type(forbidden)):
+                driver.run("wasabi-client-000", "wasabi-client:2.6.0", skip_ip=True, cpu=1.0)
+
     @staticmethod
-    def _api_error(status: int) -> Exception:
+    def _api_error(status: int, body: str = "") -> Exception:
         module = importlib.import_module("manager.driver.kubernetes")
         error = cast(Exception, module.ApiException())
         setattr(error, "status", status)
+        setattr(error, "body", body)
         return error
 
     @classmethod
@@ -394,9 +429,7 @@ class KubernetesDriverTest(TestCase):
             patch("manager.driver.kubernetes.monotonic", side_effect=[0, 1, 130]),
         ):
             driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
-            with self.assertRaisesRegex(
-                CoinjoinEmulatorError, "still present at the .*s deletion deadline"
-            ):
+            with self.assertRaisesRegex(CoinjoinEmulatorError, "still present at the .*s deletion deadline"):
                 driver.stop("wasabi-coordinator")
 
     def test_stop_retries_transient_delete_api_error(self) -> None:
@@ -443,9 +476,7 @@ class KubernetesDriverTest(TestCase):
             patch("manager.driver.kubernetes.monotonic", return_value=0),
         ):
             driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
-            with self.assertRaisesRegex(
-                CoinjoinEmulatorError, "Failed to delete Kubernetes pod.*API status 403"
-            ):
+            with self.assertRaisesRegex(CoinjoinEmulatorError, "Failed to delete Kubernetes pod.*API status 403"):
                 driver.stop("wasabi-coordinator")
 
         delete_service.assert_not_called()
@@ -538,15 +569,17 @@ class KubernetesDriverTest(TestCase):
         KubernetesDriver, _ = _load_kubernetes_symbols()
 
         def successful_response() -> Mock:
-            response = Mock(spec=[
-                "is_open",
-                "update",
-                "peek_stdout",
-                "read_stdout",
-                "peek_stderr",
-                "read_stderr",
-                "close",
-            ])
+            response = Mock(
+                spec=[
+                    "is_open",
+                    "update",
+                    "peek_stdout",
+                    "read_stdout",
+                    "peek_stderr",
+                    "read_stderr",
+                    "close",
+                ]
+            )
             response.is_open.side_effect = [True, False]
             response.peek_stdout.return_value = False
             response.peek_stderr.return_value = False
@@ -637,9 +670,7 @@ class KubernetesDriverTest(TestCase):
         )
         regular_client = Mock()
         diagnostics_client = SimpleNamespace(
-            list_namespaced_pod=lambda **_kwargs: SimpleNamespace(
-                items=[running, oomkilled, evicted]
-            ),
+            list_namespaced_pod=lambda **_kwargs: SimpleNamespace(items=[running, oomkilled, evicted]),
             read_namespaced_pod_log=lambda **kwargs: f"logs for {kwargs['name']}",
             list_namespaced_event=lambda **_kwargs: SimpleNamespace(items=[event]),
         )

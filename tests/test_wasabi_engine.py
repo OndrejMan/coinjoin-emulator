@@ -16,7 +16,7 @@ from manager.engine.wasabi_engine import (
     WasabiEngine,
     version_at_least,
 )
-from manager.exceptions import StartupError
+from manager.exceptions import KubernetesResourceQuotaError, StartupError
 from manager.wasabi_backend_factory import BackendArchitecture
 
 # pylint: disable=protected-access
@@ -158,6 +158,16 @@ def test_client_start_requests_low_cpu_with_burst_limit() -> None:
     assert run_kwargs["memory"] == 768
 
 
+def test_client_start_does_not_retry_kubernetes_cpu_quota_exhaustion() -> None:
+    engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
+    driver.run.side_effect = KubernetesResourceQuotaError(
+        "Kubernetes CPU quota exhausted while creating pod 'wasabi-client-000'"
+    )
+
+    with pytest.raises(KubernetesResourceQuotaError, match="CPU quota exhausted"):
+        engine.start_client(0, WalletConfig(funds=[1000000]))
+
+
 def test_coordinator_timeout_includes_container_logs() -> None:
     engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
     coordinator = Mock()
@@ -171,9 +181,7 @@ def test_coordinator_timeout_includes_container_logs() -> None:
         with pytest.raises(StartupError, match="disk full"):
             engine.start_wasabi_coordinator()
 
-    coordinator.wait_ready.assert_called_once_with(
-        timeout=WASABI_COORDINATOR_START_TIMEOUT_SECONDS
-    )
+    coordinator.wait_ready.assert_called_once_with(timeout=WASABI_COORDINATOR_START_TIMEOUT_SECONDS)
     driver.logs.assert_called_once_with("wasabi-coordinator")
     driver.stop.assert_not_called()
     assert WASABI_COORDINATOR_START_TIMEOUT_SECONDS == 120
