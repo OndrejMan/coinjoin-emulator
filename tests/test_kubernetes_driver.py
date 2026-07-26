@@ -118,7 +118,9 @@ def _capture_service_body(
     )
 
 
-def _run_driver_with_mapped_volume() -> tuple[
+def _run_driver_with_mapped_volume(
+    *, run_id: str | None = None
+) -> tuple[
     "KubernetesDriverClass", str, dict[int, int], list[dict[str, object]], list[dict[str, object]]
 ]:
     KubernetesDriver, _ = _load_kubernetes_symbols()
@@ -145,7 +147,11 @@ def _run_driver_with_mapped_volume() -> tuple[
             FakePortForwardServer,
         ),
     ):
-        driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+        driver = KubernetesDriver(
+            namespace="coinjoin-test",
+            reuse_namespace=True,
+            run_id=run_id,
+        )
         pod_ip, ports = driver.run(
             "btc-node",
             "btc-node:latest",
@@ -275,6 +281,22 @@ class KubernetesDriverTest(TestCase):
                 }
             ],
         )
+
+    def test_run_labels_pods_and_services_with_run_id(self) -> None:
+        _, _, _, pod_bodies, service_bodies = _run_driver_with_mapped_volume(
+            run_id="wasabi-run-1"
+        )
+
+        pod_labels = cast(
+            dict[str, str],
+            cast(dict[str, object], pod_bodies[0]["metadata"])["labels"],
+        )
+        service_labels = cast(
+            dict[str, str],
+            cast(dict[str, object], service_bodies[0]["metadata"])["labels"],
+        )
+        self.assertEqual(pod_labels["coinjoin.run-id"], "wasabi-run-1")
+        self.assertEqual(service_labels["coinjoin.run-id"], "wasabi-run-1")
 
     def test_run_does_not_create_empty_service_when_no_ports_are_exposed(self) -> None:
         KubernetesDriver, _ = _load_kubernetes_symbols()

@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -76,9 +76,31 @@ def test_main_accepts_deterministic_run_and_controller_markers() -> None:
     assert args.controller_done_marker == "/artifacts/controller.done"
 
 
-def test_main_rejects_unsafe_run_id() -> None:
+@pytest.mark.parametrize("run_id", ["../unsafe", "run-", "run_", "run."])
+def test_main_rejects_unsafe_run_id(run_id: str) -> None:
     with pytest.raises(SystemExit, match="2"):
-        cli.main(["run", "--run-id", "../unsafe"])
+        cli.main(["run", "--run-id", run_id])
+
+
+def test_create_kubernetes_driver_forwards_run_id() -> None:
+    args = SimpleNamespace(
+        driver="kubernetes",
+        namespace="coinjoin",
+        reuse_namespace=True,
+        disable_port_forward=True,
+        proxy="http://proxy.invalid",
+        run_id="wasabi-run-1",
+    )
+
+    with patch("manager.cli.KubernetesDriver") as driver:
+        cli.create_driver(args)
+
+    driver.assert_called_once_with(
+        "coinjoin",
+        True,
+        port_forward=False,
+        run_id="wasabi-run-1",
+    )
 
 
 def test_main_accepts_run_timezone_override() -> None:

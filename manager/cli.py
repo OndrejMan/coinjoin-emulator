@@ -22,7 +22,9 @@ from manager.engine.wasabi_engine import WasabiEngine
 
 DEFAULT_IMAGE_PREFIX = ""
 DEFAULT_RUN_TIMEZONE = "Europe/Prague"
-RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+RUN_ID_PATTERN = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$"
+)
 
 ParsedArgs = argparse.Namespace | SimpleNamespace
 DriverFactory = Callable[[ParsedArgs], Driver]
@@ -85,7 +87,9 @@ def timezone_name(value: str) -> str:
 def run_id(value: str) -> str:
     if len(value) > 63 or ".." in value or not RUN_ID_PATTERN.fullmatch(value):
         raise argparse.ArgumentTypeError(
-            "run ID must be at most 63 characters, match [A-Za-z0-9][A-Za-z0-9._-]*, and must not contain '..'"
+            "run ID must be at most 63 characters, begin and end with an "
+            "alphanumeric character, contain only [A-Za-z0-9._-], and must "
+            "not contain '..'"
         )
     return value
 
@@ -256,7 +260,12 @@ def create_driver(args: ParsedArgs) -> Driver:
                     "--disable-port-forward requires --proxy (or running inside the cluster) "
                     "so services remain reachable"
                 )
-            return KubernetesDriver(args.namespace, args.reuse_namespace, port_forward=not disable_port_forward)
+            return KubernetesDriver(
+                args.namespace,
+                args.reuse_namespace,
+                port_forward=not disable_port_forward,
+                run_id=getattr(args, "run_id", None),
+            )
         case _:
             raise ValueError(f"Unknown driver '{args.driver}'")
 

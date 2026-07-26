@@ -216,7 +216,13 @@ class PortForwardServer:
 
 
 class KubernetesDriver(Driver):
-    def __init__(self, namespace: str = "coinjoin", reuse_namespace: bool = False, port_forward: bool = True) -> None:
+    def __init__(
+        self,
+        namespace: str = "coinjoin",
+        reuse_namespace: bool = False,
+        port_forward: bool = True,
+        run_id: str | None = None,
+    ) -> None:
         try:
             config.load_kube_config()
         except ConfigException:
@@ -227,6 +233,7 @@ class KubernetesDriver(Driver):
         self.control_host = "127.0.0.1"
         self.port_forwards: dict[tuple[str, int], PortForwardServer] = {}
         self.port_forward_enabled = port_forward
+        self.run_id = run_id
         # Without port-forwarding the manager must reach pods at their pod IP
         # and container port (it runs inside the cluster, or behind a proxy).
         self.direct_network = not port_forward
@@ -365,10 +372,13 @@ class KubernetesDriver(Driver):
         if command is not None:
             container_spec["command"] = command
 
+        labels = {"app": name, **MANAGED_LABELS}
+        if self.run_id:
+            labels["coinjoin.run-id"] = self.run_id
         pod_manifest = {
             "apiVersion": "v1",
             "kind": "Pod",
-            "metadata": {"name": name, "labels": {"app": name, **MANAGED_LABELS}},
+            "metadata": {"name": name, "labels": labels},
             "spec": {
                 "restartPolicy": "Never",
                 "containers": [container_spec],
@@ -397,7 +407,7 @@ class KubernetesDriver(Driver):
             # name. Emulator images use these stable names for in-cluster DNS
             # (for example, JoinMarket connects to ``btc-node`` and
             # ``irc-server``).
-            "metadata": {"name": name, "labels": {"app": name, **MANAGED_LABELS}},
+            "metadata": {"name": name, "labels": labels},
             "spec": {
                 # Pod access from the external manager is handled through the
                 # Kubernetes port-forward API. ClusterIP is sufficient for
