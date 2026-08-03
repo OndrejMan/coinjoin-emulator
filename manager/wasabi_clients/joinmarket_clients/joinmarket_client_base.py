@@ -67,6 +67,8 @@ class JoinMarketClientServer:
 
         # Fidelity bond tracking
         self.fidelity_bonds = {}  # Track created bonds: {address: {amount, locktime, creation_block}}
+        # Producer-owned ground truth: one record per coinjoin this client starts.
+        self.round_events = []
 
         # Async HTTP client setup
         self._async_client = None
@@ -729,6 +731,23 @@ class JoinMarketClientServer:
         # When stopping not running maker, returns 401 response
         response = await self._rpc_async(method, endpoint)
         return response
+
+    def record_round_start(self, destination, amount_sats, counterparties, mixdepth, current_block, chain_height=None):
+        """Record a producer-owned round event for later reconciliation with the chain."""
+        event = {
+            "round_id": len(self.round_events) + 1,
+            "engine": "joinmarket",
+            "status": "started",
+            "taker": self.name,
+            "destination_address": destination,
+            "amount_sats": amount_sats,
+            "counterparties": counterparties,
+            "mixdepth": mixdepth,
+            "start_block": current_block,
+            "start_chain_height": chain_height,
+        }
+        self.round_events.append(event)
+        return event
 
     def start_coinjoin(
         self,
