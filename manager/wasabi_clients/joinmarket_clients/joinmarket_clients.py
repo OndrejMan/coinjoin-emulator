@@ -8,7 +8,8 @@ from typing import cast
 import httpx
 import requests
 
-from .joinmarket_client_base import JoinMarketClientServer, JsonDict
+from .joinmarket_client_base import JoinMarketClientServer
+from .types import JsonDict
 
 
 class MakerClient(JoinMarketClientServer):
