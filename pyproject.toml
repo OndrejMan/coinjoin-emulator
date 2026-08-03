@@ -20,12 +20,16 @@ dependencies = [
     "urllib3<2",
 ]
 
+[project.scripts]
+lint = "lint:main"
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["manager"]
+py-modules = ["lint"]
 
 [dependency-groups]
 dev = [
