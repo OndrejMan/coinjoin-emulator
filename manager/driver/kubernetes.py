@@ -1,15 +1,17 @@
 import base64
+import os
+import tarfile
 import traceback
 from functools import cached_property
 from io import BytesIO
-import os
-import tarfile
 from time import sleep
-from . import Driver
-from kubernetes import client, config
-from kubernetes.stream import stream
-from kubernetes.client.exceptions import ApiException
+
 import backoff
+from kubernetes import client, config
+from kubernetes.client.exceptions import ApiException
+from kubernetes.stream import stream
+
+from . import Driver
 
 
 class KubernetesDriver(Driver):
@@ -18,7 +20,7 @@ class KubernetesDriver(Driver):
         if in_cluster:
             try:
                 config.load_incluster_config()
-            except Exception as e:
+            except Exception:
                 config.load_kube_config()
         else:
             config.load_kube_config()
@@ -276,7 +278,7 @@ class KubernetesDriver(Driver):
 
             if cond1 or cond2:
                 print(f"All required log files found in {dst_path} after {time.time() - start_time} seconds")
-                print(f"Waiting for file transfer to complete...")
+                print("Waiting for file transfer to complete...")
                 time.sleep(10)
                 if found:
                     print("All required log files still found in {} after {} seconds".format(dst_path, time.time() - start_time))
@@ -368,7 +370,7 @@ class KubernetesDriver(Driver):
                 'memory_limit_mb': memory_limit_mb,
                 'memory_percent': (memory_kb / 1024 / memory_limit_mb * 100) if memory_limit_mb > 0 else 0
             }
-        except Exception as e:
+        except Exception:
             # Silently fail - pod might be terminating
             return None
 

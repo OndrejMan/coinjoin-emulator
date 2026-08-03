@@ -1,29 +1,28 @@
-import os
-from traceback import print_exception
-
-from manager.engine.engine_base import EngineBase
-from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
-from manager.wasabi_backend_protocol import WasabiBackendProtocol
-from manager.wasabi_coordinator_protocol import WasabiCoordinatorProtocol
-from manager.wasabi_backend_factory import (
-    detect_backend_architecture,
-    create_backend,
-    create_coordinator,
-    get_backend_version,
-    get_backend_image_names,
-    BackendArchitecture,
-)
-from manager.wasabi_clients import WasabiClient
-from time import sleep, time
-import sys
-import random
-from pathlib import Path
-import re
 import json
-import tempfile
 import multiprocessing
 import multiprocessing.pool
+import os
+import random
+import re
+import sys
+import tempfile
+from pathlib import Path
+from time import sleep, time
+from traceback import print_exception
 
+from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
+from manager.engine.engine_base import EngineBase
+from manager.wasabi_backend_factory import (
+    BackendArchitecture,
+    create_backend,
+    create_coordinator,
+    detect_backend_architecture,
+    get_backend_image_names,
+    get_backend_version,
+)
+from manager.wasabi_backend_protocol import WasabiBackendProtocol
+from manager.wasabi_clients import WasabiClient
+from manager.wasabi_coordinator_protocol import WasabiCoordinatorProtocol
 
 SUCCESSFUL_BROADCAST_RE = re.compile(
     r"successfully\s+broadcast(?:ed)?\s+(?:the\s+)?coinjoin(?:\s+transaction)?:\s*([0-9a-f]{64})",
@@ -195,7 +194,7 @@ class WasabiEngine(EngineBase):
             stop=(0, 0),
         )
         if not self.distributor.wait_wallet(timeout=360):
-            print(f"- could not start distributor (application timeout)")
+            print("- could not start distributor (application timeout)")
             raise Exception("Could not start distributor")
         print("- started distributor")
 
@@ -300,7 +299,7 @@ class WasabiEngine(EngineBase):
                     "/home/wasabi/.walletwasabi/backend/",
                     os.path.join(data_path, "wasabi-backend-2.6"),
                 )
-                print(f"- stored backend-2.6 logs")
+                print("- stored backend-2.6 logs")
 
                 try:
                     self.driver.download(
@@ -308,9 +307,9 @@ class WasabiEngine(EngineBase):
                         "/home/wasabi/.walletwasabi/coordinator/",
                         os.path.join(data_path, "wasabi-coordinator"),
                     )
-                    print(f"- stored coordinator logs")
+                    print("- stored coordinator logs")
                 except Exception:
-                    print(f"- could not store coordinator logs")
+                    print("- could not store coordinator logs")
             else:
                 # Store logs from legacy backend
                 self.driver.download(
@@ -318,9 +317,9 @@ class WasabiEngine(EngineBase):
                     "/home/wasabi/.walletwasabi/backend/",
                     os.path.join(data_path, "wasabi-backend"),
                 )
-                print(f"- stored backend logs")
+                print("- stored backend logs")
         except Exception:
-            print(f"- could not store backend logs")
+            print("- could not store backend logs")
             return {
                 "engine": "wasabi",
                 "complete": False,
@@ -396,7 +395,7 @@ class WasabiEngine(EngineBase):
                     self.current_round = self._get_current_round()
                     break
                 except Exception as e:
-                    print(f"- could not get rounds".ljust(60), end="\r")
+                    print("- could not get rounds".ljust(60), end="\r")
                     print(f"Round exception: {e}", file=sys.stderr)
 
             for _ in range(3):
@@ -404,7 +403,7 @@ class WasabiEngine(EngineBase):
                     self.current_block = self.node.get_block_count() - initial_block  # type: ignore
                     break
                 except Exception as e:
-                    print(f"- could not get blocks".ljust(60), end="\r")
+                    print("- could not get blocks".ljust(60), end="\r")
                     print(f"Block exception: {e}", file=sys.stderr)
 
             self.update_invoice_payments()
@@ -415,7 +414,7 @@ class WasabiEngine(EngineBase):
             )
             sleep(1)
         print()
-        print(f"- limit reached")
+        print("- limit reached")
 
     def _get_current_round(self) -> int:
         if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:

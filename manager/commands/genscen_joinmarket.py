@@ -4,12 +4,13 @@ JoinMarket Configuration Generator
 Generates customizable JoinMarket simulation configurations with takers and makers
 """
 
+import argparse
 import json
 import random
-from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass, field
 from enum import Enum
-import argparse
+from typing import Any, Dict, List, Optional
+
 
 class OfferType(Enum):
     ABSOLUTE = "sw0absoffer"
@@ -644,7 +645,7 @@ def handler(args):
         # Calculate liquidity multiplier to maintain proportional liquidity
         regular_maker_avg_utxos = (args.wallet_min_utxos + args.wallet_max_utxos) / 2
         bond_maker_liquidity_multiplier = bond_maker_min_utxos / regular_maker_avg_utxos
-        print(f"Bond maker UTXO configuration:")
+        print("Bond maker UTXO configuration:")
         print(f"  - Total takers: {total_taker_count}")
         print(f"  - Bond makers: {makers_with_bonds}")
         print(f"  - UTXOs per bond maker: {bond_maker_min_utxos}")

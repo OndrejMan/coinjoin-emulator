@@ -1,16 +1,18 @@
-import backoff
 import asyncio
-import random
-
-from manager.engine.engine_base import EngineBase
-from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
-from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
-from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
-from time import sleep, time
 import json
 import os
+import random
 import shutil
 import sys
+from time import sleep, time
+
+import backoff
+
+from manager.engine.configuration import JoinMarketConfig, JoinMarketRole, ScenarioConfig, WalletConfig
+from manager.engine.engine_base import EngineBase
+from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
+from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
+
 
 class JoinmarketEngine(EngineBase):
 
@@ -182,7 +184,7 @@ class JoinmarketEngine(EngineBase):
             proxy=self.args.proxy
         )
 
-        print(f"- started distributor")
+        print("- started distributor")
 
     def prepare_additional_funding(self, wallets):
         """
@@ -386,7 +388,7 @@ class JoinmarketEngine(EngineBase):
 
         # Check if orderbook watcher client exists
         if client is None:
-            print(f"- no orderbook watcher client to store")
+            print("- no orderbook watcher client to store")
             return
 
         src = getattr(client, "snapshot_dir", None)
@@ -627,7 +629,7 @@ class JoinmarketEngine(EngineBase):
                         self.current_block = self.node.get_block_count() - initial_block
                         break
                     except Exception as e:
-                        print(f"- could not get blocks".ljust(60), end="\r")
+                        print("- could not get blocks".ljust(60), end="\r")
                         print(f"Block exception: {e}", file=sys.stderr)
 
                 # Check resource usage every 5 minutes (10 iterations * 30s = 5 min)
@@ -660,7 +662,7 @@ class JoinmarketEngine(EngineBase):
                 sleep(30)
 
             print()
-            print(f"- limit reached")
+            print("- limit reached")
             sleep(60)
             self.node.mine_block()
 
