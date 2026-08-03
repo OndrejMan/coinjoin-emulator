@@ -243,7 +243,9 @@ class JoinmarketEngine(EngineBase):
                 # Mine additional blocks to ensure fidelity bond transactions are confirmed
                 # JoinMarket needs confirmed UTXOs to calculate bond values for maker offers
                 print("Mining blocks to confirm fidelity bond transactions")
-                for i in range(15):  # Mine 15 blocks for solid confirmation
+                if self.node is None:
+                    raise RuntimeError("Bitcoin node is not initialized")
+                for _ in range(15):  # Mine 15 blocks for solid confirmation
                     self.node.mine_block()
                 print("- fidelity bond confirmations completed")
 
@@ -401,10 +403,11 @@ class JoinmarketEngine(EngineBase):
             except Exception as e:
                 print(f"- could not update {client.name} ({e})")
 
-        try:
-            self.obwatch_client.update(self.current_block, self.current_round)
-        except Exception as e:
-            print(f"- could not update obwatch client ({e})")
+        if self.obwatch_client is not None:
+            try:
+                self.obwatch_client.update(self.current_block, self.current_round)
+            except Exception as e:
+                print(f"- could not update obwatch client ({e})")
 
     async def update_coinjoins_joinmarket_async(self):
         """
