@@ -1,9 +1,7 @@
 import asyncio
 import os
-import random
 import shutil
 import sys
-from collections.abc import Coroutine
 from time import sleep, time
 from typing import cast
 
@@ -12,11 +10,12 @@ from manager.engine.configuration import JoinMarketConfig, JoinMarketRole, Scena
 from manager.engine.engine_base import EngineArgs, EngineBase
 from manager.engine.joinmarket.events import JoinMarketRoundEventsMixin
 from manager.engine.joinmarket.lifecycle import JoinMarketLifecycleMixin
+from manager.engine.joinmarket.rounds import JoinMarketRoundsMixin
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
 
 
-class JoinmarketEngine(JoinMarketLifecycleMixin, JoinMarketRoundEventsMixin, EngineBase):
+class JoinmarketEngine(JoinMarketRoundsMixin, JoinMarketLifecycleMixin, JoinMarketRoundEventsMixin, EngineBase):
 
     def __init__(self, args: EngineArgs, driver: Driver) -> None:
         super().__init__(args, driver,
@@ -258,77 +257,9 @@ class JoinmarketEngine(JoinMarketLifecycleMixin, JoinMarketRoundEventsMixin, Eng
 
 
 
-    def update_coinjoins_joinmarket(self) -> None:
-        for emulator_client in self.clients:
-            client = cast(JoinMarketClientServer, emulator_client)
-            try:
-                # Check if client just reached its limit
-                was_active = not client.is_paused(self.current_block)
-                delta = client.update(self.current_block, self.current_round)
-                now_paused = client.is_paused(self.current_block)
 
-                # Log when a client reaches its coinjoin limit
-                if was_active and now_paused and hasattr(client, 'max_coinjoins') and client.max_coinjoins > 0:
-                    if hasattr(client, 'completed_coinjoins') and client.completed_coinjoins >= client.max_coinjoins:
-                        print(f"✓ {client.name} reached max coinjoins limit ({client.max_coinjoins})")
 
-                # Apply any change in round count; alternatively, have the client trigger an event.
-                self.current_round += delta
-            except Exception as e:
-                print(f"- could not update {client.name} ({e})")
 
-        if self.obwatch_client is not None:
-            try:
-                self.obwatch_client.update(self.current_block, self.current_round)
-            except Exception as e:
-                print(f"- could not update obwatch client ({e})")
-
-    async def update_coinjoins_joinmarket_async(self) -> None:
-        """
-        Async version: Update all clients in parallel using asyncio.gather()
-        Adds jitter between task creation to prevent synchronized RPC storms
-        """
-        # Create tasks for all client updates with jitter to desynchronize RPC calls
-        client_tasks: list[Coroutine[object, object, int]] = []
-        for emulator_client in self.clients:
-            task = self._update_client_async(cast(JoinMarketClientServer, emulator_client))
-            client_tasks.append(task)
-            # Add jitter between task creations to desynchronize Bitcoin Core RPC calls
-            jitter = random.uniform(0.01, 0.05)  # 10-50ms jitter
-            await asyncio.sleep(jitter)
-
-        # Add orderbook watcher client task if it exists
-        if self.obwatch_client:
-            client_tasks.append(self._update_obwatch_async(self.obwatch_client))
-
-        # Run all updates concurrently
-        results = await asyncio.gather(*client_tasks, return_exceptions=True)
-        
-        # Process results and update round count
-        for i, result in enumerate(results[:-1] if self.obwatch_client else results):
-            if isinstance(result, Exception):
-                client_name = self.clients[i].name if i < len(self.clients) else "unknown"
-                print(f"- could not update {client_name} ({result})")
-            elif isinstance(result, int):
-                # Apply any change in round count
-                self.current_round += result
-
-    async def _update_client_async(self, client: JoinMarketClientServer) -> int:
-        """Helper to update a single client asynchronously"""
-        try:
-            delta = await client.update_async(self.current_block, self.current_round)
-            return delta
-        except Exception as e:
-            print(f"- could not update {client.name} ({e})")
-            return 0
-
-    async def _update_obwatch_async(self, obwatch_client: JoinMarketClientServer) -> int:
-        """Helper to update orderbook watcher client asynchronously"""
-        try:
-            return await obwatch_client.update_async(self.current_block, self.current_round)
-        except Exception as e:
-            print(f"- could not update obwatch client ({e})")
-            return 0
 
     async def cleanup_async_clients(self) -> None:
         """
@@ -348,34 +279,6 @@ class JoinmarketEngine(JoinMarketLifecycleMixin, JoinMarketRoundEventsMixin, Eng
             await asyncio.gather(*cleanup_tasks, return_exceptions=True)
             print("- closed all async HTTP clients")
 
-    def check_client_resources(self) -> None:
-        """
-        Check resource usage for a sample of client pods.
-        Logs memory usage and alerts if pods are near limits.
-        """
-        # Sample 5 random clients to avoid overhead
-        import random
-        sample_size = min(5, len(self.clients))
-        sample_clients = random.sample(self.clients, sample_size) if self.clients else []
-
-        high_usage_count = 0
-        for client in sample_clients:
-            stats = getattr(self.driver, "get_pod_resource_usage", None)
-            stats = stats(client.name) if stats is not None else None
-            if stats:
-                mem_mb = stats['memory_mb']
-                mem_limit = stats['memory_limit_mb']
-                mem_pct = stats['memory_percent']
-
-                # Log if usage is over 80%
-                if mem_pct > 80:
-                    print(f"[RESOURCE WARNING] {client.name}: {mem_mb:.1f}/{mem_limit}MB ({mem_pct:.1f}%)")
-                    high_usage_count += 1
-                elif mem_pct > 60:
-                    print(f"[RESOURCE] {client.name}: {mem_mb:.1f}/{mem_limit}MB ({mem_pct:.1f}%)")
-
-        if high_usage_count > 0:
-            print(f"[RESOURCE] {high_usage_count}/{sample_size} sampled pods using >80% memory")
 
     def shutdown_engine(self) -> None:
         """
