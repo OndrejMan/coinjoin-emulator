@@ -544,6 +544,8 @@ class KubernetesLocalProxy:
                 os.remove(output_file)
             raise Exception(f"Failed to reassemble chunks: {e}")
 
+        return True
+
     def _cleanup_remote_files(self, file_pattern):
         """
         Remove files matching pattern from remote pod.
@@ -840,6 +842,8 @@ class KubernetesLocalProxy:
         result = subprocess.run(stop_cmd, capture_output=True, text=True, check=True)
         print(f"Stop command result: {result.stdout}")
 
+        return {"status": "stopped", "simulation_id": sim_id}
+
     def download_logs(self, local_destination="./logs", all_logs=False, last_n=None):
         """
         Download logs from the orchestrator container to local machine.
@@ -1057,3 +1061,5 @@ class KubernetesLocalProxy:
                     subprocess.run(apply_cmd, check=True)
                 else:
                     print(f"Warning: {manifest} not found in {manifest_dir}")
+
+        return True
