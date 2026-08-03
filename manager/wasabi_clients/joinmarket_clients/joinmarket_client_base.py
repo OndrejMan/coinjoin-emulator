@@ -133,7 +133,7 @@ class JoinMarketClientServer:
             tumbler_options=tumbler_options,
             time_between_rounds=(joinmarket.time_between_rounds if joinmarket else 0) or 0,
             has_fidelity_bonds=has_fidelity_bonds,
-            max_coinjoins=wallet.get("max_coinjoins", 0),
+            max_coinjoins=(joinmarket.max_coinjoins if joinmarket else None) or 0,
             host=host,
             proxy=proxy
         )
