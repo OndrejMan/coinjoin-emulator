@@ -50,6 +50,36 @@ def run_id(value):
     return value
 
 
+def write_controller_marker(path):
+    if not path:
+        return
+    marker = os.path.abspath(path)
+    os.makedirs(os.path.dirname(marker), exist_ok=True)
+    with open(marker, "w", encoding="utf-8") as stream:
+        stream.write("done\n")
+
+
+def finalize_controller_marker(exit_code):
+    done_marker = getattr(args, "controller_done_marker", "")
+    failed_marker = getattr(args, "controller_failed_marker", "")
+    marker = done_marker if exit_code == 0 else failed_marker
+    try:
+        write_controller_marker(marker)
+    except OSError as error:
+        print(f"- failed to write controller marker {marker}: {error}", file=sys.stderr, flush=True)
+        if exit_code == 0:
+            try:
+                write_controller_marker(failed_marker)
+            except OSError as failed_error:
+                print(
+                    f"- failed to write controller failure marker {failed_marker}: {failed_error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        exit_code = 1
+    return exit_code
+
+
 def run():
     if engine is None:
         raise RuntimeError("Engine is not initialized")
@@ -62,27 +92,36 @@ def run():
     signal.signal(signal.SIGTERM, handle_shutdown_signal)
     signal.signal(signal.SIGINT, handle_shutdown_signal)
 
+    exit_code = 0
     try:
         engine.run()
     except KeyboardInterrupt:
         print()
         print("KeyboardInterrupt received", flush=True)
+        exit_code = 130
     except SystemExit:
         print("[manager.py] SystemExit caught, proceeding to cleanup...", flush=True)
         raise  # Re-raise to ensure finally runs
     except Exception as e:
         print(f"Terminating exception: {e}", file=sys.stderr, flush=True)
         print_exception(e)
+        exit_code = 1
     finally:
         print("[manager.py] Starting cleanup phase...", flush=True)
         engine.stop_coinjoins()
         if not args.no_logs:
             print("[manager.py] Storing logs...", flush=True)
-            engine.store_logs()
-            # time.sleep(10)
+            try:
+                engine.store_logs()
+            except Exception as e:
+                print(f"- failed to store logs: {e}", file=sys.stderr, flush=True)
+                print_exception(e)
+                exit_code = 1
         print("[manager.py] Cleaning up resources...", flush=True)
         driver.cleanup(args.image_prefix)
         print("[manager.py] Cleanup complete", flush=True)
+
+    return finalize_controller_marker(exit_code)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run coinjoin simulation setup")
@@ -152,6 +191,16 @@ if __name__ == "__main__":
         type=run_id,
         default=None,
         help="Deterministic output directory name instead of the timestamp/scenario name.",
+    )
+    run_subparser.add_argument(
+        "--controller-done-marker",
+        default="",
+        help="Write this marker after logs and requested Bitcoin data are stored.",
+    )
+    run_subparser.add_argument(
+        "--controller-failed-marker",
+        default="",
+        help="Write this marker when the emulation or artifact collection fails.",
     )
     run_subparser.add_argument("--proxy", type=str, default="")
     run_subparser.add_argument("--namespace", type=str, default="coinjoin")
@@ -227,7 +276,7 @@ if __name__ == "__main__":
         case "clean":
             driver.cleanup(args.image_prefix)
         case "run":
-            run()
+            sys.exit(run())
         case _:
             print(f"Unknown command '{args.command}'")
             sys.exit(1)
