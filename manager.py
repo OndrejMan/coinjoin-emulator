@@ -10,6 +10,7 @@ import manager.commands.genscen
 import manager.commands.genscen_joinmarket
 import sys
 import argparse
+import re
 import os
 
 
@@ -24,6 +25,19 @@ def handle_shutdown_signal(signum, frame):
     print(f"\n[manager.py] Received {signal_name}, triggering cleanup...", flush=True)
     # Raise SystemExit which will trigger the finally block
     sys.exit(1)
+
+RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
+def run_id(value):
+    if len(value) > 63 or ".." in value or not RUN_ID_PATTERN.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            "run ID must be at most 63 characters, begin and end with an "
+            "alphanumeric character, contain only [A-Za-z0-9._-], and must "
+            "not contain '..'"
+        )
+    return value
+
 
 def run():
     if engine is None:
@@ -114,6 +128,12 @@ if __name__ == "__main__":
     )
     run_subparser.add_argument(
         "--control-ip", type=str, help="control ip", default="localhost"
+    )
+    run_subparser.add_argument(
+        "--run-id",
+        type=run_id,
+        default=None,
+        help="Deterministic output directory name instead of the timestamp/scenario name.",
     )
     run_subparser.add_argument("--proxy", type=str, default="")
     run_subparser.add_argument("--namespace", type=str, default="coinjoin")

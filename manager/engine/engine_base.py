@@ -268,10 +268,16 @@ class EngineBase:
         except Exception:
             print(f"- could not store {client.name} logs")
 
+    def log_run_path(self):
+        requested_run_id = getattr(self.args, "run_id", "")
+        if requested_run_id:
+            return f"./logs/{requested_run_id}"
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
+        return f"./logs/{timestamp}_{self.scenario.name}"
+
     def store_logs(self):
         print("Storing logs")
-        time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
-        experiment_path = f"./logs/{time}_{self.scenario.name}"
+        experiment_path = self.log_run_path()
         data_path = os.path.join(experiment_path, "data")
         os.makedirs(data_path)
 
