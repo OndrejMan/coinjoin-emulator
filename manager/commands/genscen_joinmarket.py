@@ -640,7 +640,7 @@ def handler(args):
         # Formula: max(4, total_takers * multiplier / num_bond_makers)
         bond_maker_min_utxos = max(int(total_taker_count * 1.5), int(total_taker_count * args.bond_maker_utxo_multiplier / makers_with_bonds))
         # Calculate total UTXOs needed for all bond makers
-        total_bond_utxos = bond_maker_min_utxos * makers_with_bonds
+        bond_maker_min_utxos * makers_with_bonds
         # Calculate liquidity multiplier to maintain proportional liquidity
         regular_maker_avg_utxos = (args.wallet_min_utxos + args.wallet_max_utxos) / 2
         bond_maker_liquidity_multiplier = bond_maker_min_utxos / regular_maker_avg_utxos

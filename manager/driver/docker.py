@@ -55,7 +55,7 @@ class DockerDriver(Driver):
         # Normalize port mapping to match Kubernetes format
         # Docker format: {'8080/tcp': [{'HostIp': '', 'HostPort': '8080'}]}
         # Kubernetes format: {8080: 8080}
-        raw_port_mapping = container.attrs['NetworkSettings']['Ports']
+        container.attrs['NetworkSettings']['Ports']
         port_mapping = {}
         
         if ports:
