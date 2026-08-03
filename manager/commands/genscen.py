@@ -3,13 +3,14 @@ import json
 import os
 import random
 import sys
+from collections.abc import Callable, Iterable
 
 import numpy.random
 
-from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
+from manager.engine.configuration import FundConfig, ScenarioConfig, WalletConfig, WasabiConfig
 
 
-def create_backend_config(args):
+def create_backend_config(args: argparse.Namespace) -> dict[str, object]:
     """Create backend configuration dictionary."""
     return {
         "MaxInputCountByRound": args.max_coinjoin,
@@ -23,7 +24,7 @@ def create_backend_config(args):
     }
 
 
-def setup_parser(parser: argparse.ArgumentParser):
+def setup_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--engine", type=str, default="wasabi", help="engine type")
     parser.add_argument("--name", type=str, help="scenario name")
     parser.add_argument(
@@ -99,9 +100,9 @@ def setup_parser(parser: argparse.ArgumentParser):
     )
 
 
-def format_name(args):
+def format_name(args: argparse.Namespace) -> str:
     if args.name:
-        return args.name
+        return str(args.name)
     if args.type == "static":
         return (
             f"{args.distribution}-{args.type}-{args.client_count}-{args.utxo_count}utxo"
@@ -119,7 +120,7 @@ def format_name(args):
     return f"{args.distribution}-{args.type}-{args.client_count}"
 
 
-def prepare_skip_rounds(args):
+def prepare_skip_rounds(args: argparse.Namespace) -> Callable[[int], list[int]] | None:
     if not args.skip_rounds:
         return None
     if args.skip_rounds.startswith("random"):
@@ -158,7 +159,7 @@ def prepare_skip_rounds(args):
             sys.exit(1)
 
 
-def prepare_distribution(distribution):
+def prepare_distribution(distribution: str) -> Callable[[int], Iterable[int]] | None:
     dist_name = distribution.split("[")[0]
     dist_params = None
     if "[" in distribution:
@@ -181,9 +182,16 @@ def prepare_distribution(distribution):
             return None
 
 
-def prepare_wallet(args, idx, distribution, skip_rounds):
+def prepare_wallet(
+    args: argparse.Namespace,
+    idx: int,
+    distribution: Callable[[int], Iterable[int]] | None,
+    skip_rounds: Callable[[int], list[int]] | None,
+) -> WalletConfig:
     """Create a WalletConfig object based on args and wallet type."""
-    funds = None
+    if distribution is None:
+        raise ValueError(f"Unknown fund distribution: {args.distribution}")
+    funds: list[int | FundConfig] | None = None
     anon_score_target = None
     redcoin_isolation = None
     skip_rounds_list = None
@@ -244,7 +252,7 @@ def prepare_wallet(args, idx, distribution, skip_rounds):
     )
 
 
-def handler(args):
+def handler(args: argparse.Namespace) -> None:
     print("Generating scenario...")
     
     distribution = prepare_distribution(args.distribution)
