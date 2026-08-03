@@ -46,11 +46,11 @@ class ContainerCollection:
         name: str,
         hostname: str,
         network: str,
-        ports: dict[str, int],
+        ports: dict[str, int] | dict[int, int],
         environment: dict[str, str],
-        volumes: dict[str, dict[str, str]] | None,
-        command: list[str] | None,
-    ) -> object: ...
+        volumes: dict[str, dict[str, str]] | None = ...,
+        command: list[str] | None = ...,
+    ) -> Container: ...
     def list(self, *, all: bool = ...) -> list[Container]: ...
 
 class Network:
