@@ -7,6 +7,7 @@ from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarke
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
 from time import sleep, time
+import json
 import os
 import shutil
 import sys
@@ -290,9 +291,94 @@ class JoinmarketEngine(EngineBase):
         )
         self.obwatch_client = ob_client
 
+    def collect_round_events(self):
+        """Producer-owned round records from every client that started a coinjoin."""
+        events = []
+        for client in self.clients:
+            events.extend(dict(event) for event in getattr(client, "round_events", []))
+        return events
+
+    def _script_addresses(self, output):
+        script_pub_key = output.get("scriptPubKey") or {}
+        addresses = []
+        if script_pub_key.get("address"):
+            addresses.append(script_pub_key["address"])
+        addresses.extend(script_pub_key.get("addresses") or [])
+        return addresses
+
+    def _reconcile_exported_match(self, event, txid, block_height):
+        existing_txid = event.get("txid")
+        if existing_txid and existing_txid != txid:
+            additional = event.setdefault("additional_destination_matches", [])
+            candidate = {"txid": txid, "block_height": block_height}
+            if candidate not in additional:
+                additional.append(candidate)
+            return
+        event["status"] = "confirmed"
+        event["txid"] = txid
+        event["block_height"] = block_height
+        event["confirmed_chain_height"] = block_height
+        event["match_source"] = "destination_output"
+
+    def match_joinmarket_rounds_to_blocks(self, data_path):
+        """Match each recorded round to the mined transaction paying its destination."""
+        labels_by_destination = {
+            event["destination_address"]: event
+            for event in self.collect_round_events()
+            if event.get("destination_address")
+        }
+        if not labels_by_destination:
+            return []
+
+        node_path = os.path.join(data_path, "btc-node")
+        if not os.path.isdir(node_path):
+            return list(labels_by_destination.values())
+
+        for filename in sorted(os.listdir(node_path)):
+            if not filename.startswith("block_") or not filename.endswith(".json"):
+                continue
+            with open(os.path.join(node_path, filename), encoding="utf-8") as f:
+                block = json.load(f)
+            block_height = block.get("height")
+            for tx in block.get("tx", []):
+                txid = tx.get("txid")
+                if not txid:
+                    continue
+                for output in tx.get("vout", []):
+                    for address in self._script_addresses(output):
+                        event = labels_by_destination.get(address)
+                        if event is not None:
+                            self._reconcile_exported_match(event, txid, block_height)
+
+        return sorted(
+            labels_by_destination.values(),
+            key=lambda event: (event.get("round_id", 0), event.get("taker", "")),
+        )
+
+    def store_round_events(self, data_path):
+        labels = self.match_joinmarket_rounds_to_blocks(data_path)
+        with open(os.path.join(data_path, "joinmarket_round_events.json"), "w", encoding="utf-8") as f:
+            json.dump(labels, f, indent=2)
+        print(f"- stored {len(labels)} JoinMarket round labels")
+        return {
+            "engine": "joinmarket",
+            "complete": True,
+            "reason": None,
+            "positive_rule": "exported transaction matches a reconciled JoinMarket round event",
+            "positive_count": len({
+                label["txid"] for label in labels
+                if label.get("status") == "confirmed" and label.get("txid")
+            }),
+            "sources": ["joinmarket_round_events.json"],
+        }
+
     def store_engine_logs(self, data_path):
-        # Store orderbook snapshots, grouped under data_path/orderbook/<client.name>
         print("- storing engine-logs")
+        self.store_orderbook_snapshots(data_path)
+        return self.store_round_events(data_path)
+
+    def store_orderbook_snapshots(self, data_path):
+        # Store orderbook snapshots, grouped under data_path/orderbook/<client.name>
         print(f"- storing {data_path}")
         ob_root = os.path.join(data_path, "orderbook")
         os.makedirs(ob_root, exist_ok=True)
