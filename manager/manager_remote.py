@@ -9,7 +9,7 @@ import sys
 from manager.kubernetes_local_proxy import KubernetesLocalProxy
 
 
-def deploy_manager(args):
+def deploy_manager(args: argparse.Namespace) -> bool:
     """Deploy the simulation manager to the remote cluster"""
     try:
         KubernetesLocalProxy(
@@ -25,7 +25,7 @@ def deploy_manager(args):
     return True
 
 
-def run_simulation(args):
+def run_simulation(args: argparse.Namespace) -> bool:
     """Start a simulation without waiting for completion"""
     try:
         proxy = KubernetesLocalProxy(
@@ -57,7 +57,7 @@ def run_simulation(args):
     return True
 
 
-def stop_simulation(args):
+def stop_simulation(args: argparse.Namespace) -> bool:
     """Stop a running simulation"""
     try:
         proxy = KubernetesLocalProxy(
@@ -89,7 +89,7 @@ def stop_simulation(args):
     return True
 
 
-def status_remote(args):
+def status_remote(args: argparse.Namespace) -> bool:
     """Check orchestrator or simulation status"""
     try:
         proxy = KubernetesLocalProxy(
@@ -129,7 +129,7 @@ def status_remote(args):
     return True
 
 
-def get_logs(args):
+def get_logs(args: argparse.Namespace) -> bool:
     """Get logs from a simulation"""
     try:
         proxy = KubernetesLocalProxy(
@@ -174,7 +174,7 @@ def get_logs(args):
     return True
 
 
-def download_logs_remote(args):
+def download_logs_remote(args: argparse.Namespace) -> bool:
     """Download simulation logs from the orchestrator"""
     try:
         proxy = KubernetesLocalProxy(
@@ -202,7 +202,7 @@ def download_logs_remote(args):
 
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Remote Simulation Manager for Kubernetes",
         prog="manager-remote"

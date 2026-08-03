@@ -3,6 +3,7 @@ import os
 import subprocess
 import time
 import uuid
+from typing import cast
 
 import backoff
 
@@ -19,7 +20,14 @@ class KubernetesLocalProxy:
     This allows local management while executing operations inside the cluster.
     """
 
-    def __init__(self, namespace="coinjoin", orchestrator_pod=None, kubectl_context=None, auto_deploy=True, image_prefix=""):
+    def __init__(
+        self,
+        namespace: str = "coinjoin",
+        orchestrator_pod: str | None = None,
+        kubectl_context: str | None = None,
+        auto_deploy: bool = True,
+        image_prefix: str = "",
+    ) -> None:
         self.namespace = namespace
         self.orchestrator_pod = orchestrator_pod or "deployment/emulation-manager"
         self.kubectl_context = kubectl_context
@@ -32,7 +40,7 @@ class KubernetesLocalProxy:
         # Test connection to orchestrator
         self._test_connection()
 
-    def _build_kubectl_cmd(self):
+    def _build_kubectl_cmd(self) -> list[str]:
         """Build base kubectl command with context if provided"""
         cmd = ["kubectl"]
         if self.kubectl_context:
@@ -40,17 +48,22 @@ class KubernetesLocalProxy:
         return cmd
 
     @backoff.on_exception(backoff.expo, Exception, max_tries=5)
-    def _test_connection(self):
+    def _test_connection(self) -> None:
         """Test connection to the orchestrator pod"""
         try:
             result = self._kubectl_exec(["echo", "connection_test"])
-            if "connection_test" not in result:
+            if result is None or "connection_test" not in result:
                 raise Exception("Unexpected response from orchestrator")
             print(f"✓ Connected to orchestrator in namespace {self.namespace}")
         except Exception as e:
             raise Exception(f"Failed to connect to orchestrator: {e}")
 
-    def _kubectl_exec(self, cmd, input_data=None, capture_output=True):
+    def _kubectl_exec(
+        self,
+        cmd: list[str],
+        input_data: str | None = None,
+        capture_output: bool = True,
+    ) -> str | None:
         """Execute command in the orchestrator pod via kubectl exec"""
         full_cmd = self._kubectl_base_cmd + [
             "exec", "-n", self.namespace,
@@ -80,7 +93,9 @@ class KubernetesLocalProxy:
             raise
 
 
-    def _orchestrator_cmd(self, manager_args, input_data=None):
+    def _orchestrator_cmd(
+        self, manager_args: list[str], input_data: str | None = None
+    ) -> str | None:
         """Execute manager.py command in orchestrator with arguments"""
         cmd = [
                   "python", "manager.py",
@@ -90,7 +105,13 @@ class KubernetesLocalProxy:
 
         return self._kubectl_exec(cmd, input_data)
 
-    def start_scenario_runner(self, scenario_dir, engine="joinmarket", image_prefix="", cleanup_wait=90):
+    def start_scenario_runner(
+        self,
+        scenario_dir: str,
+        engine: str = "joinmarket",
+        image_prefix: str = "",
+        cleanup_wait: int = 90,
+    ) -> str:
         """Start the scenario runner inside the orchestrator pod"""
         runner_id = str(uuid.uuid4())[:8]
         print(f"Starting scenario runner {runner_id} in orchestrator...")
@@ -133,7 +154,7 @@ class KubernetesLocalProxy:
 
 
 
-    def start_simulation(self, scenario_path, engine="joinmarket", image_prefix=""):
+    def start_simulation(self, scenario_path: str, engine: str = "joinmarket", image_prefix: str = "") -> str:
         """Start simulation in orchestrator"""
         print(f"Starting simulation {self.simulation_id} in orchestrator...")
 
@@ -168,7 +189,7 @@ class KubernetesLocalProxy:
 
         return self.simulation_id
 
-    def get_status(self, simulation_id=None):
+    def get_status(self, simulation_id: str | None = None) -> dict[str, object]:
         """Get detailed status of a simulation"""
         sim_id = simulation_id or self.simulation_id
 
@@ -214,12 +235,12 @@ class KubernetesLocalProxy:
 
         try:
             result = subprocess.run(status_cmd, capture_output=True, text=True, check=True)
-            return json.loads(result.stdout.strip())
+            return cast(dict[str, object], json.loads(result.stdout.strip()))
         except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
             return {"status": "error", "message": str(e), "simulation_id": sim_id}
 
 
-    def tail_logs(self, lines=50, follow=False, simulation_id=None):
+    def tail_logs(self, lines: int = 50, follow: bool = False, simulation_id: str | None = None) -> None:
         """
         Tail simulation logs.
 
@@ -258,7 +279,7 @@ class KubernetesLocalProxy:
             result = subprocess.run(tail_cmd, capture_output=True, text=True)
             print(result.stdout)
 
-    def get_runner_status(self, runner_id=None):
+    def get_runner_status(self, runner_id: str | None = None) -> dict[str, object]:
         """
         Get status of a scenario runner, including current scenario progress.
         """
@@ -300,11 +321,11 @@ class KubernetesLocalProxy:
 
         try:
             result = subprocess.run(status_cmd, capture_output=True, text=True, check=True)
-            return json.loads(result.stdout.strip())
+            return cast(dict[str, object], json.loads(result.stdout.strip()))
         except Exception as e:
             return {"status": "error", "message": str(e), "runner_id": r_id}
 
-    def tail_runner_logs(self, lines=50, follow=False, runner_id=None):
+    def tail_runner_logs(self, lines: int = 50, follow: bool = False, runner_id: str | None = None) -> None:
         """
         Tail scenario runner logs.
 
@@ -341,7 +362,7 @@ class KubernetesLocalProxy:
             result = subprocess.run(tail_cmd, capture_output=True, text=True)
             print(result.stdout)
 
-    def _resolve_pod_name(self):
+    def _resolve_pod_name(self) -> str | None:
         """
         Resolve deployment/statefulset references to actual pod name.
 
@@ -401,7 +422,7 @@ class KubernetesLocalProxy:
         # For other resource types, just use the name directly
         return resource_name
 
-    def _get_remote_file_size(self, remote_file):
+    def _get_remote_file_size(self, remote_file: str) -> int | None:
         """
         Get the size of a file on the remote pod.
 
@@ -431,7 +452,7 @@ class KubernetesLocalProxy:
         except (subprocess.CalledProcessError, ValueError) as e:
             raise Exception(f"Failed to check file size for {remote_file}: {e}")
 
-    def _split_remote_file(self, remote_file):
+    def _split_remote_file(self, remote_file: str) -> list[tuple[str, int]] | None:
         """
         Split a large file on the remote pod into chunks.
 
@@ -479,7 +500,9 @@ class KubernetesLocalProxy:
 
         return split_files
 
-    def _download_file_with_retry(self, remote_path, local_path, max_retries=MAX_DOWNLOAD_RETRIES):
+    def _download_file_with_retry(
+        self, remote_path: str, local_path: str, max_retries: int = MAX_DOWNLOAD_RETRIES
+    ) -> bool:
         """
         Download a single file from remote pod with retry logic.
 
@@ -521,7 +544,7 @@ class KubernetesLocalProxy:
 
         return False
 
-    def _reassemble_chunks(self, chunk_paths, output_file):
+    def _reassemble_chunks(self, chunk_paths: list[str], output_file: str) -> bool:
         """
         Reassemble downloaded chunks into a single file.
 
@@ -546,7 +569,7 @@ class KubernetesLocalProxy:
 
         return True
 
-    def _cleanup_remote_files(self, file_pattern):
+    def _cleanup_remote_files(self, file_pattern: str) -> None:
         """
         Remove files matching pattern from remote pod.
 
@@ -564,7 +587,7 @@ class KubernetesLocalProxy:
         if result.returncode != 0:
             print(f"Warning: Failed to clean up remote files: {file_pattern}")
 
-    def _download_large_file(self, remote_file, local_file, description="file"):
+    def _download_large_file(self, remote_file: str, local_file: str, description: str = "file") -> bool:
         """
         Download a file from orchestrator pod with automatic chunking for large files.
 
@@ -585,6 +608,8 @@ class KubernetesLocalProxy:
         # Step 1: Check file size
         try:
             file_size = self._get_remote_file_size(remote_file)
+            if file_size is None:
+                raise RuntimeError(f"could not determine the size of {remote_file}")
             size_mb = file_size / (1024 * 1024)
             print(f"File size: {size_mb:.1f}MB")
         except Exception as e:
@@ -617,7 +642,7 @@ class KubernetesLocalProxy:
 
         return True
 
-    def _download_large_file_chunked(self, remote_file, local_file, file_size):
+    def _download_large_file_chunked(self, remote_file: str, local_file: str, file_size: int) -> bool:
         """
         Download a large file by splitting into chunks.
 
@@ -634,6 +659,8 @@ class KubernetesLocalProxy:
         # Step 1: Split the file on remote
         try:
             split_files = self._split_remote_file(remote_file)
+            if split_files is None:
+                raise RuntimeError(f"could not split {remote_file}")
             print(f"File split into {len(split_files)} chunks")
         except Exception as e:
             print(f"Failed to split file: {e}")
@@ -671,7 +698,7 @@ class KubernetesLocalProxy:
 
         return True
 
-    def download_runner_logs(self, runner_id=None, local_destination="./runner_logs"):
+    def download_runner_logs(self, runner_id: str | None = None, local_destination: str = "./runner_logs") -> bool:
         """
         Download the complete scenario runner output log file.
 
@@ -708,7 +735,7 @@ class KubernetesLocalProxy:
                 os.remove(local_file)
             return False
 
-    def stop_scenario_runner(self, runner_id=None):
+    def stop_scenario_runner(self, runner_id: str | None = None) -> dict[str, object]:
         """
         Stop a running scenario runner - terminates entire run.
 
@@ -749,11 +776,11 @@ class KubernetesLocalProxy:
 
         try:
             result = subprocess.run(stop_cmd, capture_output=True, text=True, check=True)
-            return json.loads(result.stdout.strip())
+            return cast(dict[str, object], json.loads(result.stdout.strip()))
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def skip_scenario_runner(self, runner_id=None):
+    def skip_scenario_runner(self, runner_id: str | None = None) -> dict[str, object]:
         """
         Skip the current scenario and continue to next one.
 
@@ -791,11 +818,11 @@ class KubernetesLocalProxy:
 
         try:
             result = subprocess.run(skip_cmd, capture_output=True, text=True, check=True)
-            return json.loads(result.stdout.strip())
+            return cast(dict[str, object], json.loads(result.stdout.strip()))
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
-    def _get_orchestrator_pod_name(self):
+    def _get_orchestrator_pod_name(self) -> str | None:
         """Get the actual pod name from deployment"""
         if "deployment/" in self.orchestrator_pod:
             deployment_name = self.orchestrator_pod.split("/")[1]
@@ -811,7 +838,7 @@ class KubernetesLocalProxy:
 
 
     # The stop is not awaited: the caller polls get_status() for the outcome.
-    def stop_simulation(self, simulation_id=None, timeout=30):
+    def stop_simulation(self, simulation_id: str | None = None, timeout: int = 30) -> dict[str, object]:
         """Stop a running simulation gracefully"""
         sim_id = simulation_id or self.simulation_id
 
@@ -845,7 +872,7 @@ class KubernetesLocalProxy:
 
         return {"status": "stopped", "simulation_id": sim_id}
 
-    def download_logs(self, local_destination="./logs", all_logs=False, last_n=None):
+    def download_logs(self, local_destination: str = "./logs", all_logs: bool = False, last_n: int | None = None) -> bool:
         """
         Download logs from the orchestrator container to local machine.
 
@@ -988,7 +1015,7 @@ class KubernetesLocalProxy:
             print(f"Failed to extract archive: {result.stderr}")
             return False
 
-    def deploy_manager(self, image_prefix="", wait_ready=True):
+    def deploy_manager(self, image_prefix: str = "", wait_ready: bool = True) -> bool:
         """
         Deploy the simulation manager/orchestrator to the cluster if not already present.
 
