@@ -1,0 +1,46 @@
+[project]
+name = "emucoinjoin"
+version = "0.1.0"
+description = "Container-based emulator for CoinJoin transactions on RegTest."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+# Mirrors requirements.txt, which the container image still installs with pip.
+dependencies = [
+    "backoff",
+    "bip-utils",
+    "docker==6.1",
+    "httpx[http2]>=0.27,<0.28",
+    "kubernetes==28.1.0",
+    "numpy==1.26.4",
+    "podman==4.7",
+    "PySocks==1.7.1",
+    "requests==2.31",
+    "urllib3<2",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["manager"]
+
+[dependency-groups]
+dev = [
+    "mypy",
+    "pylint",
+    "pytest",
+    "ruff>=0.15.17",
+    "types-docker",
+    "types-requests",
+]
+
+[tool.uv]
+override-dependencies = [
+    "urllib3<2",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: runs the emulator against Docker and may take several minutes",
+]
