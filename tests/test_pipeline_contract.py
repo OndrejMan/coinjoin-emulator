@@ -18,8 +18,9 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from manager.engine.base.manifest import write_producer_label_manifest  # noqa: E402
 from manager.engine.configuration import ScenarioConfig, WalletConfig  # noqa: E402
-from manager.engine.engine_base import EngineBase, write_producer_label_manifest  # noqa: E402
+from manager.engine.engine_base import EngineBase  # noqa: E402
 from manager.engine.joinmarket_engine import JoinmarketEngine  # noqa: E402
 
 
