@@ -13,6 +13,8 @@ import math
 import shutil
 import datetime
 
+from manager.exceptions import RpcError
+
 DISTRIBUTOR_UTXOS = 200
 BATCH_SIZE = 5  # smaller batches avoid UTXO race conditions
 BTC = 100_000_000
@@ -278,7 +280,7 @@ class EngineBase:
                 with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
                     json.dump(block, f, indent=2)
                 stored_blocks += 1
-        except TypeError:
+        except (TypeError, RpcError):
             print("Failed to get block count")
 
         print(f"- stored {stored_blocks} blocks")
