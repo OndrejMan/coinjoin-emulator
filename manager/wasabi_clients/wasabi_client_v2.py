@@ -25,14 +25,14 @@ class WasabiClientV2(WasabiClientBase):
         while timeout is None or time() - start < timeout:
             try:
                 self._create_wallet()
-            except:
+            except Exception:
                 pass
 
             try:
                 self.select(timeout=5)
                 self.get_balance(timeout=5)
                 return True
-            except:
+            except Exception:
                 pass
 
             sleep(0.1)

@@ -235,7 +235,7 @@ class JoinMarketClientServer:
                     try:
                         error_data = response.json()
                         error_message = error_data.get("message", "Unknown error")
-                    except:
+                    except Exception:
                         error_message = response.text
                     print(f"[RPC-ASYNC] Error {response.status_code}: {error_message}")
                     response.raise_for_status()
