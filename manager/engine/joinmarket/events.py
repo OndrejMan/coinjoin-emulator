@@ -4,7 +4,7 @@ import json
 import os
 from typing import TYPE_CHECKING, cast
 
-from manager.engine.engine_base import EmulatorClient
+from manager.engine.base.protocols import EmulatorClient
 
 
 class JoinMarketRoundEventsMixin:

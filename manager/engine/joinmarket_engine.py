@@ -3,8 +3,9 @@ import sys
 from time import sleep, time
 
 from manager.driver import Driver
+from manager.engine.base.protocols import EngineArgs
 from manager.engine.configuration import JoinMarketConfig, JoinMarketRole, ScenarioConfig, WalletConfig
-from manager.engine.engine_base import EngineArgs, EngineBase
+from manager.engine.engine_base import EngineBase
 from manager.engine.joinmarket.events import JoinMarketRoundEventsMixin
 from manager.engine.joinmarket.funding import JoinMarketFundingMixin
 from manager.engine.joinmarket.lifecycle import JoinMarketLifecycleMixin

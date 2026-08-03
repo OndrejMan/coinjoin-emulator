@@ -5,7 +5,7 @@ import shutil
 from typing import TYPE_CHECKING
 
 from manager.driver import Driver
-from manager.engine.engine_base import EmulatorClient
+from manager.engine.base.protocols import EmulatorClient
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
 
 
