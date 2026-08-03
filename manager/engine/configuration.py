@@ -98,7 +98,7 @@ class ScenarioConfig:
     def _parse_wallet(cls, wallet_data: dict[str, Any]) -> WalletConfig:
         """Parse wallet configuration from JSON data."""
         # Parse funds (can be int or dict with value/delays)
-        funds = []
+        funds: list[int | FundConfig] = []
         for fund in wallet_data.get("funds", []):
             if isinstance(fund, int):
                 funds.append(fund)
