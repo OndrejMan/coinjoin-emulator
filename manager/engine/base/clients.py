@@ -100,7 +100,7 @@ class EngineClientsMixin:
                 new_clients[idx - len(self.clients)] = client
 
             # Retry logic (uses same classification/batching)
-            for retry_attempt in range(3):
+            for _ in range(3):
                 failed_indices = [
                     idx for idx, client in enumerate(new_clients, start=len(self.clients))
                     if client is None

@@ -45,7 +45,7 @@ class JoinMarketLogsMixin:
         try:
             # Prefer copytree with dirs_exist_ok when possible to preserve structure
             # Copy content of src into dst (merge)
-            for root, dirs, files in os.walk(src):
+            for root, _, files in os.walk(src):
                 print(f"- found {root}")
                 rel = os.path.relpath(root, src)
                 target_dir = os.path.join(dst, rel) if rel != "." else dst
