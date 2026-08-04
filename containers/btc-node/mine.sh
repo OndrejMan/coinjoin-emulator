@@ -1,10 +1,15 @@
 #!/bin/sh
 
-sleep 1 # TODO make more robust by waiting for bitcoind to be ready
+# Wait for bitcoind to answer; an empty reply used to leave BLOCK_COUNT unset,
+# which skipped the whole initialisation and left the node without a wallet.
+BLOCK_COUNT=""
+while [ -z "$BLOCK_COUNT" ] || [ "$BLOCK_COUNT" = "null" ]
+do
+    sleep 1
+    BLOCK_COUNT=$(curl -s -u user:password --data-binary '{"jsonrpc": "2.0", "method": "getblockcount", "params": []}' -H 'content-type: text/plain;' http://localhost:18443 | jq ".result")
+done
 
-BLOCK_COUNT=$(curl -s -u user:password --data-binary '{"jsonrpc": "2.0", "method": "getblockcount", "params": []}' -H 'content-type: text/plain;' http://localhost:18443 | jq ".result")
-
-if [ "$BLOCK_COUNT" == "0" ]
+if [ "$BLOCK_COUNT" -lt 1001 ]
 then
     curl -s -u user:password --data-binary '{"jsonrpc": "2.0", "method": "createwallet", "params": ["wallet"]}' -H 'content-type: text/plain;' http://localhost:18443 > /dev/null
 
