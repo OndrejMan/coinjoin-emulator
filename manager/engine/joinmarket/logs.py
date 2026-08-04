@@ -1,5 +1,9 @@
 """Collection of the JoinMarket log artifacts."""
 
+# The sibling methods are declared under TYPE_CHECKING, so pylint cannot see
+# that they return a value.
+# pylint: disable=assignment-from-no-return
+
 import os
 import shutil
 from typing import TYPE_CHECKING
@@ -17,6 +21,7 @@ class JoinMarketLogsMixin:
     obwatch_client: OrderbookWatchClient | None
 
     if TYPE_CHECKING:
+        # pylint: disable=unused-argument  # these are stub signatures
         def store_round_events(self, data_path: str) -> dict[str, object]: ...
 
     def store_engine_logs(self, data_path: str) -> dict[str, object] | None:

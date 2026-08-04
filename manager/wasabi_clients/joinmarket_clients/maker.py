@@ -17,6 +17,7 @@ class JoinMarketMakerMixin:
     offers: list[JsonDict]
 
     if TYPE_CHECKING:
+        # pylint: disable=unused-argument  # these are stub signatures
         def _rpc(
             self,
             method: str,

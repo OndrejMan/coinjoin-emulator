@@ -106,7 +106,7 @@ class KubernetesLocalProxy:
 
         return self._kubectl_exec(cmd, input_data)
 
-    def start_scenario_runner(
+    def start_scenario_runner(  # pylint: disable=unused-argument  # engine kept for the caller
         self,
         scenario_dir: str,
         engine: str = "joinmarket",
@@ -642,7 +642,11 @@ class KubernetesLocalProxy:
 
         return True
 
-    def _download_large_file_chunked(self, remote_file: str, local_file: str, file_size: int) -> bool:
+    # file_size is passed by the caller that already stat-ed the file; the chunk
+    # loop reads the size again inside the pod.
+    def _download_large_file_chunked(  # pylint: disable=unused-argument
+        self, remote_file: str, local_file: str, file_size: int
+    ) -> bool:
         """
         Download a large file by splitting into chunks.
 
@@ -837,7 +841,9 @@ class KubernetesLocalProxy:
 
 
     # The stop is not awaited: the caller polls get_status() for the outcome.
-    def stop_simulation(self, simulation_id: str | None = None, timeout: int = 30) -> dict[str, object]:
+    def stop_simulation(  # pylint: disable=unused-argument
+        self, simulation_id: str | None = None, timeout: int = 30
+    ) -> dict[str, object]:
         """Stop a running simulation gracefully"""
         sim_id = simulation_id or self.simulation_id
 
@@ -1015,7 +1021,8 @@ class KubernetesLocalProxy:
         print(f"Failed to extract archive: {result.stderr}")
         return False
 
-    def deploy_manager(self, image_prefix: str = "", wait_ready: bool = True) -> bool:
+    # wait_ready belongs to the remote CLI contract; the deployment is always awaited.
+    def deploy_manager(self, image_prefix: str = "", wait_ready: bool = True) -> bool:  # pylint: disable=unused-argument
         """
         Deploy the simulation manager/orchestrator to the cluster if not already present.
 

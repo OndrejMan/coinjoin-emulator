@@ -1,5 +1,9 @@
 """Fidelity bond creation and its funding round."""
 
+# The sibling methods are declared under TYPE_CHECKING, so pylint cannot see
+# that they return a value.
+# pylint: disable=assignment-from-no-return
+
 from typing import TYPE_CHECKING, cast
 
 from manager.btc_node import BtcNode
@@ -17,6 +21,7 @@ class JoinMarketFundingMixin:
     node: BtcNode | None
 
     if TYPE_CHECKING:
+        # pylint: disable=unused-argument  # these are stub signatures
         def pay_invoices(self, addressed_invoices: list[tuple[str, int]]) -> None: ...
         def update_invoice_payments(self) -> None: ...
 

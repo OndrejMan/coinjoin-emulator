@@ -1,5 +1,9 @@
 """Wallet client start-up, ordered by the roles the scenario declares."""
 
+# The sibling methods are declared under TYPE_CHECKING, so pylint cannot see
+# that they return a value.
+# pylint: disable=assignment-from-no-return
+
 import multiprocessing
 import multiprocessing.pool
 from time import sleep
@@ -22,6 +26,7 @@ class EngineClientsMixin:
     scenario: ScenarioConfig
 
     if TYPE_CHECKING:
+        # pylint: disable=unused-argument  # these are stub signatures
         def start_client(self, idx: int, wallet: WalletConfig | None = None) -> EmulatorClient | None: ...
         def stop_client(self, idx: int) -> None: ...
 
