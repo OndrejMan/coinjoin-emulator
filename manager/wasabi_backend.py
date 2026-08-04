@@ -1,5 +1,5 @@
 import json
-from time import sleep
+from time import monotonic, sleep
 from typing import cast
 
 import requests
@@ -48,11 +48,13 @@ class WasabiBackend:
         )
         return cast(dict[str, object], response.json())
 
-    def wait_ready(self) -> None:
-        while True:
+    def wait_ready(self, timeout: int = 120) -> None:
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
             try:
                 self._get_status()
-                break
+                return
             except (requests.exceptions.RequestException, ValueError):
                 pass
             sleep(0.1)
+        raise TimeoutError(f"Wasabi backend at {self.host}:{self.port} was not ready after {timeout}s")
