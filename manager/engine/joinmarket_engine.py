@@ -343,4 +343,3 @@ class JoinmarketEngine(
         finally:
             if self.loop is not None and not self.loop.is_closed():
                 self.loop.close()
-

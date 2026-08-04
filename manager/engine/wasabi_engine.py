@@ -450,4 +450,3 @@ class WasabiEngine(EngineBase):
                     "/home/wasabi/.walletwasabi/backend/WabiSabi/CoinJoinIdStore.txt",
                 ).split("\n")[:-1]
             )
-
