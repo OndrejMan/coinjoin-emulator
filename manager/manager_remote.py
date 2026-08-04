@@ -46,7 +46,7 @@ def run_simulation(args: argparse.Namespace) -> bool:
         print(f"  Engine: {args.engine}")
 
         # Save the simulation ID to a file for easy reference
-        with open(f".simulation-{args.namespace}", "w") as f:
+        with open(f".simulation-{args.namespace}", "w", encoding="utf-8") as f:
             f.write(simulation_id)
 
         print(f"\nTo check status: manager-remote --namespace {args.namespace} status --sim-id {simulation_id}")
@@ -70,7 +70,7 @@ def stop_simulation(args: argparse.Namespace) -> bool:
         sim_id = args.sim_id
         if not sim_id:
             try:
-                with open(f".simulation-{args.namespace}", "r") as f:
+                with open(f".simulation-{args.namespace}", "r", encoding="utf-8") as f:
                     sim_id = f.read().strip()
                 print(f"Using saved simulation ID: {sim_id}")
             except FileNotFoundError:
@@ -104,7 +104,7 @@ def status_remote(args: argparse.Namespace) -> bool:
         else:
             # Try to read saved simulation ID
             try:
-                with open(f".simulation-{args.namespace}", "r") as f:
+                with open(f".simulation-{args.namespace}", "r", encoding="utf-8") as f:
                     sim_id = f.read().strip()
             except FileNotFoundError:
                 sim_id = None
@@ -142,7 +142,7 @@ def get_logs(args: argparse.Namespace) -> bool:
         sim_id = args.sim_id
         if not sim_id:
             try:
-                with open(f".simulation-{args.namespace}", "r") as f:
+                with open(f".simulation-{args.namespace}", "r", encoding="utf-8") as f:
                     sim_id = f.read().strip()
                 print(f"Using saved simulation ID: {sim_id}")
             except FileNotFoundError:

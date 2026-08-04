@@ -246,7 +246,7 @@ class JoinMarketConfigGenerator:
 
     def save_config(self, config: Dict[str, object], filename: str) -> None:
         """Save configuration to JSON file"""
-        with open(filename, 'w') as f:
+        with open(filename, 'w', encoding="utf-8") as f:
             json.dump(config, f, indent=2)
 
     def load_and_modify_config(self, filename: str) -> Dict[str, object]:
@@ -843,7 +843,7 @@ def handler(args: argparse.Namespace) -> None:
         import sys
         sys.exit(1)
     import json
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(scenario, f, indent=2)
     print(f"- saved to {out_path}")
 

@@ -28,7 +28,7 @@ def run_scenario_batch(args: argparse.Namespace) -> bool:
         print(f"  Cleanup wait: {args.cleanup_wait}s")
 
         # Save runner ID
-        with open(f".runner-{args.namespace}", "w") as f:
+        with open(f".runner-{args.namespace}", "w", encoding="utf-8") as f:
             f.write(runner_id)
 
         print("\nUseful commands:")
@@ -56,7 +56,7 @@ def runner_status(args: argparse.Namespace) -> bool:
         runner_id = args.runner_id
         if not runner_id:
             try:
-                with open(f".runner-{args.namespace}", "r") as f:
+                with open(f".runner-{args.namespace}", "r", encoding="utf-8") as f:
                     runner_id = f.read().strip()
             except FileNotFoundError:
                 print("No runner ID provided and no saved ID found", file=sys.stderr)
@@ -91,7 +91,7 @@ def runner_logs(args: argparse.Namespace) -> bool:
         runner_id = args.runner_id
         if not runner_id:
             try:
-                with open(f".runner-{args.namespace}", "r") as f:
+                with open(f".runner-{args.namespace}", "r", encoding="utf-8") as f:
                     runner_id = f.read().strip()
             except FileNotFoundError:
                 print("No runner ID provided and no saved ID found", file=sys.stderr)
@@ -135,7 +135,7 @@ def runner_stop(args: argparse.Namespace) -> bool:
         runner_id = args.runner_id
         if not runner_id:
             try:
-                with open(f".runner-{args.namespace}", "r") as f:
+                with open(f".runner-{args.namespace}", "r", encoding="utf-8") as f:
                     runner_id = f.read().strip()
             except FileNotFoundError:
                 print("No runner ID provided and no saved ID found", file=sys.stderr)
@@ -168,7 +168,7 @@ def runner_skip(args: argparse.Namespace) -> bool:
         runner_id = args.runner_id
         if not runner_id:
             try:
-                with open(f".runner-{args.namespace}", "r") as f:
+                with open(f".runner-{args.namespace}", "r", encoding="utf-8") as f:
                     runner_id = f.read().strip()
             except FileNotFoundError:
                 print("No runner ID provided and no saved ID found", file=sys.stderr)

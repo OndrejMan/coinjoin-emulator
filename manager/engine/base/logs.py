@@ -38,20 +38,20 @@ class EngineLogsMixin:
         sleep(random.random() * 3)
         client_path = os.path.join(data_path, client.name)
         os.mkdir(client_path)
-        with open(os.path.join(client_path, "coins.json"), "w") as f:
+        with open(os.path.join(client_path, "coins.json"), "w", encoding="utf-8") as f:
             json.dump(client.list_coins(), f, indent=2)
             print(f"- stored {client.name} coins")
-        with open(os.path.join(client_path, "unspent_coins.json"), "w") as f:
+        with open(os.path.join(client_path, "unspent_coins.json"), "w", encoding="utf-8") as f:
             json.dump(client.list_unspent_coins(), f, indent=2)
             print(f"- stored {client.name} unspent coins")
-        with open(os.path.join(client_path, "keys.json"), "w") as f:
+        with open(os.path.join(client_path, "keys.json"), "w", encoding="utf-8") as f:
             json.dump(client.list_keys(), f, indent=2)
             print(f"- stored {client.name} keys")
 
         # Store fidelity bonds data if available
         if hasattr(client, 'export_fidelity_bonds_data') and hasattr(client, 'fidelity_bonds'):
             bonds_data = client.export_fidelity_bonds_data(self.current_block)
-            with open(os.path.join(client_path, "fidelity_bonds.json"), "w") as f:
+            with open(os.path.join(client_path, "fidelity_bonds.json"), "w", encoding="utf-8") as f:
                 json.dump(bonds_data, f, indent=2)
                 if bonds_data['total_bonds'] > 0:
                     print(f"- stored {client.name} fidelity bonds ({bonds_data['total_bonds']} bonds)")
@@ -87,7 +87,7 @@ class EngineLogsMixin:
         data_path = os.path.join(experiment_path, "data")
         os.makedirs(data_path)
 
-        with open(os.path.join(experiment_path, "scenario.json"), "w") as f:
+        with open(os.path.join(experiment_path, "scenario.json"), "w", encoding="utf-8") as f:
             json.dump(self.scenario.to_dict(), f, indent=2)
             print("- stored scenario")
 
@@ -105,7 +105,7 @@ class EngineLogsMixin:
         while stored_blocks < block_count:
             block_hash = self.node.get_block_hash(stored_blocks)
             block = self.node.get_block_info(block_hash)
-            with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
+            with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w", encoding="utf-8") as f:
                 json.dump(block, f, indent=2)
             stored_blocks += 1
 

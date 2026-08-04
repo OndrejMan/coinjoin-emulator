@@ -1062,7 +1062,7 @@ class KubernetesLocalProxy:
             # Update the image in deployment.yaml if needed
             if image_prefix:
                 import yaml
-                with open(deployment_file, 'r') as f:
+                with open(deployment_file, 'r', encoding="utf-8") as f:
                     deployment = yaml.safe_load(f)
 
                 # Update image
@@ -1070,7 +1070,7 @@ class KubernetesLocalProxy:
                 deployment['spec']['template']['spec']['containers'][0]['imagePullPolicy'] = 'Always'
 
                 # Save updated deployment
-                with open(deployment_file, 'w') as f:
+                with open(deployment_file, 'w', encoding="utf-8") as f:
                     yaml.dump(deployment, f, default_flow_style=False)
 
             # Apply all manifests
