@@ -872,7 +872,9 @@ class KubernetesLocalProxy:
 
         return {"status": "stopped", "simulation_id": sim_id}
 
-    def download_logs(self, local_destination: str = "./logs", all_logs: bool = False, last_n: int | None = None) -> bool:
+    def download_logs(
+        self, local_destination: str = "./logs", all_logs: bool = False, last_n: int | None = None
+    ) -> bool:
         """
         Download logs from the orchestrator container to local machine.
 

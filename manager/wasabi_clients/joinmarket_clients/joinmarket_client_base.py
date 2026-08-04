@@ -24,7 +24,14 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 
-class JoinMarketClientServer(JoinMarketRpcMixin, JoinMarketWalletMixin, JoinMarketTakerMixin, JoinMarketMakerMixin, JoinMarketCoinsMixin, JoinMarketFidelityBondMixin):
+class JoinMarketClientServer(
+    JoinMarketRpcMixin,
+    JoinMarketWalletMixin,
+    JoinMarketTakerMixin,
+    JoinMarketMakerMixin,
+    JoinMarketCoinsMixin,
+    JoinMarketFidelityBondMixin,
+):
     def __init__(
         self,
         host: str = "localhost",
@@ -66,7 +73,8 @@ class JoinMarketClientServer(JoinMarketRpcMixin, JoinMarketWalletMixin, JoinMark
         self.completed_coinjoins = 0
 
         # Fidelity bond tracking
-        self.fidelity_bonds: dict[str, BondRecord] = {}  # Track created bonds: {address: {amount, locktime, creation_block}}
+        # Track created bonds: {address: {amount, locktime, creation_block}}
+        self.fidelity_bonds: dict[str, BondRecord] = {}
         # Producer-owned ground truth: one record per coinjoin this client starts.
         self.round_events: list[JsonDict] = []
 

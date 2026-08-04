@@ -127,7 +127,10 @@ class JoinMarketRpcMixin:
         
         for attempt in range(repeat):
             try:
-                print(f"[RPC-ASYNC] {method} {endpoint} (attempt {attempt+1}/{repeat}) data={json_data} using proxy={self.proxy}")
+                print(
+                    f"[RPC-ASYNC] {method} {endpoint} (attempt {attempt+1}/{repeat}) "
+                    f"data={json_data} using proxy={self.proxy}"
+                )
                 
                 response = await client.request(
                     method=method,

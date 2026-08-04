@@ -238,13 +238,15 @@ class WasabiEngine(EngineBase):
         if anon_score_target is not None and version < "2.0.3":
             anon_score_target = None
             print(
-                f"Anon Score Target is ignored for wallet {idx} as it is curently supported only for version 2.0.3 and newer"
+                f"Anon Score Target is ignored for wallet {idx} as it is curently "
+                f"supported only for version 2.0.3 and newer"
             )
 
         if redcoin_isolation is not None and version < "2.0.3":
             redcoin_isolation = None
             print(
-                f"Redcoin isolation is ignored for wallet {idx} as it is curently supported only for version 2.0.3 and newer"
+                f"Redcoin isolation is ignored for wallet {idx} as it is curently "
+                f"supported only for version 2.0.3 and newer"
             )
 
         if self.node is None:

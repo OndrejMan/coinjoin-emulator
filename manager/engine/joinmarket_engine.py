@@ -14,7 +14,14 @@ from manager.engine.joinmarket.rounds import JoinMarketRoundsMixin
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
 
 
-class JoinmarketEngine(JoinMarketLogsMixin, JoinMarketFundingMixin, JoinMarketRoundsMixin, JoinMarketLifecycleMixin, JoinMarketRoundEventsMixin, EngineBase):
+class JoinmarketEngine(
+    JoinMarketLogsMixin,
+    JoinMarketFundingMixin,
+    JoinMarketRoundsMixin,
+    JoinMarketLifecycleMixin,
+    JoinMarketRoundEventsMixin,
+    EngineBase,
+):
 
     def __init__(self, args: EngineArgs, driver: Driver) -> None:
         super().__init__(args, driver,
@@ -36,77 +43,164 @@ class JoinmarketEngine(JoinMarketLogsMixin, JoinMarketFundingMixin, JoinMarketRo
                     funds=[75000, 75000],
                     joinmarket=JoinMarketConfig(
                         role=JoinMarketRole.TAKER,
-                        tumbler_options={'addrcount': 3, 'minmakercount': 4, 'makercountrange': [5, 1], 'mixdepthcount': 3, 'mintxcount': 2, 'txcountparams': [3, 1], 'timelambda': 5, 'stage1_timelambda_increase': 1, 'liquiditywait': 60, 'waittime': 20, 'mixdepthsrc': 0, 'restart': True, 'mincjamount': 35000, 'amtmixdepths': 4, 'rounding_chance': 0, 'rounding_sigfig_weights': [55, 15, 25, 65, 45]},
+                        tumbler_options={
+                            'addrcount': 3,
+                            'minmakercount': 4,
+                            'makercountrange': [5, 1],
+                            'mixdepthcount': 3,
+                            'mintxcount': 2,
+                            'txcountparams': [3, 1],
+                            'timelambda': 5,
+                            'stage1_timelambda_increase': 1,
+                            'liquiditywait': 60,
+                            'waittime': 20,
+                            'mixdepthsrc': 0,
+                            'restart': True,
+                            'mincjamount': 35000,
+                            'amtmixdepths': 4,
+                            'rounding_chance': 0,
+                            'rounding_sigfig_weights': [55, 15, 25, 65, 45],
+                        },
                     ),
                 ),
                 WalletConfig(
                     funds=[1000000, 500000],
                     joinmarket=JoinMarketConfig(
                         role=JoinMarketRole.MAKER,
-                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                        offers=[{
+                            'txfee': 0,
+                            'cjfee_a': 5000,
+                            'cjfee_r': 4e-05,
+                            'ordertype': 'sw0reloffer',
+                            'minsize': 30000,
+                            'maxsize': 3000000,
+                        }],
                     ),
                 ),
                 WalletConfig(
                     funds=[3000000, 15000],
                     joinmarket=JoinMarketConfig(
                         role=JoinMarketRole.MAKER,
-                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                        offers=[{
+                            'txfee': 0,
+                            'cjfee_a': 5000,
+                            'cjfee_r': 4e-05,
+                            'ordertype': 'sw0reloffer',
+                            'minsize': 30000,
+                            'maxsize': 3000000,
+                        }],
                     ),
                 ),
                 WalletConfig(
                     funds=[1000000, 500000],
                     joinmarket=JoinMarketConfig(
                         role=JoinMarketRole.MAKER,
-                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                        offers=[{
+                            'txfee': 0,
+                            'cjfee_a': 5000,
+                            'cjfee_r': 4e-05,
+                            'ordertype': 'sw0reloffer',
+                            'minsize': 30000,
+                            'maxsize': 3000000,
+                        }],
                     ),
                 ),
                 WalletConfig(
                     funds=[3000000, 600000],
                     joinmarket=JoinMarketConfig(
                         role=JoinMarketRole.MAKER,
-                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                        offers=[{
+                            'txfee': 0,
+                            'cjfee_a': 5000,
+                            'cjfee_r': 4e-05,
+                            'ordertype': 'sw0reloffer',
+                            'minsize': 30000,
+                            'maxsize': 3000000,
+                        }],
                     ),
                 ),
                 WalletConfig(
                     funds=[200000, 50000],
                     joinmarket=JoinMarketConfig(
                         role=JoinMarketRole.MAKER,
-                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                        offers=[{
+                            'txfee': 0,
+                            'cjfee_a': 5000,
+                            'cjfee_r': 4e-05,
+                            'ordertype': 'sw0reloffer',
+                            'minsize': 30000,
+                            'maxsize': 3000000,
+                        }],
                     ),
                 ),
                 WalletConfig(
                     funds=[3000000],
                     joinmarket=JoinMarketConfig(
                         role=JoinMarketRole.MAKER,
-                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                        offers=[{
+                            'txfee': 0,
+                            'cjfee_a': 5000,
+                            'cjfee_r': 4e-05,
+                            'ordertype': 'sw0reloffer',
+                            'minsize': 30000,
+                            'maxsize': 3000000,
+                        }],
                     ),
                 ),
                 WalletConfig(
                     funds=[1000000, 500000],
                     joinmarket=JoinMarketConfig(
                         role=JoinMarketRole.MAKER,
-                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                        offers=[{
+                            'txfee': 0,
+                            'cjfee_a': 5000,
+                            'cjfee_r': 4e-05,
+                            'ordertype': 'sw0reloffer',
+                            'minsize': 30000,
+                            'maxsize': 3000000,
+                        }],
                     ),
                 ),
                 WalletConfig(
                     funds=[3000000, 15000],
                     joinmarket=JoinMarketConfig(
                         role=JoinMarketRole.MAKER,
-                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                        offers=[{
+                            'txfee': 0,
+                            'cjfee_a': 5000,
+                            'cjfee_r': 4e-05,
+                            'ordertype': 'sw0reloffer',
+                            'minsize': 30000,
+                            'maxsize': 3000000,
+                        }],
                     ),
                 ),
                 WalletConfig(
                     funds=[1000000, 500000],
                     joinmarket=JoinMarketConfig(
                         role=JoinMarketRole.MAKER,
-                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                        offers=[{
+                            'txfee': 0,
+                            'cjfee_a': 5000,
+                            'cjfee_r': 4e-05,
+                            'ordertype': 'sw0reloffer',
+                            'minsize': 30000,
+                            'maxsize': 3000000,
+                        }],
                     ),
                 ),
                 WalletConfig(
                     funds=[3000000, 600000],
                     joinmarket=JoinMarketConfig(
                         role=JoinMarketRole.MAKER,
-                        offers=[{'txfee': 0, 'cjfee_a': 5000, 'cjfee_r': 4e-05, 'ordertype': 'sw0reloffer', 'minsize': 30000, 'maxsize': 3000000}],
+                        offers=[{
+                            'txfee': 0,
+                            'cjfee_a': 5000,
+                            'cjfee_r': 4e-05,
+                            'ordertype': 'sw0reloffer',
+                            'minsize': 30000,
+                            'maxsize': 3000000,
+                        }],
                     ),
                 ),
             ],
