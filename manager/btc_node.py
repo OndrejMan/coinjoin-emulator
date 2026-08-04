@@ -100,7 +100,6 @@ class BtcNode:
                     break
             except Exception as e:
                 print(f"Btc node not ready: {e}")
-                pass
             sleep(10)
 
         # wait for the fee-building transactions

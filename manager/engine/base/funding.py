@@ -120,4 +120,3 @@ class EngineFundingMixin:
         Args:
             wallets: List of wallet configurations
         """
-        pass

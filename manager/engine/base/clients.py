@@ -81,7 +81,7 @@ class EngineClientsMixin:
         fb_batch_delay = 15  # Seconds between FB batches
 
         # Build initial wallet list with indices
-        wallet_list = [(idx, wallet) for idx, wallet in enumerate(wallets, start=len(self.clients))]
+        wallet_list = list(enumerate(wallets, start=len(self.clients)))
 
         # Count wallet types for logging
         fb_count = sum(1 for _, w in wallet_list if _has_fidelity_bond(w))

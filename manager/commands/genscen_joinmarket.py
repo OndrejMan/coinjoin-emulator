@@ -96,8 +96,7 @@ class JoinMarketConfigGenerator:
 
         # Ensure we have enough for minimum UTXO sizes
         min_total = num_utxos * self.wallet_config.min_utxo_size
-        if total_sats < min_total:
-            total_sats = min_total
+        total_sats = max(total_sats, min_total)
 
         # Generate random distribution
         utxos = []
@@ -697,8 +696,6 @@ def handler(args: argparse.Namespace) -> None:
             int(total_taker_count * 1.5),
             int(total_taker_count * args.bond_maker_utxo_multiplier / makers_with_bonds),
         )
-        # Calculate total UTXOs needed for all bond makers
-        bond_maker_min_utxos * makers_with_bonds
         # Calculate liquidity multiplier to maintain proportional liquidity
         regular_maker_avg_utxos = (args.wallet_min_utxos + args.wallet_max_utxos) / 2
         bond_maker_liquidity_multiplier = bond_maker_min_utxos / regular_maker_avg_utxos

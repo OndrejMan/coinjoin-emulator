@@ -223,7 +223,7 @@ class KubernetesDriver(Driver):
 
         if self.in_cluster:
             # For in-cluster: return service DNS name, original port mapping, no route
-            port_mapping = {target_port: container_port for target_port, container_port in ports.items()}
+            port_mapping = dict(ports.items())
             service_dns_name = f"{name}.{self.namespace}.svc.cluster.local"
             return service_dns_name, port_mapping, None
         # For external: return pod IP, node port mapping, no route (existing behavior)
