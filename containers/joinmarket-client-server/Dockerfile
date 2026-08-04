@@ -1,4 +1,7 @@
-FROM joinmarket-latest:taker-logs
+# The base image is built from joinmarket-clientserver in the same workflow;
+# the default keeps a local `docker build` working against a locally built base.
+ARG JOINMARKET_TEST_IMAGE=joinmarket-latest:taker-logs
+FROM ${JOINMARKET_TEST_IMAGE}
 
 
 # Copy the config file to the right place
