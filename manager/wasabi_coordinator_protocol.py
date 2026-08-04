@@ -17,7 +17,6 @@ class WasabiCoordinatorProtocol(Protocol):
         Returns:
             Status information as a dictionary, or None on error
         """
-        ...
     
     def _get_rounds(self) -> dict[str, object] | None:
         """Get active coinjoin rounds.
@@ -25,8 +24,6 @@ class WasabiCoordinatorProtocol(Protocol):
         Returns:
             Round information as a dictionary, or None on error
         """
-        ...
     
     def wait_ready(self) -> None:
         """Wait for coordinator to be ready."""
-        ...

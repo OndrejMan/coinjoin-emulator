@@ -20,7 +20,6 @@ class WasabiBackendProtocol(Protocol):
         Returns:
             The result of the RPC call, or "timeout" on timeout
         """
-        ...
     
     def _get_status(self) -> dict[str, object]:
         """Get the backend status.
@@ -28,8 +27,6 @@ class WasabiBackendProtocol(Protocol):
         Returns:
             Status information as a dictionary
         """
-        ...
     
     def wait_ready(self) -> None:
         """Wait until the backend is ready to accept requests."""
-        ...
