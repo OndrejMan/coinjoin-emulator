@@ -1,5 +1,9 @@
 """Log collection shared by every engine."""
 
+# The sibling methods are declared under TYPE_CHECKING, so pylint cannot see
+# that they return a value.
+# pylint: disable=assignment-from-no-return
+
 import datetime
 import json
 import multiprocessing

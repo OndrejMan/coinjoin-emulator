@@ -1,5 +1,9 @@
 """Maker (yield generator) control calls."""
 
+# The sibling methods are declared under TYPE_CHECKING, so pylint cannot see
+# that they return a value.
+# pylint: disable=assignment-from-no-return
+
 from typing import TYPE_CHECKING
 
 from .types import JoinmarketConflictException, JsonDict

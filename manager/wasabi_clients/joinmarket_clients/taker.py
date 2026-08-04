@@ -1,5 +1,9 @@
 """Taker and tumbler calls: coinjoins, schedules and direct sends."""
 
+# The sibling methods are declared under TYPE_CHECKING, so pylint cannot see
+# that they return a value.
+# pylint: disable=assignment-from-no-return
+
 import asyncio
 from time import sleep, time
 from typing import TYPE_CHECKING, cast
