@@ -130,5 +130,5 @@ class EngineLogsMixin:
         print("- zip archive created")
 
     def store_engine_logs(self, data_path: str) -> dict[str, object] | None:
-        print("Storing engine logs / NOT IMPLEMENTED")
+        """Engines override this to write their own artifacts into data_path."""
         raise NotImplementedError
