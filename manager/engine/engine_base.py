@@ -2,6 +2,7 @@ import time
 
 from manager.btc_node import BtcNode
 from manager import utils
+from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 from manager.engine.configuration import ScenarioConfig, WalletConfig, FundConfig
 from time import sleep
 import random
@@ -14,6 +15,7 @@ import shutil
 import datetime
 
 from manager.exceptions import RpcError
+from zoneinfo import ZoneInfo
 
 DISTRIBUTOR_UTXOS = 200
 BATCH_SIZE = 5  # smaller batches avoid UTXO race conditions
@@ -272,7 +274,8 @@ class EngineBase:
         requested_run_id = getattr(self.args, "run_id", "")
         if requested_run_id:
             return f"./logs/{requested_run_id}"
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
+        run_timezone = getattr(self.args, "run_timezone", DEFAULT_RUN_TIMEZONE)
+        timestamp = datetime.datetime.now(ZoneInfo(run_timezone)).strftime("%Y-%m-%d_%H-%M")
         return f"./logs/{timestamp}_{self.scenario.name}"
 
     def store_logs(self):

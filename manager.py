@@ -6,12 +6,14 @@ from manager.driver import Driver
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
 from manager.engine.engine_base import EngineBase
+from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 import manager.commands.genscen
 import manager.commands.genscen_joinmarket
 import sys
 import argparse
 import re
 import os
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 args: argparse.Namespace | None = None
@@ -27,6 +29,15 @@ def handle_shutdown_signal(signum, frame):
     sys.exit(1)
 
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
+def timezone_name(value):
+    """Validate an IANA timezone while preserving its canonical input string."""
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise argparse.ArgumentTypeError(f"unknown IANA timezone: {value}") from error
+    return value
 
 
 def run_id(value):
@@ -90,6 +101,13 @@ if __name__ == "__main__":
         default="docker",
     )
     parser.add_argument("--no-logs", action="store_true", default=False)
+    parser.add_argument(
+        "--run-timezone",
+        type=timezone_name,
+        default=DEFAULT_RUN_TIMEZONE,
+        metavar="IANA_ZONE",
+        help=f"IANA timezone used in newly created run directory names (default: {DEFAULT_RUN_TIMEZONE}).",
+    )
 
     parser.add_argument(
         "--in-cluster",
