@@ -100,9 +100,6 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
     def start_distributor(self) -> None:
         raise NotImplementedError
 
-    def init_client(self) -> object:
-        raise NotImplementedError
-
     def start_client(self, idx: int, wallet: WalletConfig | None = None) -> EmulatorClient | None:
         raise NotImplementedError
 
