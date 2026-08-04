@@ -40,7 +40,7 @@ class JoinMarketClientServer(
         name: str = "joinmarket-client-server",
         proxy: str = "",
         version: str = "",
-        type: str = "maker",
+        type: str = "maker",  # pylint: disable=redefined-builtin  # part of the client API
         delay: tuple[int, int] = (0, 0),
         stop: tuple[int, int] = (0, 0),
         offers: list[dict[str, object]] | None = None,

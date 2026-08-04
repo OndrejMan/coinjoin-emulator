@@ -433,7 +433,7 @@ class WasabiEngine(EngineBase):
 
     def _get_current_round(self) -> int:
         if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
-            resp = self.coordinator._get_status()
+            resp = self.coordinator._get_status()  # pylint: disable=protected-access
             if resp is not None:
                 for round_state in cast(list[dict[str, object]], resp["RoundStates"]):
                     if round_state["Phase"] == "TransactionSigning":

@@ -133,5 +133,6 @@ class JoinMarketMakerMixin:
         response = self._rpc(method, endpoint)
         return response
 
-    def get_offer(self, round: int = 0) -> dict[str, object]:
+    # `round` names the coinjoin round, not the builtin.
+    def get_offer(self, round: int = 0) -> dict[str, object]:  # pylint: disable=redefined-builtin
         return self.offers[round % len(self.offers)]
