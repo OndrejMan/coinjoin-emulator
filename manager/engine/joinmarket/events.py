@@ -2,7 +2,7 @@
 
 import json
 import os
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from manager.engine.base.protocols import EmulatorClient
 
@@ -11,9 +11,6 @@ class JoinMarketRoundEventsMixin:
     """Collects what the clients recorded and matches it against exported blocks."""
 
     clients: list[EmulatorClient]
-
-    if TYPE_CHECKING:
-        pass
 
     def collect_round_events(self) -> list[dict[str, object]]:
         """Producer-owned round records from every client that started a coinjoin."""

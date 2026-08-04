@@ -12,7 +12,6 @@ import os
 import random
 import shutil
 from time import sleep
-from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from manager.btc_node import BtcNode
@@ -34,9 +33,6 @@ class EngineLogsMixin:
     current_block: int
     log_src_path: str
     args: EngineArgs
-
-    if TYPE_CHECKING:
-        pass
 
     def store_client_logs(self, client: EmulatorClient, data_path: str) -> None:
         sleep(random.random() * 3)
