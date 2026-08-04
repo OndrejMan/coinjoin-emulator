@@ -76,15 +76,28 @@ class JoinMarketRoundEventsMixin:
             key=lambda event: (event.get("round_id", 0), event.get("taker", "")),
         )
 
+    def _unlabelled_takers(self) -> list[str]:
+        """Takers that start coinjoins without recording a producer-owned label."""
+        return [
+            str(getattr(client, "name", "?"))
+            for client in self.clients
+            if getattr(client, "tumbler_options", None) and not getattr(client, "round_events", None)
+        ]
+
     def store_round_events(self, data_path: str) -> dict[str, object]:
         labels = self.match_joinmarket_rounds_to_blocks(data_path)
         with open(os.path.join(data_path, "joinmarket_round_events.json"), "w", encoding="utf-8") as f:
             json.dump(labels, f, indent=2)
         print(f"- stored {len(labels)} JoinMarket round labels")
+        # A tumbler runs its coinjoins from a JoinMarket schedule, so the emulator
+        # never sees the individual rounds and cannot label them.
+        unlabelled = self._unlabelled_takers()
         return {
             "engine": "joinmarket",
-            "complete": True,
-            "reason": None,
+            "complete": not unlabelled,
+            "reason": None if not unlabelled else (
+                f"tumbler takers produce no per-round labels: {', '.join(sorted(unlabelled))}"
+            ),
             "positive_rule": "exported transaction matches a reconciled JoinMarket round event",
             "positive_count": len({
                 label["txid"] for label in labels

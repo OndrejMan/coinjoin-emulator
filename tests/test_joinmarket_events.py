@@ -7,9 +7,15 @@ from manager.engine.joinmarket.events import JoinMarketRoundEventsMixin
 
 
 class EventClient:
-    def __init__(self, name: str, round_events: list[dict[str, object]]) -> None:
+    def __init__(
+        self,
+        name: str,
+        round_events: list[dict[str, object]],
+        tumbler_options: dict[str, object] | None = None,
+    ) -> None:
         self.name = name
         self.round_events = round_events
+        self.tumbler_options = tumbler_options
 
 
 class EventHarness(JoinMarketRoundEventsMixin):
@@ -157,6 +163,28 @@ class TestStoreRoundEvents:
         stored = json.loads((tmp_path / "joinmarket_round_events.json").read_text(encoding="utf-8"))
         assert stored[0]["txid"] == "coinjoin-txid"
         assert stored[0]["status"] == "confirmed"
+
+    def test_a_tumbler_without_labels_marks_the_evidence_incomplete(self, tmp_path: Path) -> None:
+        harness = EventHarness(
+            EventClient("jcs-000", [], tumbler_options={"addrcount": 3}),
+            EventClient("jcs-001", [{"round_id": 1, "destination_address": "bcrt1qdest"}]),
+        )
+
+        evidence = harness.store_round_events(str(tmp_path))
+
+        assert evidence["complete"] is False
+        assert "jcs-000" in str(evidence["reason"])
+
+    def test_a_tumbler_that_recorded_labels_keeps_the_evidence_complete(self, tmp_path: Path) -> None:
+        harness = EventHarness(
+            EventClient(
+                "jcs-000",
+                [{"round_id": 1, "destination_address": "bcrt1qdest"}],
+                tumbler_options={"addrcount": 3},
+            )
+        )
+
+        assert harness.store_round_events(str(tmp_path))["complete"] is True
 
     def test_unconfirmed_rounds_are_not_counted_as_positives(self, tmp_path: Path) -> None:
         harness = EventHarness(
