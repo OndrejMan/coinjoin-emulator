@@ -120,8 +120,10 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
-# E501 (line length) is the one rule this branch does not satisfy yet: 60 long
-# lines in code inherited from the fork. Enable it once they are rewrapped.
-ignore = ["E501"]
 fixable = ["ALL"]
 unfixable = []
+
+[tool.ruff.lint.per-file-ignores]
+# The remote orchestration layer embeds shell scripts as heredocs; their lines
+# cannot be rewrapped without changing what the shell runs.
+"manager/kubernetes_local_proxy.py" = ["E501"]
