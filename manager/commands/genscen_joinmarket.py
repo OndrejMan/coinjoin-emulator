@@ -415,7 +415,8 @@ def generate_fidelity_bond_config(args: argparse.Namespace) -> Dict[str, object]
     }
 
 
-def setup_parser(parser: argparse.ArgumentParser) -> None:
+# One statement per command-line option.
+def setup_parser(parser: argparse.ArgumentParser) -> None:  # pylint: disable=too-many-statements
     parser.add_argument("--name", type=str, help="scenario name")
     parser.add_argument("--maker-count", type=int, default=30, help="number of makers")
     parser.add_argument(
@@ -523,7 +524,8 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:
                        help="fidelity bond amount quantiles (0%,20%,40%,60%,80%,100%) in satoshis")
 
 
-def handler(args: argparse.Namespace) -> None:
+# The generator builds the whole scenario in one pass over the options.
+def handler(args: argparse.Namespace) -> None:  # pylint: disable=too-many-statements
     print("Generating JoinMarket scenario...")
     scenario = {
         "name": args.name or f"tumbler_{args.tumbler_taker_count}_maker_{args.maker_count}",

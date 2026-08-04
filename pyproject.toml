@@ -52,9 +52,7 @@ markers = [
 ]
 
 [tool.pylint.main]
-# fail-under is a ratchet: raise it as the code inherited from the fork gets
-# cleaned up. Our other branch runs the same config at 10.
-fail-under = 9.0
+fail-under = 10
 ignore = ["CVS", ".venv", "env"]
 persistent = false
 py-version = "3.11"
@@ -65,7 +63,8 @@ max-attributes = 7
 max-bool-expr = 5
 max-branches = 12
 max-locals = 15
-max-parents = 7
+# The JoinMarket client and engine are composed from single-responsibility mixins.
+max-parents = 10
 max-positional-arguments = 5
 max-public-methods = 20
 max-returns = 6
@@ -96,6 +95,9 @@ disable = [
     "fixme",
     "too-many-branches",
     "no-name-in-module",
+    # The emulator must survive a failing container or client and keep the run
+    # going, so the orchestration paths deliberately catch every exception.
+    "broad-exception-caught",
 ]
 
 [tool.pylint.refactoring]
