@@ -40,8 +40,8 @@ class KubernetesLocalProxy:
         self.simulation_id = str(uuid.uuid4())[:8]
         self._kubectl_base_cmd = self._build_kubectl_cmd()
 
-        if auto_deploy:
-            self.deploy_manager(image_prefix=image_prefix)
+        if auto_deploy and not self.deploy_manager(image_prefix=image_prefix):
+            raise CoinjoinEmulatorError("Could not deploy the orchestrator")
 
         # Test connection to orchestrator
         self._test_connection()
