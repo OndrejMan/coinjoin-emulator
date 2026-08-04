@@ -262,8 +262,7 @@ def format_name(args: argparse.Namespace) -> str:
     # Example: tumbler_1_maker_30.json
     if args.tumbler_taker_count > 0:
         return f"tumbler_{args.tumbler_taker_count}_maker_{args.maker_count}.json"
-    else:
-        return f"taker_{args.taker_count}_maker_{args.maker_count}.json"
+    return f"taker_{args.taker_count}_maker_{args.maker_count}.json"
 
 
 def random_partition(total: int, n: int) -> List[int]:

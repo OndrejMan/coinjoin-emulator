@@ -226,12 +226,11 @@ class KubernetesDriver(Driver):
             port_mapping = {target_port: container_port for target_port, container_port in ports.items()}
             service_dns_name = f"{name}.{self.namespace}.svc.cluster.local"
             return service_dns_name, port_mapping, None
-        else:
-            # For external: return pod IP, node port mapping, no route (existing behavior)
-            port_mapping = dict(
-                map(lambda x: (x.target_port, x.node_port), resp.spec.ports)
-            )
-            return pod_ip or "", port_mapping, None
+        # For external: return pod IP, node port mapping, no route (existing behavior)
+        port_mapping = dict(
+            map(lambda x: (x.target_port, x.node_port), resp.spec.ports)
+        )
+        return pod_ip or "", port_mapping, None
 
     def stop(self, name: str) -> None:
         try:

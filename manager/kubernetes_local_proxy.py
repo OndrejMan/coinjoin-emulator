@@ -832,8 +832,7 @@ class KubernetesLocalProxy:
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             return result.stdout.strip()
-        else:
-            return self.orchestrator_pod
+        return self.orchestrator_pod
 
 
     # The stop is not awaited: the caller polls get_status() for the outcome.
@@ -1012,9 +1011,8 @@ class KubernetesLocalProxy:
             ]
             subprocess.run(cleanup_cmd, capture_output=True)
             return True
-        else:
-            print(f"Failed to extract archive: {result.stderr}")
-            return False
+        print(f"Failed to extract archive: {result.stderr}")
+        return False
 
     def deploy_manager(self, image_prefix: str = "", wait_ready: bool = True) -> bool:
         """
