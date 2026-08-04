@@ -332,7 +332,7 @@ class JoinmarketEngine(EngineBase):
 
         ensure_client_session(client, name)
 
-        if not client.wait_wallet(timeout=30000):
+        if not client.wait_wallet(timeout=120):
             print(f"- could not start {name} (application timeout)")
             raise Exception("Could not start distributor")
         return client
