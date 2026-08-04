@@ -1,9 +1,5 @@
 """Start-up and shutdown of the JoinMarket-specific containers."""
 
-# The sibling methods are declared under TYPE_CHECKING, so pylint cannot see
-# that they return a value.
-# pylint: disable=assignment-from-no-return
-
 from time import sleep
 from typing import TYPE_CHECKING, cast
 

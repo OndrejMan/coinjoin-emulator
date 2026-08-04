@@ -112,7 +112,7 @@ class KubernetesLocalProxy:
 
         return self._kubectl_exec(cmd, input_data)
 
-    def start_scenario_runner(  # pylint: disable=unused-argument  # engine kept for the caller
+    def start_scenario_runner(
         self,
         scenario_dir: str,
         engine: str = "joinmarket",
@@ -1027,8 +1027,7 @@ class KubernetesLocalProxy:
         print(f"Failed to extract archive: {result.stderr}")
         return False
 
-    # wait_ready belongs to the remote CLI contract; the deployment is always awaited.
-    def deploy_manager(self, image_prefix: str = "", wait_ready: bool = True) -> bool:  # pylint: disable=unused-argument
+    def deploy_manager(self, image_prefix: str = "", wait_ready: bool = True) -> bool:
         """
         Deploy the simulation manager/orchestrator to the cluster if not already present.
 

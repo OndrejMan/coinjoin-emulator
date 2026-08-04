@@ -18,7 +18,6 @@ class JoinMarketCoinsMixin:
     coin_history: dict[str, JsonDict]
 
     if TYPE_CHECKING:
-        # pylint: disable=unused-argument  # these are stub signatures
         def list_utxos(self) -> JsonDict: ...
         async def list_utxos_async(self) -> JsonDict: ...
 

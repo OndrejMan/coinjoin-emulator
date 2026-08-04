@@ -1,9 +1,5 @@
 """Collection of the JoinMarket log artifacts."""
 
-# The sibling methods are declared under TYPE_CHECKING, so pylint cannot see
-# that they return a value.
-# pylint: disable=assignment-from-no-return
-
 import os
 import shutil
 from typing import TYPE_CHECKING
