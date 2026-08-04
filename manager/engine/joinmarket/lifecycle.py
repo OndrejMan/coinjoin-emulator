@@ -13,6 +13,7 @@ from manager.driver import Driver
 from manager.engine.base.protocols import EmulatorClient, EngineArgs, InvoiceDistributor
 from manager.engine.configuration import WalletConfig
 from manager.exceptions import StartupError
+from manager.wasabi_clients.joinmarket_clients.factory import client_from_wallet
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
 
@@ -175,7 +176,7 @@ class JoinMarketLifecycleMixin:
         sleep(30)
         if wallet is None:
             raise ValueError("wallet configuration is required to start a JoinMarket client")
-        client = JoinMarketClientServer.from_wallet(
+        client = client_from_wallet(
             name=name,
             port=actual_port,
             host=str(actual_ip),
