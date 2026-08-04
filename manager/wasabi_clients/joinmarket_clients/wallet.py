@@ -138,7 +138,7 @@ class JoinMarketWalletMixin:
             walletinfo = cast(JsonDict, response["walletinfo"])
             return int(float(str(walletinfo["available_balance"])) * BTC)
         except KeyError as e:
-            raise Exception(f"Could not retrieve available balance: {e}")
+            raise Exception(f"Could not retrieve available balance: {e}") from e
 
     async def get_balance_async(self) -> int:
         """Async retrieve the available balance of the wallet.
@@ -150,7 +150,7 @@ class JoinMarketWalletMixin:
             walletinfo = cast(JsonDict, response["walletinfo"])
             return int(float(str(walletinfo["available_balance"])) * BTC)
         except KeyError as e:
-            raise Exception(f"Could not retrieve available balance: {e}")
+            raise Exception(f"Could not retrieve available balance: {e}") from e
 
     def get_new_address(self, mixdepth: int = 0) -> str:
         """Get a fresh address in the given account for depositing funds."""

@@ -56,7 +56,7 @@ class KubernetesLocalProxy:
                 raise Exception("Unexpected response from orchestrator")
             print(f"✓ Connected to orchestrator in namespace {self.namespace}")
         except Exception as e:
-            raise Exception(f"Failed to connect to orchestrator: {e}")
+            raise Exception(f"Failed to connect to orchestrator: {e}") from e
 
     def _kubectl_exec(
         self,
@@ -417,7 +417,7 @@ class KubernetesLocalProxy:
                 return pod_name
 
             except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
-                raise Exception(f"Failed to resolve pod name for {self.orchestrator_pod}: {e}")
+                raise Exception(f"Failed to resolve pod name for {self.orchestrator_pod}: {e}") from e
 
         # For other resource types, just use the name directly
         return resource_name
@@ -450,7 +450,7 @@ class KubernetesLocalProxy:
 
             return file_size
         except (subprocess.CalledProcessError, ValueError) as e:
-            raise Exception(f"Failed to check file size for {remote_file}: {e}")
+            raise Exception(f"Failed to check file size for {remote_file}: {e}") from e
 
     def _split_remote_file(self, remote_file: str) -> list[tuple[str, int]] | None:
         """
@@ -565,7 +565,7 @@ class KubernetesLocalProxy:
             # Clean up partial output file
             if os.path.exists(output_file):
                 os.remove(output_file)
-            raise Exception(f"Failed to reassemble chunks: {e}")
+            raise Exception(f"Failed to reassemble chunks: {e}") from e
 
         return True
 

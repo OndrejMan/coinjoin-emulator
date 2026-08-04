@@ -53,7 +53,7 @@ class JoinMarketLifecycleMixin:
             )
         except Exception as e:
             print(f"- could not start {name} ({e})")
-            raise Exception("Could not start IRC server")
+            raise Exception("Could not start IRC server") from e
 
     def start_distributor(self) -> None:
         name = "joinmarket-distributor"
@@ -70,7 +70,7 @@ class JoinMarketLifecycleMixin:
             )
         except Exception as e:
             print(f"- could not start {name} ({e})")
-            raise Exception("Could not start distributor")
+            raise Exception("Could not start distributor") from e
 
         actual_port = port if self.args.proxy else (443 if route else distributor_node_ports[port])
         actual_ip = ip if self.args.proxy or self.args.in_cluster else (route if route else self.args.control_ip)
@@ -103,7 +103,7 @@ class JoinMarketLifecycleMixin:
             )
         except Exception as e:
             print(f"- could not start {name} ({e})")
-            raise Exception("Could not start orderbook watcher")
+            raise Exception("Could not start orderbook watcher") from e
 
         # Determine how to reach the service from the controller
         actual_port = 62601 if self.args.proxy else (443 if route else obwatch_ports[port])
