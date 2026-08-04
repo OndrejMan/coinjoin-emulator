@@ -14,5 +14,5 @@ def run(command: list[str]) -> None:
 def main() -> None:
     """Apply Ruff fixes, then run type and lint checks."""
     run(["ruff", "check", ".", "--fix"])
-    run(["mypy", "manager"])
+    run(["mypy", "manager", "tests"])
     run(["pylint", "manager", "manager.py"])
