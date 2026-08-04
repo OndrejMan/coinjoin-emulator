@@ -217,10 +217,15 @@ class EngineBase:
         if self.distributor is None:
             raise RuntimeError("Distributor is not initialized")
 
+        # Round each UTXO up to a whole satoshi so the total meets the target
+        # even when the amount does not divide evenly. Integer-dividing by BTC
+        # here would fund every address with 0 BTC for any total below 200 BTC.
+        per_utxo_sats = math.ceil(btc_amount * BTC / DISTRIBUTOR_UTXOS)
         for _ in range(DISTRIBUTOR_UTXOS):
             self.node.fund_address(
                 self.distributor.get_new_address(),
-                math.ceil(btc_amount * BTC / DISTRIBUTOR_UTXOS) // BTC,
+                # Bitcoin Core rejects scientific notation, so keep 8 decimals.
+                float(f"{per_utxo_sats / BTC:.8f}"),
             )
 
         while (balance := self.distributor.get_balance()) < btc_amount * BTC:
