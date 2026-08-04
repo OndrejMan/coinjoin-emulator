@@ -90,10 +90,7 @@ class EngineFundingMixin:
                     try:
                         if self.distributor is None:
                             raise RuntimeError("Distributor is not initialized")
-                        result = self.distributor.send(batch)
-                        if str(result) == "timeout":
-                            print("- transaction timeout")
-                            continue
+                        self.distributor.send(batch)
                         break
                     except Exception as e:
                         # https://github.com/zkSNACKs/WalletWasabi/issues/12764
