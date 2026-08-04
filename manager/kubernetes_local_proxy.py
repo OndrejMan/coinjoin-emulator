@@ -8,6 +8,8 @@ from typing import cast
 import backoff
 import yaml
 
+from manager.exceptions import CoinjoinEmulatorError
+
 # File transfer settings
 CHUNK_SIZE_MB = 10
 LARGE_FILE_THRESHOLD_MB = 20
@@ -54,10 +56,10 @@ class KubernetesLocalProxy:
         try:
             result = self._kubectl_exec(["echo", "connection_test"])
             if result is None or "connection_test" not in result:
-                raise Exception("Unexpected response from orchestrator")
+                raise CoinjoinEmulatorError("Unexpected response from orchestrator")
             print(f"✓ Connected to orchestrator in namespace {self.namespace}")
         except Exception as e:
-            raise Exception(f"Failed to connect to orchestrator: {e}") from e
+            raise CoinjoinEmulatorError(f"Failed to connect to orchestrator: {e}") from e
 
     def _kubectl_exec(
         self,
@@ -412,12 +414,12 @@ class KubernetesLocalProxy:
                 pod_name = result.stdout.strip()
 
                 if not pod_name:
-                    raise Exception(f"No running pod found for {self.orchestrator_pod}")
+                    raise CoinjoinEmulatorError(f"No running pod found for {self.orchestrator_pod}")
 
                 return pod_name
 
             except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
-                raise Exception(f"Failed to resolve pod name for {self.orchestrator_pod}: {e}") from e
+                raise CoinjoinEmulatorError(f"Failed to resolve pod name for {self.orchestrator_pod}: {e}") from e
 
         # For other resource types, just use the name directly
         return resource_name
@@ -450,7 +452,7 @@ class KubernetesLocalProxy:
 
             return file_size
         except (subprocess.CalledProcessError, ValueError) as e:
-            raise Exception(f"Failed to check file size for {remote_file}: {e}") from e
+            raise CoinjoinEmulatorError(f"Failed to check file size for {remote_file}: {e}") from e
 
     def _split_remote_file(self, remote_file: str) -> list[tuple[str, int]] | None:
         """
@@ -483,7 +485,7 @@ class KubernetesLocalProxy:
 
         result = subprocess.run(split_cmd, capture_output=True, text=True, check=False)
         if result.returncode != 0:
-            raise Exception(f"Failed to split file: {result.stderr}")
+            raise CoinjoinEmulatorError(f"Failed to split file: {result.stderr}")
 
         # Parse the split files list
         split_files = []
@@ -496,7 +498,7 @@ class KubernetesLocalProxy:
                     split_files.append((filename, size))
 
         if not split_files:
-            raise Exception("No split files found after splitting operation")
+            raise CoinjoinEmulatorError("No split files found after splitting operation")
 
         return split_files
 
@@ -565,7 +567,7 @@ class KubernetesLocalProxy:
             # Clean up partial output file
             if os.path.exists(output_file):
                 os.remove(output_file)
-            raise Exception(f"Failed to reassemble chunks: {e}") from e
+            raise CoinjoinEmulatorError(f"Failed to reassemble chunks: {e}") from e
 
         return True
 

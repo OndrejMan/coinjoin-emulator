@@ -12,6 +12,7 @@ import backoff
 from manager.driver import Driver
 from manager.engine.base.protocols import EmulatorClient, EngineArgs, InvoiceDistributor
 from manager.engine.configuration import WalletConfig
+from manager.exceptions import StartupError
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
 
@@ -20,7 +21,7 @@ from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import Orderbo
 def ensure_client_session(client: JoinMarketClientServer, name: str) -> None:
     """Establish the jmwalletd session, retrying while the container boots."""
     if not client.session():
-        raise Exception(f"Could not establish session for {name}")
+        raise StartupError(f"Could not establish session for {name}")
 
 
 class JoinMarketLifecycleMixin:
@@ -58,7 +59,7 @@ class JoinMarketLifecycleMixin:
             )
         except Exception as e:
             print(f"- could not start {name} ({e})")
-            raise Exception("Could not start IRC server") from e
+            raise StartupError("Could not start IRC server") from e
 
     def start_distributor(self) -> None:
         name = "joinmarket-distributor"
@@ -75,7 +76,7 @@ class JoinMarketLifecycleMixin:
             )
         except Exception as e:
             print(f"- could not start {name} ({e})")
-            raise Exception("Could not start distributor") from e
+            raise StartupError("Could not start distributor") from e
 
         actual_port = port if self.args.proxy else (443 if route else distributor_node_ports[port])
         actual_ip = ip if self.args.proxy or self.args.in_cluster else (route if route else self.args.control_ip)
@@ -108,7 +109,7 @@ class JoinMarketLifecycleMixin:
             )
         except Exception as e:
             print(f"- could not start {name} ({e})")
-            raise Exception("Could not start orderbook watcher") from e
+            raise StartupError("Could not start orderbook watcher") from e
 
         # Determine how to reach the service from the controller
         actual_port = 62601 if self.args.proxy else (443 if route else obwatch_ports[port])
@@ -139,7 +140,7 @@ class JoinMarketLifecycleMixin:
 
         if not client.wait_wallet(timeout=120):
             print(f"- could not start {name} (application timeout)")
-            raise Exception("Could not start distributor")
+            raise StartupError("Could not start distributor")
         return client
 
     def start_client(self, idx: int, wallet: WalletConfig | None = None) -> EmulatorClient | None:

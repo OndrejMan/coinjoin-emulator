@@ -6,6 +6,8 @@
 
 from typing import TYPE_CHECKING, cast
 
+from manager.exceptions import CoinjoinEmulatorError
+
 from .types import BTC, BondRecord, JsonDict
 
 
@@ -52,7 +54,7 @@ class JoinMarketFidelityBondMixin:
             address = str(response.get("address") or "")
 
             if not address:
-                raise Exception(f"Failed to create fidelity bond address: {response}")
+                raise CoinjoinEmulatorError(f"Failed to create fidelity bond address: {response}")
 
             # Track the bond
             self.fidelity_bonds[address] = {
@@ -71,7 +73,7 @@ class JoinMarketFidelityBondMixin:
             }
 
         except Exception as e:
-            raise Exception(f"Failed to create fidelity bond: {e}") from e
+            raise CoinjoinEmulatorError(f"Failed to create fidelity bond: {e}") from e
 
     def get_fidelity_bonds(self) -> dict[str, BondRecord]:
         """

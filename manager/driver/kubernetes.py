@@ -14,6 +14,8 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from kubernetes.stream import stream
 
+from manager.exceptions import CoinjoinEmulatorError
+
 from . import Driver
 
 DEFAULT_CPU = 0.1
@@ -85,7 +87,7 @@ class KubernetesDriver(Driver):
             ns = self.client.read_namespace(self._namespace)
             if ns.status.phase != "Active":
                 print(f"Namespace '{self._namespace}' is not Active yet.")
-                raise Exception(f"Namespace '{self._namespace}' not Active yet.")
+                raise CoinjoinEmulatorError(f"Namespace '{self._namespace}' not Active yet.")
             print(f"Namespace '{self._namespace}' is Active.")
 
         wait_for_active()

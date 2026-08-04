@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, cast
 import httpx
 import requests
 
+from manager.exceptions import RpcError
+
 from .types import PASSWORD, JoinmarketConflictException, JsonDict
 
 
@@ -98,7 +100,7 @@ class JoinMarketRpcMixin:
                     except json.JSONDecodeError:
                         error_message = response.text
                     print(f"[RPC] Error {response.status_code}: {error_message}")
-                    raise Exception(f"Error {response.status_code}: {error_message}")
+                    raise RpcError(f"Error {response.status_code}: {error_message}")
 
                 return cast(JsonDict, response.json())
             except Exception as e:
@@ -164,7 +166,7 @@ class JoinMarketRpcMixin:
             except httpx.HTTPStatusError as e:
                 print(f"[RPC-ASYNC ERROR] {method} {endpoint}: HTTP {e.response.status_code}")
                 if attempt == repeat - 1:
-                    raise Exception(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
+                    raise RpcError(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
                 await asyncio.sleep(1)
             except Exception as e:
                 print(f"[RPC-ASYNC ERROR] {method} {endpoint}: {e}")
@@ -172,7 +174,7 @@ class JoinMarketRpcMixin:
                     raise
                 await asyncio.sleep(1)
 
-        raise Exception("timeout")
+        raise RpcError("timeout")
 
     def session(self) -> JsonDict:
         try:

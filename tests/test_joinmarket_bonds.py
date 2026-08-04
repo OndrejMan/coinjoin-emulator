@@ -1,5 +1,6 @@
 import pytest
 
+from manager.exceptions import CoinjoinEmulatorError
 from manager.wasabi_clients.joinmarket_clients.bonds import JoinMarketFidelityBondMixin
 from manager.wasabi_clients.joinmarket_clients.types import BTC, BondRecord, JsonDict
 
@@ -56,7 +57,7 @@ class TestCreateFidelityBond:
     def test_missing_address_in_the_response_is_reported(self) -> None:
         harness = BondHarness(response={"error": "no timelock address"})
 
-        with pytest.raises(Exception, match="Failed to create fidelity bond"):
+        with pytest.raises(CoinjoinEmulatorError, match="Failed to create fidelity bond"):
             harness.create_fidelity_bond(amount=50000, locktime="2026-08")
 
         assert harness.fidelity_bonds == {}

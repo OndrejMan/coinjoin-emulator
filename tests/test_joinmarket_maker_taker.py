@@ -2,6 +2,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from manager.exceptions import CoinjoinEmulatorError
 from manager.wasabi_clients.joinmarket_clients.maker import JoinMarketMakerMixin
 from manager.wasabi_clients.joinmarket_clients.taker import JoinMarketTakerMixin
 from manager.wasabi_clients.joinmarket_clients.types import JoinmarketConflictException, JsonDict
@@ -159,7 +160,7 @@ class TestRunSchedule:
     def test_schedule_needs_tumbler_options(self) -> None:
         harness = TakerHarness()
 
-        with pytest.raises(Exception, match="No tumbler options provided"):
+        with pytest.raises(CoinjoinEmulatorError, match="No tumbler options provided"):
             harness.run_schedule()
 
     def test_schedule_requests_one_destination_per_configured_address(self) -> None:
