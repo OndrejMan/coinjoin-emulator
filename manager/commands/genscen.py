@@ -304,6 +304,6 @@ def handler(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate a scenario file")
-    setup_parser(parser)
-    handler(parser.parse_args())
+    arg_parser = argparse.ArgumentParser(description="Generate a scenario file")
+    setup_parser(arg_parser)
+    handler(arg_parser.parse_args())

@@ -103,7 +103,6 @@ class JoinMarketRoundsMixin:
         Logs memory usage and alerts if pods are near limits.
         """
         # Sample 5 random clients to avoid overhead
-        import random
         sample_size = min(5, len(self.clients))
         sample_clients = random.sample(self.clients, sample_size) if self.clients else []
 

@@ -394,7 +394,6 @@ class KubernetesLocalProxy:
             try:
                 result = subprocess.run(get_selector_cmd, capture_output=True, text=True, check=True)
                 # Parse JSON output like {"app":"emulation-manager"}
-                import json
                 labels = json.loads(result.stdout.strip())
 
                 # Build label selector string: "app=emulation-manager,component=orchestrator"

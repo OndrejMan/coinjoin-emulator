@@ -533,7 +533,6 @@ def handler(args: argparse.Namespace) -> None:
         "wallets": []
     }
     scenario_wallets: List[Dict[str, object]] = []
-    import random
     SATOSHI = 100_000_000
     # AUTOMATIC LIQUIDITY BALANCING:
     # Scale down taker parameters to ensure they have less liquidity than makers
@@ -842,7 +841,6 @@ def handler(args: argparse.Namespace) -> None:
         print(f"- file {out_path} already exists")
         import sys
         sys.exit(1)
-    import json
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(scenario, f, indent=2)
     print(f"- saved to {out_path}")
