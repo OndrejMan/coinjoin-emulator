@@ -305,18 +305,20 @@ class KubernetesDriver(Driver):
                 print("Waiting for file transfer to complete...")
                 time.sleep(10)
                 if found:
-                    print("All required log files still found in {} after {} seconds".format(
-                        dst_path, time.time() - start_time))
+                    print(
+                        f"All required log files still found in {dst_path} "
+                        f"after {time.time() - start_time} seconds"
+                    )
                     time.sleep(1)
                     break
                 found = True
 
             if time.time() - start_time > timeout:
-                print("Timeout waiting for required log files in {}".format(dst_path))
+                print(f"Timeout waiting for required log files in {dst_path}")
                 break
 
             if not waited:
-                print("Waiting for required log files to appear in {}...".format(dst_path))
+                print(f"Waiting for required log files to appear in {dst_path}...")
                 waited = True
             time.sleep(2)
 
