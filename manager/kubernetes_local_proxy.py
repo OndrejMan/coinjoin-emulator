@@ -6,6 +6,7 @@ import uuid
 from typing import cast
 
 import backoff
+import yaml
 
 # File transfer settings
 CHUNK_SIZE_MB = 10
@@ -1058,7 +1059,6 @@ class KubernetesLocalProxy:
 
             # Update the image in deployment.yaml if needed
             if image_prefix:
-                import yaml
                 with open(deployment_file, 'r', encoding="utf-8") as f:
                     deployment = yaml.safe_load(f)
 

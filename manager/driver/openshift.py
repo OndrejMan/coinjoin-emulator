@@ -8,6 +8,7 @@ OpenshiftDriver: Kubernetes driver extension for OpenShift compatibility.
 - All other logic is reused from KubernetesDriver.
 """
 import subprocess
+import time
 from typing import cast
 
 from kubernetes import client
@@ -113,7 +114,6 @@ class OpenshiftDriver(KubernetesDriver):
         if skip_ip:
             return "", {}, None
         # Wait for pod to be running and get IP
-        import time
         for _ in range(60):
             pod = self.client.read_namespaced_pod_status(
                 name=name, namespace=self.namespace

@@ -1,6 +1,8 @@
 import base64
+import glob
 import os
 import tarfile
+import time
 import traceback
 from functools import cached_property
 from io import BytesIO
@@ -283,8 +285,6 @@ class KubernetesDriver(Driver):
             tar.extractall(dst_path)
 
         # Wait for required files to appear in dst_path
-        import glob
-        import time
         start_time = time.time()
         timeout = 120  # 2 minutes
         found = False
