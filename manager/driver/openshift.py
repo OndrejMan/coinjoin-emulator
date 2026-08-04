@@ -41,7 +41,7 @@ class OpenshiftDriver(KubernetesDriver):
             result = subprocess.run([
                 "oc", "adm", "policy", "add-scc-to-user", "anyuid",
                 "-z", service_account, "-n", self.namespace
-            ], capture_output=True, text=True)
+            ], capture_output=True, text=True, check=False)
             if result.returncode == 0:
                 print(
                     f"[INFO] Granted 'anyuid' SCC to service account '{service_account}' "
