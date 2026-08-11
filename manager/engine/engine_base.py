@@ -55,6 +55,23 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
             getattr(self.args, "coinjoin_infrastructure_local_build", False)
         )
 
+    def service_endpoint(
+        self,
+        ip: str,
+        container_port: int,
+        ports: dict[int, int],
+        route: object = None,
+    ) -> tuple[str, int]:
+        """Resolve a driver endpoint for local, proxied, in-cluster, and routed runs."""
+        direct = bool(self.args.proxy) or bool(
+            self.args.in_cluster or getattr(self.driver, "in_cluster", False)
+        )
+        if direct:
+            return ip, container_port
+        if route:
+            return str(route), 443
+        return self.args.control_ip, ports[container_port]
+
     def prepare_image(self, name: str, path: str | None = None) -> None:
         image_name = self.image_ref(name)
         has_override = bool(getattr(self.args, f"{name.replace('-', '_')}_image", ""))
@@ -98,7 +115,7 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
             node_volumes = {absolute_host_path: mount}
 
         command = ["./run.sh", *self.args.btc_node_arg] if self.args.btc_node_arg else None
-        btc_node_ip, btc_node_ports, _ = self.driver.run(
+        btc_node_ip, btc_node_ports, route = self.driver.run(
             "btc-node",
             self.image_ref("btc-node"),
             ports={18443: 18443, 18444: 18444},
@@ -110,9 +127,10 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
         )
 
         print(btc_node_ip, btc_node_ports)
+        node_host, node_port = self.service_endpoint(btc_node_ip, 18443, btc_node_ports, route)
         self.node = BtcNode(
-            host=btc_node_ip if self.args.proxy or self.args.in_cluster else self.args.control_ip,
-            port=18443 if self.args.proxy else btc_node_ports[18443],
+            host=node_host,
+            port=node_port,
             internal_ip=btc_node_ip,
             proxy=self.args.proxy,
         )

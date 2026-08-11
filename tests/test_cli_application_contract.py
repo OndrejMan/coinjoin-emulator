@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 from manager import cli
 from manager.application import run_engine
 
@@ -53,6 +55,25 @@ def test_create_kubernetes_driver_preserves_branch_specific_constructor_argument
         cli.create_driver(args)
 
     driver.assert_called_once_with("coinjoin", True, "/work/config.json", True, None)
+
+
+def test_create_kubernetes_driver_detects_in_cluster_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = SimpleNamespace(
+        driver="kubernetes",
+        namespace="coinjoin",
+        reuse_namespace=True,
+        k8s_pull_secret=None,
+        in_cluster=False,
+        disable_port_forward=True,
+        proxy="",
+        run_id="run-1",
+    )
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+
+    with patch("manager.cli.KubernetesDriver") as driver:
+        cli.create_driver(args)
+
+    driver.assert_called_once_with("coinjoin", True, None, True, "run-1")
 
 
 def test_system_exit_writes_a_failure_marker_after_all_cleanup_attempts(tmp_path: Path) -> None:
