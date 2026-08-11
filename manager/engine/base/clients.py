@@ -9,8 +9,6 @@ from manager.engine.base.protocols import EmulatorClient
 from manager.engine.configuration import ScenarioConfig, WalletConfig
 from manager.exceptions import CoinjoinEmulatorError
 
-CLIENT_HEALTHCHECK_TIMEOUT = 120
-
 
 def _has_fidelity_bond(wallet: WalletConfig) -> bool:
     """True when the wallet asks for a fidelity bond (typed scenario model)."""
@@ -143,10 +141,14 @@ class EngineClientsMixin:
 
         def healthcheck(client: EmulatorClient) -> tuple[str, bool, str | None]:
             try:
-                healthy = client.wait_wallet(timeout=CLIENT_HEALTHCHECK_TIMEOUT)
+                # Startup already waited for and, for JoinMarket, created the
+                # wallet.  Calling wait_wallet() again is not a read-only
+                # health check there: it calls /wallet/create again and can
+                # loop on "Wallet already unlocked" until the timeout.
+                client.get_balance()
             except (CoinjoinEmulatorError, OSError, TypeError, ValueError) as error:
                 return client.name, False, str(error)
-            return client.name, healthy, None
+            return client.name, True, None
 
         with multiprocessing.pool.ThreadPool() as pool:
             results = pool.map(healthcheck, self.clients)
