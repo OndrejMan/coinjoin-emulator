@@ -6,7 +6,7 @@ import time
 from manager.btc_node import BtcNode
 from manager.driver import Driver
 from manager.engine.base.clients import EngineClientsMixin
-from manager.engine.base.funding import EngineFundingMixin
+from manager.engine.base.funding import INITIAL_DISTRIBUTOR_BTC, EngineFundingMixin
 from manager.engine.base.logs import EngineLogsMixin
 from manager.engine.base.protocols import EmulatorClient, EngineArgs, InvoiceDistributor
 from manager.engine.configuration import ScenarioConfig, WalletConfig
@@ -191,7 +191,7 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
             self.ensure_log_run_path_available()
         self.prepare_images()
         self.start_infrastructure()
-        self.fund_distributor(5000)
+        self.fund_distributor(INITIAL_DISTRIBUTOR_BTC)
         self.start_clients(self.scenario.wallets)
         self.validate_clients()
         time.sleep(60)

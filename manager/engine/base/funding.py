@@ -10,7 +10,8 @@ from manager.engine.base.protocols import EmulatorClient, InvoiceDistributor
 from manager.engine.configuration import FundConfig, WalletConfig
 from manager.exceptions import CoinjoinEmulatorError
 
-DISTRIBUTOR_UTXOS = 200
+DISTRIBUTOR_UTXOS = 10
+INITIAL_DISTRIBUTOR_BTC = 500
 BATCH_SIZE = 5  # smaller batches avoid UTXO race conditions
 BTC = 100_000_000
 
