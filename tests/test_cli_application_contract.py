@@ -99,3 +99,23 @@ def test_system_exit_writes_a_failure_marker_after_all_cleanup_attempts(tmp_path
     driver.cleanup.assert_called_once_with("")
     assert (tmp_path / "failed").read_text(encoding="utf-8") == "done\n"
     assert not (tmp_path / "done").exists()
+
+
+def test_cleanup_skips_btc_download_before_node_initialization(tmp_path: Path) -> None:
+    args = SimpleNamespace(
+        no_logs=False,
+        download_btc_data=str(tmp_path / "btc-data"),
+        download_path="btc-node:/home/bitcoin/data/",
+        image_prefix="",
+        controller_done_marker=str(tmp_path / "done"),
+        controller_failed_marker=str(tmp_path / "failed"),
+    )
+    driver = Mock()
+    engine = Mock(node=None)
+    engine.run.side_effect = RuntimeError("image build failed")
+    downloader = Mock()
+
+    assert run_engine(args, driver, engine, downloader) == 1
+
+    downloader.assert_not_called()
+    driver.cleanup.assert_called_once_with("")
