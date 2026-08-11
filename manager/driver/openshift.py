@@ -62,11 +62,15 @@ class OpenshiftDriver(KubernetesDriver):
         cpu: float | None,
         memory: int | None,
         user_id: int | None = None,
+        volumes: dict[str, dict[str, str]] | None = None,
+        command: list[str] | None = None,
         service_account: str = "jm",
         run_as_user: int = 1000,
         run_as_group: int = 1000,
     ) -> dict[str, object]:
-        manifest = super().build_pod_manifest(name, image, env, ports, cpu, memory, user_id)
+        manifest = super().build_pod_manifest(
+            name, image, env, ports, cpu, memory, user_id, volumes, command
+        )
         # Inject ServiceAccount and securityContext
         spec = cast(dict[str, object], manifest["spec"])
         spec["serviceAccountName"] = service_account
@@ -95,11 +99,24 @@ class OpenshiftDriver(KubernetesDriver):
         run_as_user = int(cast(int, kwargs.get("run_as_user", 1000)))
         run_as_group = int(cast(int, kwargs.get("run_as_group", 1000)))
         skip_ip = bool(kwargs.get("skip_ip", False))
+        volumes = cast(dict[str, dict[str, str]] | None, kwargs.get("volumes"))
+        command = cast(list[str] | None, kwargs.get("command"))
 
         self.ensure_service_account(service_account)
         # Call the parent's pod manifest creation logic
         pod_manifest = self.build_pod_manifest(
-            name, image, env, ports, cpu, memory, None, service_account, run_as_user, run_as_group
+            name,
+            image,
+            env,
+            ports,
+            cpu,
+            memory,
+            user_id=None,
+            volumes=volumes,
+            command=command,
+            service_account=service_account,
+            run_as_user=run_as_user,
+            run_as_group=run_as_group,
         )
         return self._create_and_wait_for_pod(pod_manifest, name, skip_ip)
 

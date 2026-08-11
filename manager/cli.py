@@ -160,7 +160,13 @@ def create_driver(args: ParsedArgs) -> Driver:
             return PodmanDriver()
         case "kubernetes":
             pull_secret = getattr(args, "k8s_pull_secret", None) or os.environ.get("K8S_PULL_SECRET")
-            return KubernetesDriver(args.namespace, args.reuse_namespace, pull_secret, args.in_cluster)
+            return KubernetesDriver(
+                args.namespace,
+                args.reuse_namespace,
+                pull_secret,
+                args.in_cluster,
+                getattr(args, "run_id", None),
+            )
         case "openshift":
             pull_secret = getattr(args, "k8s_pull_secret", None) or os.environ.get("K8S_PULL_SECRET")
             return OpenshiftDriver(args.namespace, args.reuse_namespace, pull_secret)

@@ -1,6 +1,6 @@
 import base64
-import glob
 import os
+import shlex
 import tarfile
 import time
 import traceback
@@ -14,12 +14,15 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from kubernetes.stream import stream
 
-from manager.exceptions import CoinjoinEmulatorError
+from manager.exceptions import CoinjoinEmulatorError, KubernetesResourceQuotaError, StartupError
 
 from . import Driver
 
 DEFAULT_CPU = 0.1
 DEFAULT_MEMORY = 768
+MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
+MANAGED_BY_VALUE = "coinjoin-emulator"
+POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
 
 
 class KubernetesDriver(Driver):
@@ -29,6 +32,7 @@ class KubernetesDriver(Driver):
         reuse_namespace: bool = False,
         pull_secret_path: str | None = None,
         in_cluster: bool = False,
+        run_id: str | None = None,
     ) -> None:
 
         if in_cluster:
@@ -44,6 +48,7 @@ class KubernetesDriver(Driver):
         self.reuse_namespace = reuse_namespace
         self.pull_secret_path = pull_secret_path
         self.in_cluster = in_cluster
+        self.run_id = run_id
 
     def _create_image_pull_secret(self) -> None:
         secret_name = "regcred"
@@ -118,6 +123,8 @@ class KubernetesDriver(Driver):
         cpu: float | None,
         memory: int | None,
         user_id: int | None = None,
+        volumes: dict[str, dict[str, str]] | None = None,
+        command: list[str] | None = None,
     ) -> dict[str, object]:
         if cpu is None:
             cpu = DEFAULT_CPU
@@ -127,6 +134,24 @@ class KubernetesDriver(Driver):
             ports = {}
         if env is None:
             env = {}
+
+        volume_mounts: list[dict[str, object]] = []
+        pod_volumes: list[dict[str, object]] = []
+        for index, (host_path, mount) in enumerate((volumes or {}).items()):
+            volume_name = f"host-volume-{index}"
+            volume_mounts.append(
+                {
+                    "name": volume_name,
+                    "mountPath": mount["bind"],
+                    "readOnly": mount.get("mode") == "ro",
+                }
+            )
+            pod_volumes.append(
+                {
+                    "name": volume_name,
+                    "hostPath": {"path": host_path, "type": "DirectoryOrCreate"},
+                }
+            )
 
         security_context = {
                             "allowPrivilegeEscalation": False,
@@ -142,32 +167,33 @@ class KubernetesDriver(Driver):
                             "runAsGroup": user_id,
                         }
 
+        labels = {"app": name, MANAGED_BY_LABEL: MANAGED_BY_VALUE}
+        if self.run_id:
+            labels["coinjoin.run-id"] = self.run_id
+        container: dict[str, object] = {
+            "image": image,
+            "imagePullPolicy": "Always",
+            "name": name,
+            "ports": [{"containerPort": container_port} for container_port in ports.keys()],
+            "env": [{"name": k, "value": v} for k, v in env.items()],
+            "volumeMounts": volume_mounts,
+            "securityContext": security_context,
+            "resources": {
+                "limits": {"cpu": cpu * 1.5, "memory": f"{memory * 1.5}Mi"},
+                "requests": {"cpu": cpu, "memory": f"{memory}Mi"},
+            },
+        }
+        if command is not None:
+            container["command"] = command
+
         return {
             "apiVersion": "v1",
             "kind": "Pod",
-            "metadata": {"name": name, "labels": {"app": name}},
+            "metadata": {"name": name, "labels": labels},
             "spec": {
                 "restartPolicy": "Never",
-                "containers": [
-                    {
-                        "image": image,
-                        "imagePullPolicy": "Always",
-                        "name": name,
-                        "ports": [
-                            {"containerPort": container_port}
-                            for container_port in ports.keys()
-                        ],
-                        "env": [
-                            {"name": k, "value": v}
-                            for k, v in env.items()
-                        ],
-                        "securityContext": security_context,
-                        "resources": {
-                            "limits": {"cpu": cpu*1.5, "memory": f"{memory*1.5}Mi"},
-                            "requests": {"cpu": cpu, "memory": f"{memory}Mi"},
-                        },
-                    }
-                ],
+                "containers": [container],
+                "volumes": pod_volumes,
                 # Add imagePullSecrets if pull_secret_path is set
                 **({"imagePullSecrets": [{"name": "regcred"}]} if self.pull_secret_path else {}),
             },
@@ -184,25 +210,50 @@ class KubernetesDriver(Driver):
         **kwargs: object,
     ) -> tuple[str, dict[int, int], object]:
         run_as_user = cast(int | None, kwargs.get("run_as_user"))
+        volumes = cast(dict[str, dict[str, str]] | None, kwargs.get("volumes"))
+        command = cast(list[str] | None, kwargs.get("command"))
         ports = ports or {}
-        pod_manifest = self.build_pod_manifest(name, image, env, ports, cpu, memory, run_as_user)
-        resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+        pod_manifest = self.build_pod_manifest(
+            name, image, env, ports, cpu, memory, run_as_user, volumes, command
+        )
+        try:
+            resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+        except ApiException as error:
+            details = str(getattr(error, "body", "") or error)
+            if error.status == 403 and "exceeded quota" in details.lower():
+                raise KubernetesResourceQuotaError(
+                    f"Kubernetes quota rejected pod {name} in namespace {self.namespace}: {details}"
+                ) from error
+            raise
 
         pod_ip = None
+        deadline = time.monotonic() + POD_IP_WAIT_TIMEOUT_SECONDS
         try:
             while pod_ip is None:
-                pod_ip = self.client.read_namespaced_pod_status(
+                pod_status = self.client.read_namespaced_pod_status(
                     name=name, namespace=self.namespace
-                ).status.pod_ip
+                ).status
+                pod_ip = pod_status.pod_ip
+                if pod_status.phase in {"Failed", "Succeeded"} and pod_ip is None:
+                    raise StartupError(
+                        f"Pod {name} entered terminal phase {pod_status.phase} before receiving an IP"
+                    )
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"Pod {name} did not receive an IP within {POD_IP_WAIT_TIMEOUT_SECONDS}s "
+                        f"(last phase: {pod_status.phase})"
+                    )
                 sleep(1)
         except Exception as e:
             print(f"Failed to get pod IP: {e}")
             raise
 
+        pod_metadata = cast(dict[str, object], pod_manifest["metadata"])
+        managed_labels = cast(dict[str, str], pod_metadata["labels"])
         service_manifest = {
             "apiVersion": "v1",
             "kind": "Service",
-            "metadata": {"name": f"{name}"},
+            "metadata": {"name": f"{name}", "labels": managed_labels},
             "spec": {
                 "type": "NodePort",
                 "selector": {"app": name},
@@ -249,14 +300,10 @@ class KubernetesDriver(Driver):
         if src_path[-1] == "/":
             src_path = src_path[:-1]
         src_parent, src_target = os.path.split(src_path)
-        # Use rsync-like approach with tar to handle files being written to
-        # The --warning=no-file-changed flag helps handle files that change during reading
-        # The --ignore-failed-read flag ensures the process continues even if some files can't be read
         exec_command = [
-            "tar", "cf", "-",
-            "--warning=no-file-changed",
-            "--ignore-failed-read",
-            "-C", src_parent, src_target
+            "sh",
+            "-c",
+            f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64",
         ]
         resp = stream(
             self.client.connect_get_namespaced_pod_exec,
@@ -269,62 +316,32 @@ class KubernetesDriver(Driver):
             tty=False,
             _preload_content=False,
         )
-        print("Opening connection")
-
-        fo = BytesIO()
+        encoded_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+        deadline = time.monotonic() + 1800
         while resp.is_open():
-            print("Updating stream")
-            resp.update(timeout=10)
+            if time.monotonic() >= deadline:
+                resp.close()
+                raise TimeoutError(f"Timed out downloading {name}:{src_path}")
+            resp.update(timeout=1)
             if resp.peek_stdout():
-                fo.write(resp.read_stdout().encode())
-        print("")
-        fo.seek(0)
-        print("Closing connection")
+                encoded_chunks.append(resp.read_stdout())
+            if resp.peek_stderr():
+                stderr_chunks.append(resp.read_stderr())
         resp.close()
-
+        stderr = "".join(stderr_chunks)
+        if stderr.strip():
+            raise RuntimeError(f"download command wrote stderr: {stderr.strip()}")
+        try:
+            payload = base64.b64decode("".join(encoded_chunks), validate=True)
+        except ValueError as error:
+            raise RuntimeError(f"download of {name}:{src_path} returned invalid base64") from error
+        fo = BytesIO(payload)
         with tarfile.open(fileobj=fo) as tar:
-            print("Extracting")
-            tar.extractall(dst_path)
-
-        # Wait for required files to appear in dst_path
-        start_time = time.time()
-        timeout = 120  # 2 minutes
-        found = False
-        waited = False
-        while True:
-            tumble_log = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.log"))
-            tumble_schedule = bool(glob.glob(os.path.join(dst_path, "logs/TUMBLE.schedule*")))
-            j_logs = glob.glob(os.path.join(dst_path, "logs/J*.log"))
-            yifen = os.path.exists(os.path.join(dst_path, "logs/yigen-statement.csv"))
-
-            cond1 = tumble_log and tumble_schedule and len(j_logs) > 0
-            cond2 = len(j_logs) > 0 and yifen
-
-            print(f"Debug: tumble_log={tumble_log}, tumble_schedule={tumble_schedule}, j_logs={j_logs}, yigen={yifen}")
-
-            if cond1 or cond2:
-                print(f"All required log files found in {dst_path} after {time.time() - start_time} seconds")
-                print("Waiting for file transfer to complete...")
-                time.sleep(10)
-                if found:
-                    print(
-                        f"All required log files still found in {dst_path} "
-                        f"after {time.time() - start_time} seconds"
-                    )
-                    time.sleep(1)
-                    break
-                found = True
-
-            if time.time() - start_time > timeout:
-                print(f"Timeout waiting for required log files in {dst_path}")
-                break
-
-            if not waited:
-                print(f"Waiting for required log files to appear in {dst_path}...")
-                waited = True
-            time.sleep(2)
-
-        # sleep(60)
+            try:
+                tar.extractall(dst_path, filter="data")
+            except TypeError:
+                tar.extractall(dst_path)
 
     def peek(self, name: str, path: str) -> str:
         exec_command = ["cat", path]
@@ -445,7 +462,10 @@ class KubernetesDriver(Driver):
         # return
 
         try:
-            pods = self.client.list_namespaced_pod(namespace=self._namespace)
+            pods = self.client.list_namespaced_pod(  # type: ignore[call-arg]
+                namespace=self._namespace,
+                label_selector=f"{MANAGED_BY_LABEL}={MANAGED_BY_VALUE}",
+            )
         except ApiException as e:
             print("Error listing pods:", e)
             traceback.print_exc()
@@ -453,34 +473,21 @@ class KubernetesDriver(Driver):
             return
 
         for pod in pods.items:
-            if any(
-                    x in pod.metadata.name
-                    for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-coordinator", "wasabi-client",
-                              "joinmarket-client-server", "joinmarket-distributor", "jcs", "joinmarket-obwatch")
-            ):
-                try:
-                    print(f"Deleting pod {pod.metadata.name}")
-                    self.client.delete_namespaced_pod(
-                        name=pod.metadata.name, namespace=self._namespace
-                    )
-                    print(f"Deleted pod {pod.metadata.name}")
-                except ApiException:
-                    pass
-        services = self.client.list_namespaced_service(namespace=self._namespace)
+            try:
+                print(f"Deleting pod {pod.metadata.name}")
+                self.client.delete_namespaced_pod(name=pod.metadata.name, namespace=self._namespace)
+            except ApiException:
+                pass
+        services = self.client.list_namespaced_service(  # type: ignore[call-arg]
+            namespace=self._namespace,
+            label_selector=f"{MANAGED_BY_LABEL}={MANAGED_BY_VALUE}",
+        )
         for service in services.items:
-            if any(
-                    x in service.metadata.name
-                    for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-coordinator", "wasabi-client",
-                              "joinmarket-client-server", "joinmarket-distributor", "jcs", "joinmarket-obwatch")
-            ):
-                try:
-                    print("Deleting service", service.metadata.name)
-                    self.client.delete_namespaced_service(
-                        name=service.metadata.name, namespace=self._namespace
-                    )
-                    print("Deleted service", service.metadata.name)
-                except ApiException:
-                    pass
+            try:
+                print("Deleting service", service.metadata.name)
+                self.client.delete_namespaced_service(name=service.metadata.name, namespace=self._namespace)
+            except ApiException:
+                pass
 
         if not self.reuse_namespace:
             try:
