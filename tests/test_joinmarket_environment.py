@@ -1,5 +1,6 @@
 """JoinMarket container isolation contract."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
@@ -29,6 +30,21 @@ def test_container_environment_selects_wallet_and_descriptor_fallback() -> None:
         "JM_RPC_WALLET_FILE": "jm_wallet_jcs_001",
         "JM_DESCRIPTOR_REGTEST_FALLBACK": "1",
     }
+
+
+def test_orderbook_entrypoint_exits_instead_of_starting_walletd() -> None:
+    entrypoint = (
+        Path(__file__).resolve().parents[1]
+        / "containers"
+        / "joinmarket-client-server"
+        / "run.sh"
+    ).read_text(encoding="utf-8")
+    obwatch_branch = entrypoint.split('if [ "${MODE}" = "obwatch" ]; then', 1)[1].split(
+        "fi", 1
+    )[0]
+
+    assert "blockchain_source = no-blockchain" in obwatch_branch
+    assert 'exit "${PIPESTATUS[0]}"' in obwatch_branch
 
 
 class RoleClient:
