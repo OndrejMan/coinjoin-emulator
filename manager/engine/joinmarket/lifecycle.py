@@ -1,5 +1,6 @@
 """Start-up and shutdown of the JoinMarket-specific containers."""
 
+import threading
 from time import sleep
 from typing import TYPE_CHECKING, cast
 
@@ -8,6 +9,7 @@ import backoff
 from manager.driver import Driver
 from manager.engine.base.protocols import EmulatorClient, EngineArgs, InvoiceDistributor
 from manager.engine.configuration import WalletConfig
+from manager.engine.joinmarket.environment import joinmarket_container_env
 from manager.exceptions import StartupError
 from manager.wasabi_clients.joinmarket_clients.factory import client_from_wallet
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
@@ -28,16 +30,30 @@ class JoinMarketLifecycleMixin:
     driver: Driver
     distributor: InvoiceDistributor | None
     obwatch_client: OrderbookWatchClient | None
+    _core_wallet_lock: threading.Lock
 
     if TYPE_CHECKING:
         # pylint: disable=unused-argument  # these are stub signatures
         def prepare_image(self, name: str, path: str | None = None) -> None: ...
+        def image_ref(self, name: str) -> str: ...
 
     def prepare_images(self) -> None:
         print("Preparing images")
         self.prepare_image("btc-node")
         self.prepare_image("joinmarket-client-server")
         self.prepare_image("irc-server")
+
+    @staticmethod
+    def core_wallet_name(client_name: str) -> str:
+        return f"jm_wallet_{client_name.replace('-', '_')}"
+
+    def _create_joinmarket_core_wallet(self, wallet_name: str) -> None:
+        node = getattr(self, "node", None)
+        if node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        with self._core_wallet_lock:
+            node.create_wallet(wallet_name, disable_private_keys=True)
+        print(f"- created {wallet_name} in BitcoinCore")
 
     def start_irc_server(self) -> None:
         # TODO: When the container fails to start, the exception is not thrown and it is not recognized.
@@ -46,7 +62,7 @@ class JoinMarketLifecycleMixin:
         try:
             _, _, _ = self.driver.run(
                 name,
-                f"{self.args.image_prefix}irc-server",
+                self.image_ref("irc-server"),
                 env={},  # Add any necessary environment variables
                 ports={6667: 6667},
                 cpu=0.25,
@@ -61,11 +77,13 @@ class JoinMarketLifecycleMixin:
     def start_distributor(self) -> None:
         name = "joinmarket-distributor"
         port = 28183  # Use a specific port for the distributor
+        core_wallet = self.core_wallet_name(name)
+        self._create_joinmarket_core_wallet(core_wallet)
         try:
             ip, distributor_node_ports, route = self.driver.run(
                 name,
-                f"{self.args.image_prefix}joinmarket-client-server",
-                env={},  # Add any necessary environment variables
+                self.image_ref("joinmarket-client-server"),
+                env=joinmarket_container_env(self.args, core_wallet),
                 ports={28183: port},
                 cpu=1,
                 memory=1024,
@@ -94,7 +112,7 @@ class JoinMarketLifecycleMixin:
         try:
             ip, obwatch_ports, route = self.driver.run(
                 name,
-                f"{self.args.image_prefix}joinmarket-client-server",
+                self.image_ref("joinmarket-client-server"),
                 env={"MODE": "obwatch"},
                 ports={62601: port},
                 cpu=0.25,
@@ -143,12 +161,14 @@ class JoinMarketLifecycleMixin:
     def start_client(self, idx: int, wallet: WalletConfig | None = None) -> EmulatorClient | None:
         name = f"jcs-{idx:03}"
         port = 28184 + idx
+        core_wallet = self.core_wallet_name(name)
+        self._create_joinmarket_core_wallet(core_wallet)
         try:
             print(f"Starting joinmarket-client-server: {name}")
             ip, _, route = self.driver.run(
                 name,
-                f"{self.args.image_prefix}joinmarket-client-server",
-                env={},
+                self.image_ref("joinmarket-client-server"),
+                env=joinmarket_container_env(self.args, core_wallet),
                 ports={28183: port},
                 cpu=(0.05),
                 memory=(64),
