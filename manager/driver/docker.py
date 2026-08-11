@@ -62,20 +62,10 @@ class DockerDriver(Driver):
             command=command,
         )
 
-        # Normalize port mapping to match the Kubernetes format:
-        # Docker reports {'8080/tcp': [{'HostIp': '', 'HostPort': '8080'}]},
-        # the manager works with {8080: 8080}.
-        port_mapping: dict[int, int] = {}
-
-        if ports:
-            for internal_port in ports.keys():
-                # For Docker networking, internal container port maps to itself
-                port_mapping[internal_port] = internal_port
-        
         # Containers on the user-defined bridge network resolve each other by
         # name.  This is stable across Docker API versions, unlike the legacy
         # top-level NetworkSettings.IPAddress field.
-        return name, port_mapping, None
+        return name, dict(ports or {}), None
 
     def stop(self, name: str) -> None:
         try:

@@ -18,13 +18,13 @@ def test_run_uses_network_dns_name_instead_of_legacy_ip_field() -> None:
     driver._namespace = "coinjoin"  # pylint: disable=protected-access
 
     host, ports, route = driver.run(
-        "btc-node",
-        "example/btc-node:local",
-        ports={18443: 18443},
+        "wasabi-client-distributor",
+        "example/wasabi-client:local",
+        ports={37128: 37131},
     )
 
-    assert host == "btc-node"
-    assert ports == {18443: 18443}
+    assert host == "wasabi-client-distributor"
+    assert ports == {37128: 37131}
     assert route is None
 
 
