@@ -167,12 +167,12 @@ class ScenarioRunner:
             # Run the scenario
             # The process is tracked on self so a signal handler can reach it.
             process = subprocess.Popen(  # pylint: disable=consider-using-with
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
             )
             self.current_process = process  # Track the current process
 
             # Stream output in real-time
-            assert process.stdout is not None and process.stderr is not None
+            assert process.stdout is not None
             for line in iter(process.stdout.readline, ''):
                 if line:
                     print(f"  {line.rstrip()}")
@@ -185,9 +185,7 @@ class ScenarioRunner:
             if return_code == 0:
                 print(f"[{self.get_timestamp()}] SUCCESS: Scenario completed in {duration:.1f} seconds")
                 return True, duration
-            stderr = process.stderr.read()
             print(f"[{self.get_timestamp()}] ERROR: Scenario failed after {duration:.1f} seconds")
-            print(f"STDERR: {stderr}")
             return False, duration
 
         except Exception as e:
@@ -212,6 +210,7 @@ class ScenarioRunner:
 
     def save_results(self) -> None:
         """Save run results to file"""
+        os.makedirs("logs", exist_ok=True)
         results_file = os.path.join('logs', f"run_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
 
         with open(results_file, 'w', encoding="utf-8") as f:
