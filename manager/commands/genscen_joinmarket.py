@@ -501,7 +501,7 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:  # pylint: disable=to
     )
     parser.add_argument(
         "--bond-maker-utxo-multiplier", type=float, default=1.0,
-        help="multiplier for bond maker UTXOs (e.g., 1.5 = 50% more UTXOs than taker count)",
+        help="multiplier for bond maker UTXOs (e.g., 1.5 = 50%% more UTXOs than taker count)",
     )
 
     # Quantile-based distribution options
@@ -510,18 +510,18 @@ def setup_parser(parser: argparse.ArgumentParser) -> None:  # pylint: disable=to
         help="use quantile-based distributions instead of min/max ranges",
     )
     parser.add_argument("--fee-absolute-quantiles", type=str, default="1000,2000,3000,4000,5000,6000",
-                       help="absolute fee quantiles (0%,20%,40%,60%,80%,100%) in satoshis")
+                       help="absolute fee quantiles (0%%,20%%,40%%,60%%,80%%,100%%) in satoshis")
     parser.add_argument("--fee-relative-quantiles", type=str, default="0.0001,0.001,0.002,0.003,0.004,0.005",
-                       help="relative fee quantiles (0%,20%,40%,60%,80%,100%) as fractions")
+                       help="relative fee quantiles (0%%,20%%,40%%,60%%,80%%,100%%) as fractions")
     parser.add_argument("--wallet-btc-quantiles", type=str, default="1.0,2.5,4.0,6.0,8.5,10.0",
-                       help="wallet BTC amount quantiles (0%,20%,40%,60%,80%,100%) for makers")
+                       help="wallet BTC amount quantiles (0%%,20%%,40%%,60%%,80%%,100%%) for makers")
     parser.add_argument("--taker-btc-quantiles", type=str, default="",
                        help=(
-                           "taker BTC amount quantiles (0%,20%,40%,60%,80%,100%). "
+                           "taker BTC amount quantiles (0%%,20%%,40%%,60%%,80%%,100%%). "
                            "If not specified, uses wallet-btc-quantiles divided by 3"
                        ))
     parser.add_argument("--bond-amount-quantiles", type=str, default="10000,25000,50000,75000,100000,150000",
-                       help="fidelity bond amount quantiles (0%,20%,40%,60%,80%,100%) in satoshis")
+                       help="fidelity bond amount quantiles (0%%,20%%,40%%,60%%,80%%,100%%) in satoshis")
 
 
 # The generator builds the whole scenario in one pass over the options.
