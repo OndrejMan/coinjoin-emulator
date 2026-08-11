@@ -1,5 +1,6 @@
 import multiprocessing
 import multiprocessing.pool
+import os
 import time
 
 from manager.btc_node import BtcNode
@@ -44,24 +45,38 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
     def prepare_images(self) -> None:
         raise NotImplementedError
 
+    def image_ref(self, name: str) -> str:
+        """Resolve an exact infrastructure image override before the prefix default."""
+        override = getattr(self.args, f"{name.replace('-', '_')}_image", "")
+        return str(override or f"{self.args.image_prefix}{name}")
+
+    def local_build_requested(self, name: str) -> bool:
+        return name in {"btc-node", "joinmarket-client-server", "irc-server"} and bool(
+            getattr(self.args, "coinjoin_infrastructure_local_build", False)
+        )
+
     def prepare_image(self, name: str, path: str | None = None) -> None:
-        prefixed_name = self.args.image_prefix + name
-        if self.driver.has_image(prefixed_name):
+        image_name = self.image_ref(name)
+        has_override = bool(getattr(self.args, f"{name.replace('-', '_')}_image", ""))
+        if self.local_build_requested(name):
+            self.driver.build(image_name, f"./containers/{name}" if path is None else path)
+            print(f"- image built {image_name}")
+        elif self.driver.has_image(image_name):
             if self.args.force_rebuild:
-                if self.args.image_prefix:
-                    self.driver.pull(prefixed_name)
-                    print(f"- image pulled {prefixed_name}")
+                if self.args.image_prefix or has_override:
+                    self.driver.pull(image_name)
+                    print(f"- image pulled {image_name}")
                 else:
                     self.driver.build(name, f"./containers/{name}" if path is None else path)
-                    print(f"- image rebuilt {prefixed_name}")
+                    print(f"- image rebuilt {image_name}")
             else:
-                print(f"- image reused {prefixed_name}")
-        elif self.args.image_prefix:
-            self.driver.pull(prefixed_name)
-            print(f"- image pulled {prefixed_name}")
+                print(f"- image reused {image_name}")
+        elif self.args.image_prefix or has_override:
+            self.driver.pull(image_name)
+            print(f"- image pulled {image_name}")
         else:
             self.driver.build(name, f"./containers/{name}" if path is None else path)
-            print(f"- image built {prefixed_name}")
+            print(f"- image built {image_name}")
 
     def start_infrastructure(self) -> None:
         print("Starting infrastructure")
@@ -70,13 +85,28 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
         self.start_distributor()
 
     def start_btc_node(self) -> None:
+        node_volumes = None
+        if self.args.btcFolder:
+            absolute_host_path = os.path.abspath(self.args.btcFolder)
+            mount = {"bind": "/home/bitcoin/data", "mode": "rw"}
+            storage_uid = os.environ.get("KUBERNETES_STORAGE_UID")
+            storage_gid = os.environ.get("KUBERNETES_STORAGE_GID")
+            if storage_uid:
+                mount["uid"] = storage_uid
+            if storage_gid:
+                mount["gid"] = storage_gid
+            node_volumes = {absolute_host_path: mount}
+
+        command = ["./run.sh", *self.args.btc_node_arg] if self.args.btc_node_arg else None
         btc_node_ip, btc_node_ports, _ = self.driver.run(
             "btc-node",
-            f"{self.args.image_prefix}btc-node",
+            self.image_ref("btc-node"),
             ports={18443: 18443, 18444: 18444},
             cpu=2.0,
             memory=2048,
             service_account="btc-node",
+            volumes=node_volumes,
+            command=command,
         )
 
         print(btc_node_ip, btc_node_ports)
