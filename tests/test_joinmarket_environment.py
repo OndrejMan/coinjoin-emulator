@@ -3,7 +3,11 @@
 from types import SimpleNamespace
 from typing import cast
 
-from manager.engine.base.protocols import EngineArgs
+import pytest
+
+from manager.engine.base.clients import EngineClientsMixin
+from manager.engine.base.protocols import EmulatorClient, EngineArgs
+from manager.engine.configuration import ScenarioConfig, WalletConfig
 from manager.engine.joinmarket.environment import joinmarket_container_env
 from manager.engine.joinmarket.lifecycle import JoinMarketLifecycleMixin
 
@@ -25,3 +29,34 @@ def test_container_environment_selects_wallet_and_descriptor_fallback() -> None:
         "JM_RPC_WALLET_FILE": "jm_wallet_jcs_001",
         "JM_DESCRIPTOR_REGTEST_FALLBACK": "1",
     }
+
+
+class RoleClient:
+    def __init__(self, role: str) -> None:
+        self.name = role
+        self.type = role
+
+    def get_status(self) -> dict[str, bool]:
+        return {"wallet": True}
+
+    def wait_wallet(self, timeout: int | None) -> bool:
+        return True
+
+
+class LifecycleHarness(JoinMarketLifecycleMixin, EngineClientsMixin):
+    def __init__(self, *roles: str) -> None:
+        self.clients = [cast(EmulatorClient, RoleClient(role)) for role in roles]
+        self.scenario = ScenarioConfig(
+            "roles",
+            1,
+            1,
+            "joinmarket",
+            [WalletConfig(funds=[1]) for _ in roles],
+        )
+
+
+def test_joinmarket_requires_a_started_maker_and_taker() -> None:
+    with pytest.raises(RuntimeError, match="taker"):
+        LifecycleHarness("maker").validate_clients()
+
+    LifecycleHarness("maker", "taker").validate_clients()
