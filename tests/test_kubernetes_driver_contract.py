@@ -1,8 +1,9 @@
 """Kubernetes ownership, storage, and startup-failure contracts."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from kubernetes.client.exceptions import ApiException
@@ -88,3 +89,26 @@ def test_cleanup_selects_only_managed_resources() -> None:
     api.list_namespaced_service.assert_called_once_with(
         namespace="coinjoin", label_selector=selector
     )
+
+
+class ClosedExecResponse:
+    returncode = 0
+
+    def is_open(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        return None
+
+
+def test_upload_uses_chunked_base64_commands(tmp_path: Path) -> None:
+    runtime = driver()
+    source = tmp_path / "scenario.json"
+    source.write_text('{"name": "scenario"}', encoding="utf-8")
+
+    with patch("manager.driver.kubernetes.stream", side_effect=lambda *args, **kwargs: ClosedExecResponse()) as run:
+        runtime.upload("manager", str(source), "/work/scenario.json")
+
+    commands = [call.kwargs["command"] for call in run.call_args_list]
+    assert commands[0][:3] == ["sh", "-c", 'printf "%s" "$1" > "$2"']
+    assert commands[-1][2].startswith("base64 -d")
