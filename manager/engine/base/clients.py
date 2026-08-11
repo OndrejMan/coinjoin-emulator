@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING
 
 from manager.engine.base.protocols import EmulatorClient
 from manager.engine.configuration import ScenarioConfig, WalletConfig
+from manager.exceptions import CoinjoinEmulatorError
+
+CLIENT_HEALTHCHECK_TIMEOUT = 120
 
 
 def _has_fidelity_bond(wallet: WalletConfig) -> bool:
@@ -123,10 +126,36 @@ class EngineClientsMixin:
                 retry_results = self._start_classified_wallets(pool, retry_wallet_list, fb_batch_size, fb_batch_delay)
                 for idx, client in retry_results.items():
                     new_clients[idx - len(self.clients)] = client
-            else:
-                # After 3 retries, filter out None values
-                started = [client for client in new_clients if client is not None]
-                print(f"- failed to start {len(wallets) - len(started)} clients; continuing ...")
-                new_clients = list(started)
+            failed_count = sum(client is None for client in new_clients)
+            if failed_count:
+                raise RuntimeError(
+                    f"Failed to start {failed_count} clients after retries; aborting experiment"
+                )
 
         self.clients.extend(client for client in new_clients if client is not None)
+
+    def validate_clients(self) -> None:
+        """Require every declared wallet to answer before funding begins."""
+        expected = len(self.scenario.wallets)
+        actual = len(self.clients)
+        if actual != expected:
+            raise RuntimeError(f"Expected {expected} clients, but only {actual} started")
+
+        def healthcheck(client: EmulatorClient) -> tuple[str, bool, str | None]:
+            try:
+                healthy = client.wait_wallet(timeout=CLIENT_HEALTHCHECK_TIMEOUT)
+            except (CoinjoinEmulatorError, OSError, TypeError, ValueError) as error:
+                return client.name, False, str(error)
+            return client.name, healthy, None
+
+        with multiprocessing.pool.ThreadPool() as pool:
+            results = pool.map(healthcheck, self.clients)
+        failed = [
+            f"{name} ({detail or 'RPC health-check timed out'})"
+            for name, healthy, detail in results
+            if not healthy
+        ]
+        if failed:
+            raise RuntimeError(
+                "Client RPC health-check failed before funding: " + ", ".join(failed)
+            )
