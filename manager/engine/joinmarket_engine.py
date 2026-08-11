@@ -33,6 +33,7 @@ class JoinmarketEngine(
         self.loop: asyncio.AbstractEventLoop | None = None
         self.last_resource_check = 0  # Track when we last checked resources
         self._core_wallet_lock = threading.Lock()
+        self._round_scan_height = -1
 
     def default_scenario(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -338,7 +339,7 @@ class JoinmarketEngine(
             print()
             print("- limit reached")
             sleep(60)
-            self.node.mine_block()
+            self.node.mine_block(3)
 
         finally:
             if self.loop is not None and not self.loop.is_closed():

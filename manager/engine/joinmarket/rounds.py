@@ -27,8 +27,25 @@ class JoinMarketRoundsMixin:
 
     if TYPE_CHECKING:
         def collect_round_events(self) -> list[dict[str, object]]: ...
+        def live_round_events(self) -> list[dict[str, object]]: ...
+        def confirm_started_rounds(self) -> int: ...
+
+    def _active_round_for_taker(self, taker_name: str) -> bool:
+        return any(
+            event.get("status") == "started" and event.get("taker") == taker_name
+            for event in self.live_round_events()
+        )
+
+    def _mark_taker_round_failed(self, taker_name: str, reason: str) -> None:
+        for event in self.live_round_events()[::-1]:
+            if event.get("status") == "started" and event.get("taker") == taker_name:
+                event["status"] = "failed"
+                event["failure_reason"] = reason
+                event["stop_block"] = self.current_block
+                return
 
     def update_coinjoins_joinmarket(self) -> None:
+        self.confirm_started_rounds()
         for emulator_client in self.clients:
             client = cast(JoinMarketClientServer, emulator_client)
             try:
@@ -42,8 +59,8 @@ class JoinMarketRoundsMixin:
                     if hasattr(client, 'completed_coinjoins') and client.completed_coinjoins >= client.max_coinjoins:
                         print(f"✓ {client.name} reached max coinjoins limit ({client.max_coinjoins})")
 
-                # Apply any change in round count; alternatively, have the client trigger an event.
-                self.current_round += delta
+                if delta < 0:
+                    self._mark_taker_round_failed(client.name, "coinjoin attempt timed out")
             except Exception as e:
                 print(f"- could not update {client.name} ({e})")
 
@@ -58,11 +75,15 @@ class JoinMarketRoundsMixin:
         Async version: Update all clients in parallel using asyncio.gather()
         Adds jitter between task creation to prevent synchronized RPC storms
         """
+        self.confirm_started_rounds()
         # Create tasks for all client updates with jitter to desynchronize RPC calls
         client_tasks: list[Coroutine[object, object, int]] = []
+        updated_clients: list[JoinMarketClientServer] = []
         for emulator_client in self.clients:
-            task = self._update_client_async(cast(JoinMarketClientServer, emulator_client))
+            client = cast(JoinMarketClientServer, emulator_client)
+            task = self._update_client_async(client)
             client_tasks.append(task)
+            updated_clients.append(client)
             # Add jitter between task creations to desynchronize Bitcoin Core RPC calls
             jitter = random.uniform(0.01, 0.05)  # 10-50ms jitter
             await asyncio.sleep(jitter)
@@ -77,11 +98,10 @@ class JoinMarketRoundsMixin:
         # Process results and update round count
         for i, result in enumerate(results[:-1] if self.obwatch_client else results):
             if isinstance(result, Exception):
-                client_name = self.clients[i].name if i < len(self.clients) else "unknown"
+                client_name = updated_clients[i].name if i < len(updated_clients) else "unknown"
                 print(f"- could not update {client_name} ({result})")
-            elif isinstance(result, int):
-                # Apply any change in round count
-                self.current_round += result
+            elif isinstance(result, int) and result < 0:
+                self._mark_taker_round_failed(updated_clients[i].name, "coinjoin attempt timed out")
 
     async def _update_client_async(self, client: JoinMarketClientServer) -> int:
         """Helper to update a single client asynchronously"""

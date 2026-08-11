@@ -4,6 +4,7 @@ import json
 import os
 from typing import cast
 
+from manager.btc_node import BtcNode
 from manager.engine.base.protocols import EmulatorClient
 
 
@@ -11,6 +12,9 @@ class JoinMarketRoundEventsMixin:
     """Collects what the clients recorded and matches it against exported blocks."""
 
     clients: list[EmulatorClient]
+    node: BtcNode | None
+    current_round: int
+    _round_scan_height: int
 
     def collect_round_events(self) -> list[dict[str, object]]:
         """Producer-owned round records from every client that started a coinjoin."""
@@ -18,6 +22,39 @@ class JoinMarketRoundEventsMixin:
         for client in self.clients:
             events.extend(dict(event) for event in getattr(client, "round_events", []))
         return events
+
+    def live_round_events(self) -> list[dict[str, object]]:
+        """Return mutable producer records for in-run status reconciliation."""
+        return [
+            cast(dict[str, object], event)
+            for client in self.clients
+            for event in getattr(client, "round_events", [])
+        ]
+
+    def confirm_started_rounds(self) -> int:
+        """Count rounds only after their unique destination appears in a mined block."""
+        if self.node is None:
+            return 0
+        events = self.live_round_events()
+        pending = {
+            str(event["destination_address"]): event
+            for event in events
+            if event.get("status") == "started" and event.get("destination_address")
+        }
+        tip = self.node.get_block_count()
+        for height in range(self._round_scan_height + 1, tip + 1):
+            block_hash = self.node.get_block_hash(height)
+            block = self.node.get_block_info(block_hash)
+            for transaction in cast(list[dict[str, object]], block.get("tx") or []):
+                txid = transaction.get("txid")
+                for output in cast(list[dict[str, object]], transaction.get("vout") or []):
+                    for address in self._script_addresses(output):
+                        event = pending.get(str(address))
+                        if event is not None:
+                            self._reconcile_exported_match(event, txid, height)
+        self._round_scan_height = max(self._round_scan_height, tip)
+        self.current_round = sum(1 for event in events if event.get("status") == "confirmed")
+        return self.current_round
 
     def _script_addresses(self, output: dict[str, object]) -> list[object]:
         script_pub_key = cast(dict[str, object], output.get("scriptPubKey") or {})
