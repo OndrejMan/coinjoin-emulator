@@ -76,6 +76,19 @@ def test_manager_image_packages_local_infrastructure_build_contexts() -> None:
     assert (repository / "containers" / "btc-node" / "Dockerfile").is_file()
 
 
+def test_joinmarket_local_build_has_a_published_base_image_default() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    dockerfile = (
+        repository / "containers" / "joinmarket-client-server" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "ARG JOINMARKET_TEST_IMAGE=ghcr.io/ondrejman/joinmarket-test:latest"
+        in dockerfile
+    )
+    assert "joinmarket-latest:taker-logs" not in dockerfile
+
+
 def test_in_cluster_driver_uses_service_dns_and_container_port() -> None:
     driver = Mock(in_cluster=True)
     runtime = engine(args(in_cluster=False), driver)

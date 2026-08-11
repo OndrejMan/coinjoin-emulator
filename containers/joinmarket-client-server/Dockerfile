@@ -1,6 +1,7 @@
-# The base image is built from joinmarket-clientserver in the same workflow;
-# the default keeps a local `docker build` working against a locally built base.
-ARG JOINMARKET_TEST_IMAGE=joinmarket-latest:taker-logs
+# The publishing workflow can override this with an owner-specific base image.
+# Local infrastructure builds use the published default instead of relying on
+# an untagged developer-only image in the Docker daemon.
+ARG JOINMARKET_TEST_IMAGE=ghcr.io/ondrejman/joinmarket-test:latest
 FROM ${JOINMARKET_TEST_IMAGE}
 
 
