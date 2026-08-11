@@ -17,9 +17,8 @@ def response(body: Mapping[str, object]) -> Mock:
 def test_create_wallet_falls_back_to_descriptors_without_private_keys() -> None:
     bdb_error = {
         "error": {"code": -4, "message": "BDB wallet creation is deprecated"},
-        "result": None,
     }
-    created = {"error": None, "result": {"name": "jm_wallet_jcs_000"}}
+    created = {"result": {"name": "jm_wallet_jcs_000"}}
     node = BtcNode()
 
     with patch("manager.btc_node.requests.post", side_effect=[response(bdb_error), response(created)]) as post:
