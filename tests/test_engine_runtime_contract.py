@@ -1,5 +1,6 @@
 """Pipeline-facing image and Bitcoin data runtime contracts."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock, patch
@@ -61,6 +62,18 @@ def test_local_build_wins_over_remote_image() -> None:
 
     driver.build.assert_called_once_with("example/btc:remote", "./containers/btc-node")
     driver.has_image.assert_not_called()
+
+
+def test_manager_image_packages_local_infrastructure_build_contexts() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    ignored_paths = {
+        line.strip().rstrip("/")
+        for line in (repository / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith(("#", "!"))
+    }
+
+    assert "containers" not in ignored_paths
+    assert (repository / "containers" / "btc-node" / "Dockerfile").is_file()
 
 
 def test_in_cluster_driver_uses_service_dns_and_container_port() -> None:
