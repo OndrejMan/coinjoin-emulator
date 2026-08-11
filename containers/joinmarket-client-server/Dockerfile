@@ -27,7 +27,7 @@ RUN mkdir -p /home/joinmarket/.joinmarket/ssl \
 RUN python3 /jm/clientserver/scripts/wallet-tool.py generate; exit 0
 
 COPY --chown=joinmarket:joinmarket run.sh /home/joinmarket/
-COPY jmwalletd_entrypoint.py /usr/local/bin/jmwalletd_entrypoint.py
+COPY --chown=joinmarket:joinmarket jmwalletd_entrypoint.py /usr/local/bin/jmwalletd_entrypoint.py
 COPY --chown=joinmarket:joinmarket joinmarket.cfg /home/joinmarket/.joinmarket/
 RUN chmod +x /home/joinmarket/run.sh /usr/local/bin/jmwalletd_entrypoint.py
 WORKDIR /home/joinmarket
