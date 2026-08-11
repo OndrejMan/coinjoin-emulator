@@ -111,6 +111,12 @@ def _run_cleanup(
         log.error(f"- failed to stop coinjoins: {error}")
         print_exception(error)
         exit_code = 1
+    try:
+        engine.shutdown_engine()
+    except BaseException as error:  # Async session cleanup must not skip artifacts.
+        log.error(f"- failed to shut down engine resources: {error}")
+        print_exception(error)
+        exit_code = 1
     if not args.no_logs and engine.node is not None:
         try:
             engine.store_logs()

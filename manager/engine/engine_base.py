@@ -178,6 +178,9 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
         success_count = sum(1 for r in results if r)
         print(f"- stopped mixing for {success_count}/{len(self.clients)} clients")
 
+    def shutdown_engine(self) -> None:
+        """Release engine-specific local resources after clients have stopped."""
+
 
 
 
