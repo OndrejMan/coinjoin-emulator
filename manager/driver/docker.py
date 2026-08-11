@@ -1,5 +1,6 @@
 import os
 import tarfile
+from collections.abc import Iterable
 from functools import cached_property
 from io import BytesIO
 from typing import Protocol, cast
@@ -13,6 +14,20 @@ class DockerNetwork(Protocol):
     """The part of the docker network object this driver uses."""
 
     id: str
+
+
+class DockerArchiveContainer(Protocol):
+    """Docker container operations used while copying live artifacts."""
+
+    status: str
+
+    def reload(self) -> None: ...
+
+    def pause(self) -> None: ...
+
+    def unpause(self) -> None: ...
+
+    def get_archive(self, path: str) -> tuple[Iterable[bytes], dict[str, object]]: ...
 
 
 class DockerDriver(Driver):
@@ -77,8 +92,18 @@ class DockerDriver(Driver):
             pass
 
     def download(self, name: str, src_path: str, dst_path: str) -> None:
+        container: DockerArchiveContainer | None = None
+        paused = False
         try:
-            stream, _ = self.client.containers.get(name).get_archive(src_path)
+            container = cast(DockerArchiveContainer, self.client.containers.get(name))
+            container.reload()
+            if container.status == "running":
+                # Docker creates the archive while reading the live filesystem.
+                # A growing log can otherwise invalidate the tar stream with
+                # "archive/tar: write too long".
+                container.pause()
+                paused = True
+            stream, _ = container.get_archive(src_path)
 
             fo = BytesIO()
             for d in stream:
@@ -93,6 +118,9 @@ class DockerDriver(Driver):
             raise RuntimeError(
                 f"Failed to download {name}:{src_path} to {dst_path}: {error}"
             ) from error
+        finally:
+            if paused and container is not None:
+                container.unpause()
 
     def peek(self, name: str, path: str) -> str:
         stream, _ = self.client.containers.get(name).get_archive(path)
