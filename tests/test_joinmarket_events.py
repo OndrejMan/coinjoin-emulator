@@ -188,6 +188,30 @@ class TestJoinMarketRoundEvents:
 
         assert labels == [{"round_id": 1, "destination_address": "unmined-destination"}]
 
+    def test_exported_round_ids_are_unique_across_parallel_takers(self, tmp_path: Path) -> None:
+        first = {
+            "round_id": 1,
+            "taker": "jcs-000",
+            "destination_address": "first-destination",
+        }
+        second = {
+            "round_id": 1,
+            "taker": "jcs-001",
+            "destination_address": "second-destination",
+        }
+        harness = EventHarness(
+            EventClient("jcs-000", [first]),
+            EventClient("jcs-001", [second]),
+        )
+
+        labels = harness.match_joinmarket_rounds_to_blocks(str(tmp_path))
+
+        assert [(label["round_id"], label["client_round_id"]) for label in labels] == [
+            (1, 1),
+            (2, 1),
+        ]
+        assert first["round_id"] == second["round_id"] == 1
+
     def test_events_without_a_destination_are_dropped(self, tmp_path: Path) -> None:
         harness = EventHarness(EventClient("jcs-000", [{"round_id": 1, "status": "failed"}]))
 

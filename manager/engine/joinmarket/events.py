@@ -90,7 +90,7 @@ class JoinMarketRoundEventsMixin:
 
         node_path = os.path.join(data_path, "btc-node")
         if not os.path.isdir(node_path):
-            return list(labels_by_destination.values())
+            return self._unique_export_round_ids(list(labels_by_destination.values()))
 
         for filename in sorted(os.listdir(node_path)):
             if not filename.startswith("block_") or not filename.endswith(".json"):
@@ -108,10 +108,25 @@ class JoinMarketRoundEventsMixin:
                         if event is not None:
                             self._reconcile_exported_match(event, txid, block_height)
 
-        return sorted(
+        labels = sorted(
             labels_by_destination.values(),
             key=lambda event: (event.get("round_id", 0), event.get("taker", "")),
         )
+        return self._unique_export_round_ids(labels)
+
+    def _unique_export_round_ids(
+        self, labels: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        """Make per-client attempt numbers globally unique in the exported file."""
+        round_ids = [str(label["round_id"]) for label in labels if "round_id" in label]
+        if len(round_ids) == len(set(round_ids)):
+            return labels
+
+        for export_round_id, label in enumerate(labels, start=1):
+            if "round_id" in label:
+                label["client_round_id"] = label["round_id"]
+            label["round_id"] = export_round_id
+        return labels
 
     def _unlabelled_takers(self) -> list[str]:
         """Takers that start coinjoins without recording a producer-owned label."""
