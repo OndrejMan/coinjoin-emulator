@@ -52,7 +52,7 @@ class DockerDriver(Driver):
         self.client.containers.run(
             image,
             detach=True,
-            auto_remove=True,
+            auto_remove=False,
             name=name,
             hostname=name,
             network=self.network.id,
@@ -69,7 +69,9 @@ class DockerDriver(Driver):
 
     def stop(self, name: str) -> None:
         try:
-            self.client.containers.get(name).stop()
+            container = self.client.containers.get(name)
+            container.stop()
+            container.remove(force=True, v=True)
             print(f"- stopped {name}")
         except docker.errors.NotFound:
             pass
@@ -114,7 +116,7 @@ class DockerDriver(Driver):
 
     def cleanup(self, image_prefix: str = "") -> None:
         containers = []
-        for container in self.client.containers.list():
+        for container in self.client.containers.list(all=True):
             if any(
                 x in container.attrs["Config"]["Image"]
                 for x in (

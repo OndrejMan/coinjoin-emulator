@@ -26,6 +26,19 @@ def test_run_uses_network_dns_name_instead_of_legacy_ip_field() -> None:
     assert host == "wasabi-client-distributor"
     assert ports == {37128: 37131}
     assert route is None
+    assert client.containers.run.call_args.kwargs["auto_remove"] is False
+
+
+def test_stop_removes_container_after_preserving_it_for_diagnostics() -> None:
+    driver = object.__new__(DockerDriver)
+    client = Mock()
+    container = client.containers.get.return_value
+    driver.client = cast(docker.DockerClient, client)
+
+    driver.stop("failed-client")
+
+    container.stop.assert_called_once_with()
+    container.remove.assert_called_once_with(force=True, v=True)
 
 
 def test_download_surfaces_missing_container() -> None:
