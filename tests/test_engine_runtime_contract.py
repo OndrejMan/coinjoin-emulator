@@ -76,6 +76,15 @@ def test_manager_image_packages_local_infrastructure_build_contexts() -> None:
     assert (repository / "containers" / "btc-node" / "Dockerfile").is_file()
 
 
+def test_manager_image_normalizes_source_readability_for_non_root_kubernetes() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    dockerfile = (repository / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "COPY . .\n" in dockerfile
+    assert "RUN chmod -R a+rX /app" in dockerfile
+    assert dockerfile.index("COPY . .") < dockerfile.index("RUN chmod -R a+rX /app")
+
+
 def test_joinmarket_local_build_has_a_published_base_image_default() -> None:
     repository = Path(__file__).resolve().parents[1]
     dockerfile = (
