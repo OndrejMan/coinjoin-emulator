@@ -186,7 +186,7 @@ class KubernetesLocalProxy:
                 mkdir -p $SIM_DIR
                 nohup {' '.join(manager_cmd)} > $SIM_DIR/output.log 2>&1 &
                 echo $! > $SIM_DIR/pid
-                echo '{{"status": "running", "pid": "'$!'"", "start_time": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "scenario": "{scenario_path}"}}' > $SIM_DIR/status.json
+                echo '{{"status": "running", "pid": "'$!'", "start_time": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "scenario": "{scenario_path}"}}' > $SIM_DIR/status.json
             """
         ]
         print(f"Running command: {' '.join(background_cmd)}")
