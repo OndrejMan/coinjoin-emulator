@@ -1,9 +1,19 @@
 import backoff
 import asyncio
+import json
 import random
+from collections.abc import Iterator
+from typing import cast
 
+from manager.engine.base.manifest import ProducerLabelEvidence
 from manager.engine.engine_base import EngineBase
 from manager.engine.configuration import ScenarioConfig, WalletConfig, JoinMarketConfig, JoinMarketRole
+from manager.engine.joinmarket.events import (
+    collect_round_events,
+    match_round_events_to_blocks,
+    producer_label_evidence,
+)
+from manager.engine.joinmarket.round_event_record import RoundEvent
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
 from time import sleep, time
@@ -291,9 +301,43 @@ class JoinmarketEngine(EngineBase):
         )
         self.obwatch_client = ob_client
 
+    def collect_round_events(self) -> list[RoundEvent]:
+        """Copy producer-owned round records from all clients."""
+        return collect_round_events([
+            cast(list[RoundEvent], getattr(client, "round_events", []))
+            for client in self.clients
+        ])
+
+    def match_joinmarket_rounds_to_blocks(self, data_path: str) -> list[RoundEvent]:
+        """Reconcile copied client records with blocks exported under data_path."""
+        node_path = os.path.join(data_path, "btc-node")
+
+        def exported_blocks() -> Iterator[dict[str, object]]:
+            """Yield exported blocks one at a time to avoid retaining them all."""
+            if not os.path.isdir(node_path):
+                return
+            for filename in sorted(os.listdir(node_path)):
+                if filename.startswith("block_") and filename.endswith(".json"):
+                    with open(os.path.join(node_path, filename), encoding="utf-8") as stream:
+                        yield cast(dict[str, object], json.load(stream))
+
+        return match_round_events_to_blocks(self.collect_round_events(), exported_blocks())
+
+    def store_round_events(self, data_path: str) -> ProducerLabelEvidence:
+        """Store reconciled labels and return their producer-label evidence."""
+        labels = self.match_joinmarket_rounds_to_blocks(data_path)
+        with open(os.path.join(data_path, "joinmarket_round_events.json"), "w", encoding="utf-8") as stream:
+            json.dump(labels, stream, indent=2)
+        print(f"- stored {len(labels)} JoinMarket round labels")
+        return dict(producer_label_evidence(labels, []))
+
     def store_engine_logs(self, data_path):
-        # Store orderbook snapshots, grouped under data_path/orderbook/<client.name>
         print("- storing engine-logs")
+        self.store_orderbook_snapshots(data_path)
+        return self.store_round_events(data_path)
+
+    def store_orderbook_snapshots(self, data_path):
+        # Store orderbook snapshots, grouped under data_path/orderbook/<client.name>
         print(f"- storing {data_path}")
         ob_root = os.path.join(data_path, "orderbook")
         os.makedirs(ob_root, exist_ok=True)

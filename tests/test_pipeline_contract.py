@@ -20,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from manager.engine.configuration import ScenarioConfig, WalletConfig  # noqa: E402
 from manager.engine.engine_base import EngineBase, write_producer_label_manifest  # noqa: E402
+from manager.engine.joinmarket_engine import JoinmarketEngine  # noqa: E402
 
 
 def load_entrypoint():
@@ -201,3 +202,72 @@ def test_manifest_rejects_sources_outside_the_data_directory(tmp_path):
     manifest = json.loads((tmp_path / "coinjoin_label_manifest.json").read_text(encoding="utf-8"))
     assert manifest["complete"] is False
     assert manifest["sources"] == []
+
+
+# --- JoinMarket round events ----------------------------------------------
+
+def make_joinmarket_engine(round_events):
+    engine = object.__new__(JoinmarketEngine)
+    engine.clients = [types.SimpleNamespace(round_events=round_events)]
+    engine.obwatch_client = None
+    return engine
+
+
+def write_block(node_path, height, txid, address):
+    with open(os.path.join(node_path, f"block_{height}.json"), "w", encoding="utf-8") as stream:
+        json.dump(
+            {"height": height, "tx": [{"txid": txid, "vout": [{"scriptPubKey": {"address": address}}]}]},
+            stream,
+        )
+
+
+def test_round_events_are_matched_to_the_exported_blocks(tmp_path):
+    node_path = tmp_path / "btc-node"
+    node_path.mkdir()
+    write_block(str(node_path), 7, "a" * 64, "bcrt1qdest")
+
+    engine = make_joinmarket_engine([
+        {"round_id": 1, "status": "started", "taker": "jcs-000", "destination_address": "bcrt1qdest"},
+        {"round_id": 2, "status": "started", "taker": "jcs-001", "destination_address": "bcrt1qother"},
+    ])
+    evidence = engine.store_engine_logs(str(tmp_path))
+
+    labels = json.loads((tmp_path / "joinmarket_round_events.json").read_text(encoding="utf-8"))
+    confirmed = {label["taker"]: label for label in labels if label["status"] == "confirmed"}
+    assert set(confirmed) == {"jcs-000"}
+    assert confirmed["jcs-000"]["destination_matches"] == [{"txid": "a" * 64, "block_height": 7}]
+    assert evidence["positive_count"] == 1
+    assert evidence["sources"] == ["joinmarket_round_events.json"]
+
+
+def test_a_reused_destination_makes_labels_incomplete(tmp_path):
+    node_path = tmp_path / "btc-node"
+    node_path.mkdir()
+    write_block(str(node_path), 7, "a" * 64, "bcrt1qdest")
+    write_block(str(node_path), 8, "b" * 64, "bcrt1qdest")
+
+    engine = make_joinmarket_engine([
+        {"round_id": 1, "status": "started", "taker": "jcs-000", "destination_address": "bcrt1qdest"},
+    ])
+    evidence = engine.store_engine_logs(str(tmp_path))
+
+    label = json.loads((tmp_path / "joinmarket_round_events.json").read_text(encoding="utf-8"))[0]
+    assert label["status"] == "ambiguous"
+    assert label["destination_matches"] == [
+        {"txid": "a" * 64, "block_height": 7},
+        {"txid": "b" * 64, "block_height": 8},
+    ]
+    assert evidence["complete"] is False
+    assert evidence["positive_count"] == 0
+
+
+def test_rounds_without_a_mined_destination_stay_unconfirmed(tmp_path):
+    (tmp_path / "btc-node").mkdir()
+    engine = make_joinmarket_engine([
+        {"round_id": 1, "status": "started", "taker": "jcs-000", "destination_address": "bcrt1qdest"},
+    ])
+    evidence = engine.store_engine_logs(str(tmp_path))
+
+    label = json.loads((tmp_path / "joinmarket_round_events.json").read_text(encoding="utf-8"))[0]
+    assert label["status"] == "started"
+    assert evidence["positive_count"] == 0
