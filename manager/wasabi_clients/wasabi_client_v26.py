@@ -20,7 +20,6 @@ class WasabiClientV26(WasabiClientBase):
 
     def wait_wallet(self, timeout=None):
         start = time()
-        counter = 0
         while timeout is None or time() - start < timeout:
             try:
                 self._create_wallet()

@@ -994,7 +994,6 @@ class KubernetesLocalProxy:
         Returns:
             bool: True if deployment successful
         """
-        deployment_name = "emulation-manager"
         manager_image = f"{image_prefix}emulator-manager"
 
         # # Check if deployment already exists
