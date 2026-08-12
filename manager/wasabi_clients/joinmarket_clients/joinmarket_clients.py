@@ -106,6 +106,13 @@ class TakerClient(JoinMarketClientServer):
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
             self.start_coinjoin(**offer)
+            self.record_round_start(
+                offer["destination"],
+                offer.get("amount_sats"),
+                offer.get("counterparties"),
+                offer.get("mixdepth"),
+                current_block,
+            )
             self.coinjoin_start = current_block
             self.coinjoin_in_process = True
             delta = +1
@@ -147,6 +154,13 @@ class TakerClient(JoinMarketClientServer):
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
             await self.start_coinjoin_async(**offer)
+            self.record_round_start(
+                offer["destination"],
+                offer.get("amount_sats"),
+                offer.get("counterparties"),
+                offer.get("mixdepth"),
+                current_block,
+            )
             self.coinjoin_start = current_block
             self.coinjoin_in_process = True
             delta = +1
