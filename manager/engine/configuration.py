@@ -2,7 +2,7 @@ import json
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 
 class JoinMarketRole(Enum):
@@ -31,10 +31,10 @@ class WasabiConfig:
 class JoinMarketConfig:
     """JoinMarket-specific wallet settings."""
     role: JoinMarketRole | None = None
-    offers: list[dict[str, Any]] | None = None
-    tumbler_options: dict[str, Any] | None = None
+    offers: list[dict[str, object]] | None = None
+    tumbler_options: dict[str, object] | None = None
     time_between_rounds: int | None = None
-    fidelity_bond: dict[str, Any] | None = None
+    fidelity_bond: dict[str, object] | None = None
     max_coinjoins: int | None = None
 
 
@@ -69,7 +69,7 @@ class ScenarioConfig:
     distributor_version: str | None = None
     default_anon_score_target: int | None = None
     default_redcoin_isolation: bool | None = None
-    backend: dict[str, Any] | None = None
+    backend: dict[str, object] | None = None
     
     @classmethod
     def from_json_config(cls, filepath: str | Path) -> "ScenarioConfig":
@@ -96,21 +96,23 @@ class ScenarioConfig:
         )
     
     @classmethod
-    def _parse_wallet(cls, wallet_data: dict[str, Any]) -> WalletConfig:
+    def _parse_wallet(cls, wallet_data: dict[str, object]) -> WalletConfig:
         """Parse wallet configuration from JSON data."""
         # Parse funds (can be int or dict with value/delays)
         funds: list[int | FundConfig] = []
-        for fund in wallet_data.get("funds", []):
+        raw_funds = wallet_data.get("funds", [])
+        for fund in cast(list[object], raw_funds if isinstance(raw_funds, list) else []):
             if isinstance(fund, int):
                 funds.append(fund)
             elif isinstance(fund, dict):
+                fund_data = cast(dict[str, object], fund)
                 funds.append(FundConfig(
-                    value=fund["value"],
-                    delay_blocks=fund.get("delay_blocks"),
-                    delay_rounds=fund.get("delay_rounds")
+                    value=cast(int, fund_data["value"]),
+                    delay_blocks=cast(int | None, fund_data.get("delay_blocks")),
+                    delay_rounds=cast(int | None, fund_data.get("delay_rounds")),
                 ))
             else:
-                funds.append(fund)  # fallback
+                raise ValueError(f"Unexpected fund entry: {fund!r}")
         
         # Extract Wasabi-specific fields
         wasabi_config = None
@@ -120,7 +122,11 @@ class ScenarioConfig:
             "skip_rounds": wallet_data.get("skip_rounds")
         }
         if any(v is not None for v in wasabi_fields.values()):
-            wasabi_config = WasabiConfig(**wasabi_fields)
+            wasabi_config = WasabiConfig(
+                anon_score_target=cast(int | str | None, wasabi_fields["anon_score_target"]),
+                redcoin_isolation=cast(bool | None, wasabi_fields["redcoin_isolation"]),
+                skip_rounds=cast(list[int] | None, wasabi_fields["skip_rounds"]),
+            )
         
         # Extract JoinMarket-specific fields
         joinmarket_config = None
@@ -129,25 +135,25 @@ class ScenarioConfig:
             role = JoinMarketRole.MAKER if role_str == "maker" else JoinMarketRole.TAKER
             joinmarket_config = JoinMarketConfig(
                 role=role,
-                offers=wallet_data.get("offers"),
-                tumbler_options=wallet_data.get("tumbler_options"),
-                time_between_rounds=wallet_data.get("time_between_rounds"),
-                fidelity_bond=wallet_data.get("fidelity_bond"),
-                max_coinjoins=wallet_data.get("max_coinjoins"),
+                offers=cast(list[dict[str, object]] | None, wallet_data.get("offers")),
+                tumbler_options=cast(dict[str, object] | None, wallet_data.get("tumbler_options")),
+                time_between_rounds=cast(int | None, wallet_data.get("time_between_rounds")),
+                fidelity_bond=cast(dict[str, object] | None, wallet_data.get("fidelity_bond")),
+                max_coinjoins=cast(int | None, wallet_data.get("max_coinjoins")),
             )
         
         return WalletConfig(
             funds=funds,
-            delay_blocks=wallet_data.get("delay_blocks"),
-            delay_rounds=wallet_data.get("delay_rounds"),
-            stop_blocks=wallet_data.get("stop_blocks"),
-            stop_rounds=wallet_data.get("stop_rounds"),
-            version=wallet_data.get("version"),
+            delay_blocks=cast(int | None, wallet_data.get("delay_blocks")),
+            delay_rounds=cast(int | None, wallet_data.get("delay_rounds")),
+            stop_blocks=cast(int | None, wallet_data.get("stop_blocks")),
+            stop_rounds=cast(int | None, wallet_data.get("stop_rounds")),
+            version=cast(str | None, wallet_data.get("version")),
             wasabi=wasabi_config,
             joinmarket=joinmarket_config
         )
     
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         """Convert the scenario configuration to a dictionary for JSON serialization."""
         return asdict(self)
 
