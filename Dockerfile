@@ -12,8 +12,14 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/s
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Dependency metadata first, so the layer is cached across source changes.
+COPY pyproject.toml requirements.txt ./
+RUN uv venv && uv pip install -r requirements.txt
 
 COPY . .
 RUN mkdir /app/logs && chown -R 1000:1000 /app/logs
