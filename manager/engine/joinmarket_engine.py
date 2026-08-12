@@ -17,6 +17,7 @@ class JoinmarketEngine(EngineBase):
         super().__init__(args, driver,
                          log_src_path="/home/joinmarket/.joinmarket/logs")
         self.obwatch_client = None
+        self._obwatch_missing_logged = False
         # Feature flag to enable async client updates (default: enabled for better performance)
         self.async_updates = getattr(args, 'async_updates', True)
         self.loop = None
@@ -243,7 +244,9 @@ class JoinmarketEngine(EngineBase):
                 # Mine additional blocks to ensure fidelity bond transactions are confirmed
                 # JoinMarket needs confirmed UTXOs to calculate bond values for maker offers
                 print("Mining blocks to confirm fidelity bond transactions")
-                for i in range(15):  # Mine 15 blocks for solid confirmation
+                if self.node is None:
+                    raise RuntimeError("Bitcoin node is not initialized")
+                for _ in range(15):  # Mine 15 blocks for solid confirmation
                     self.node.mine_block()
                 print("- fidelity bond confirmations completed")
 
@@ -383,6 +386,17 @@ class JoinmarketEngine(EngineBase):
         except Exception as e:
             print(f"- could not stop client {name}: {e}")
 
+    def _note_missing_obwatch(self):
+        """Report once that the orderbook watcher is unavailable for this run.
+
+        Startup failures are tolerated, so a missing watcher is a valid state.
+        Reporting it every round would drown the log, so this is said once.
+        """
+        if self._obwatch_missing_logged:
+            return
+        self._obwatch_missing_logged = True
+        print("- orderbook watcher is not running, skipping its updates for this run")
+
     def update_coinjoins_joinmarket(self):
         for client in self.clients:
             try:
@@ -401,10 +415,13 @@ class JoinmarketEngine(EngineBase):
             except Exception as e:
                 print(f"- could not update {client.name} ({e})")
 
-        try:
-            self.obwatch_client.update(self.current_block, self.current_round)
-        except Exception as e:
-            print(f"- could not update obwatch client ({e})")
+        if self.obwatch_client is not None:
+            try:
+                self.obwatch_client.update(self.current_block, self.current_round)
+            except Exception as e:
+                print(f"- could not update obwatch client ({e})")
+        else:
+            self._note_missing_obwatch()
 
     async def update_coinjoins_joinmarket_async(self):
         """
@@ -424,6 +441,8 @@ class JoinmarketEngine(EngineBase):
         if self.obwatch_client:
             obwatch_task = self._update_obwatch_async(self.obwatch_client)
             client_tasks.append(obwatch_task)
+        else:
+            self._note_missing_obwatch()
 
         # Run all updates concurrently
         results = await asyncio.gather(*client_tasks, return_exceptions=True)
