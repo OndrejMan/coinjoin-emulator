@@ -809,6 +809,7 @@ class KubernetesLocalProxy:
             return self.orchestrator_pod
 
 
+    # The stop is not awaited: the caller polls get_status() for the outcome.
     def stop_simulation(self, simulation_id=None, timeout=30):
         """Stop a running simulation gracefully"""
         sim_id = simulation_id or self.simulation_id
@@ -1060,3 +1061,22 @@ class KubernetesLocalProxy:
                     subprocess.run(apply_cmd, check=True)
                 else:
                     print(f"Warning: {manifest} not found in {manifest_dir}")
+
+        if wait_ready:
+            # rollout status only understands controllers; a bare pod reference
+            # has to be waited for with `kubectl wait`.
+            if self.orchestrator_pod.startswith("deployment/"):
+                ready_cmd = ["rollout", "status", self.orchestrator_pod, "--timeout=300s"]
+            else:
+                ready_cmd = [
+                    "wait", "--for=condition=Ready", f"pod/{self.orchestrator_pod}", "--timeout=300s"
+                ]
+            result = subprocess.run(
+                self._kubectl_base_cmd + ready_cmd + ["-n", self.namespace],
+                capture_output=True, text=True, check=False,
+            )
+            if result.returncode != 0:
+                print(f"Orchestrator did not become ready: {result.stderr.strip()}")
+                return False
+
+        return True
