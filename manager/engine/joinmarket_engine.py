@@ -321,7 +321,7 @@ class JoinmarketEngine(
         except Exception as e:
             print(f"- could not get initial block count: {e}")
             initial_block = 0
-        for i in range(5):
+        for _ in range(5):
             # Takers need 3 confirmations of transactions for the sourcing commitments
             self.node.mine_block()
 

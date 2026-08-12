@@ -226,12 +226,11 @@ class KubernetesDriver(Driver):
             port_mapping = {target_port: container_port for target_port, container_port in ports.items()}
             service_dns_name = f"{name}.{self.namespace}.svc.cluster.local"
             return service_dns_name, port_mapping, None
-        else:
-            # For external: return pod IP, node port mapping, no route (existing behavior)
-            port_mapping = dict(
-                map(lambda x: (x.target_port, x.node_port), resp.spec.ports)
-            )
-            return pod_ip or "", port_mapping, None
+        # For external: return pod IP, node port mapping, no route (existing behavior)
+        port_mapping = dict(
+            map(lambda x: (x.target_port, x.node_port), resp.spec.ports)
+        )
+        return pod_ip or "", port_mapping, None
 
     def stop(self, name: str) -> None:
         try:
@@ -306,18 +305,20 @@ class KubernetesDriver(Driver):
                 print("Waiting for file transfer to complete...")
                 time.sleep(10)
                 if found:
-                    print("All required log files still found in {} after {} seconds".format(
-                        dst_path, time.time() - start_time))
+                    print(
+                        f"All required log files still found in {dst_path} "
+                        f"after {time.time() - start_time} seconds"
+                    )
                     time.sleep(1)
                     break
                 found = True
 
             if time.time() - start_time > timeout:
-                print("Timeout waiting for required log files in {}".format(dst_path))
+                print(f"Timeout waiting for required log files in {dst_path}")
                 break
 
             if not waited:
-                print("Waiting for required log files to appear in {}...".format(dst_path))
+                print(f"Waiting for required log files to appear in {dst_path}...")
                 waited = True
             time.sleep(2)
 

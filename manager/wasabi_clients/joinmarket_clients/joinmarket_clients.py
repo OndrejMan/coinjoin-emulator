@@ -208,7 +208,7 @@ class OrderbookWatchClient(JoinMarketClientServer):
         resp = requests.get(
             url,
             timeout=10,
-            proxies=dict(http=self.proxy) if self.proxy else None
+            proxies={"http": self.proxy} if self.proxy else None
         )
         resp.raise_for_status()
         return cast(JsonDict, resp.json())
@@ -220,7 +220,7 @@ class OrderbookWatchClient(JoinMarketClientServer):
             resp = requests.get(
                 url,
                 timeout=10,
-                proxies=dict(http=self.proxy) if self.proxy else None
+                proxies={"http": self.proxy} if self.proxy else None
             )
             resp.raise_for_status()
             return resp.json()

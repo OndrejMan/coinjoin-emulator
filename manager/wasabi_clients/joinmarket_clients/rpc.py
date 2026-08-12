@@ -75,7 +75,7 @@ class JoinMarketRpcMixin:
                     url=url,
                     json=json_data or {},
                     headers=headers,
-                    proxies=dict(https=self.proxy) if self.proxy else None,
+                    proxies={"https": self.proxy} if self.proxy else None,
                     timeout=timeout,
                     verify=False,
                 )

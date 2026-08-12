@@ -106,13 +106,12 @@ def runner_logs(args: argparse.Namespace) -> bool:
             if success:
                 print("✓ Runner logs downloaded successfully")
             return success
-        else:
-            # Tail/follow logs
-            proxy.tail_runner_logs(
-                runner_id=runner_id,
-                lines=args.lines,
-                follow=args.follow
-            )
+        # Tail/follow logs
+        proxy.tail_runner_logs(
+            runner_id=runner_id,
+            lines=args.lines,
+            follow=args.follow
+        )
 
     except KeyboardInterrupt:
         print("\n✓ Stopped following logs")

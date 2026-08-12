@@ -444,12 +444,11 @@ class WasabiEngine(EngineBase):
                 return len(self.round_ids)
             return 0
 
-        else:
-            # In legacy versions, rounds are tracked by the backend
-            return sum(
-                1
-                for _ in self.driver.peek(
-                    "wasabi-backend",
-                    "/home/wasabi/.walletwasabi/backend/WabiSabi/CoinJoinIdStore.txt",
-                ).split("\n")[:-1]
-            )
+        # In legacy versions, rounds are tracked by the backend
+        return sum(
+            1
+            for _ in self.driver.peek(
+                "wasabi-backend",
+                "/home/wasabi/.walletwasabi/backend/WabiSabi/CoinJoinIdStore.txt",
+            ).split("\n")[:-1]
+        )

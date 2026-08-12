@@ -41,7 +41,7 @@ class JoinMarketLifecycleMixin:
         name = "irc-server"
 
         try:
-            ip, manager_ports, _ = self.driver.run(
+            _, _, _ = self.driver.run(
                 name,
                 f"{self.args.image_prefix}irc-server",
                 env={},  # Add any necessary environment variables
@@ -142,7 +142,7 @@ class JoinMarketLifecycleMixin:
         port = 28184 + idx
         try:
             print(f"Starting joinmarket-client-server: {name}")
-            ip, client_node_ports, route = self.driver.run(
+            ip, _, route = self.driver.run(
                 name,
                 f"{self.args.image_prefix}joinmarket-client-server",
                 env={},
