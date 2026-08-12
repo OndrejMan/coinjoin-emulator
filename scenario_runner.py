@@ -35,13 +35,14 @@ class ScenarioRunner:
         self.shadowsocks_config = shadowsocks_config
         self.cleanup_wait = cleanup_wait
         self.engine = engine
-        self.sslocal_process = None
-        self.results = []
+        self.sslocal_process: subprocess.Popen[str] | None = None
+        self.results: list[dict[str, object]] = []
         self.in_cluster = in_cluster
-        self.current_scenario_file = None
+        self.current_scenario_file: str | None = None
         self.stop_requested = False
         self.skip_requested = False
-        self.current_process = None  # Track currently running subprocess
+        # Track currently running subprocess
+        self.current_process: subprocess.Popen[str] | None = None
 
         # Register signal handlers
         signal.signal(signal.SIGTERM, self._handle_stop_signal)   # Terminate entire run
@@ -49,7 +50,7 @@ class ScenarioRunner:
         signal.signal(signal.SIGUSR1, self._handle_skip_signal)   # Skip to next scenario
 
 
-    def _handle_stop_signal(self, signum, frame):
+    def _handle_stop_signal(self, signum: int, _frame: object) -> None:
         """Handle stop signals (SIGTERM/SIGINT) - terminate entire run"""
         signal_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
         print(f"\n[{self.get_timestamp()}] Received {signal_name}, terminating entire run...")
@@ -68,7 +69,7 @@ class ScenarioRunner:
                 # Process already terminated
                 pass
 
-    def _handle_skip_signal(self, signum, frame):
+    def _handle_skip_signal(self, _signum: int, _frame: object) -> None:
         """Handle skip signal (SIGUSR1) - skip current scenario and continue to next"""
         print(f"\n[{self.get_timestamp()}] Received SIGUSR1, skipping current scenario...")
         self.skip_requested = True
@@ -85,7 +86,7 @@ class ScenarioRunner:
                 # Process already terminated
                 pass
 
-    def _write_current_status(self):
+    def _write_current_status(self) -> None:
         """Write current status to a file for external monitoring"""
         if self.in_cluster:
             status = {
@@ -97,7 +98,7 @@ class ScenarioRunner:
                 "skip_requested": self.skip_requested
             }
             # Write to a known location in the container
-            with open("/tmp/scenario-runner-status.json", "w") as f:
+            with open("/tmp/scenario-runner-status.json", "w", encoding="utf-8") as f:
                 json.dump(status, f)
 
     def cleanup_kubernetes(self) -> bool:
@@ -118,17 +119,16 @@ class ScenarioRunner:
             cmd.insert(4, "--in-cluster")
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, check=False)
 
             if result.returncode == 0:
                 print(f"[{self.get_timestamp()}] Cleanup successful, waiting {self.cleanup_wait} seconds...")
                 time.sleep(self.cleanup_wait)
                 return True
-            else:
-                print(f"[{self.get_timestamp()}] ERROR: Cleanup failed")
-                print(f"STDOUT: {result.stdout}")
-                print(f"STDERR: {result.stderr}")
-                return False
+            print(f"[{self.get_timestamp()}] ERROR: Cleanup failed")
+            print(f"STDOUT: {result.stdout}")
+            print(f"STDERR: {result.stderr}")
+            return False
 
         except subprocess.TimeoutExpired:
             print(f"[{self.get_timestamp()}] ERROR: Cleanup timed out after 5 minutes")
@@ -165,10 +165,14 @@ class ScenarioRunner:
 
         try:
             # Run the scenario
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            # The process is tracked on self so a signal handler can reach it.
+            process = subprocess.Popen(  # pylint: disable=consider-using-with
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
             self.current_process = process  # Track the current process
 
             # Stream output in real-time
+            assert process.stdout is not None and process.stderr is not None
             for line in iter(process.stdout.readline, ''):
                 if line:
                     print(f"  {line.rstrip()}")
@@ -181,11 +185,10 @@ class ScenarioRunner:
             if return_code == 0:
                 print(f"[{self.get_timestamp()}] SUCCESS: Scenario completed in {duration:.1f} seconds")
                 return True, duration
-            else:
-                stderr = process.stderr.read()
-                print(f"[{self.get_timestamp()}] ERROR: Scenario failed after {duration:.1f} seconds")
-                print(f"STDERR: {stderr}")
-                return False, duration
+            stderr = process.stderr.read()
+            print(f"[{self.get_timestamp()}] ERROR: Scenario failed after {duration:.1f} seconds")
+            print(f"STDERR: {stderr}")
+            return False, duration
 
         except Exception as e:
             duration = time.time() - start_time
@@ -196,7 +199,7 @@ class ScenarioRunner:
         """Get all JSON scenario files in the directory"""
         scenarios = []
 
-        for root, dirs, files in os.walk(self.scenario_dir):
+        for root, _, files in os.walk(self.scenario_dir):
             for file in files:
                 if file.endswith('.json'):
                     scenarios.append(os.path.join(root, file))
@@ -207,16 +210,19 @@ class ScenarioRunner:
         """Get current timestamp for logging"""
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    def save_results(self):
+    def save_results(self) -> None:
         """Save run results to file"""
         results_file = os.path.join('logs', f"run_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
 
-        with open(results_file, 'w') as f:
+        with open(results_file, 'w', encoding="utf-8") as f:
             json.dump(self.results, f, indent=2)
 
         print(f"\nResults saved to: {results_file}")
 
-    def run_all(self, start_from: Optional[str] = None):
+    # The run loop walks scenarios, retries and cleanup in one pass.
+    def run_all(  # pylint: disable=too-many-statements,too-many-nested-blocks
+        self, start_from: Optional[str] = None
+    ) -> None:
         """Run all scenarios with proper error handling"""
         scenarios = self.get_scenarios()
 
@@ -294,7 +300,12 @@ class ScenarioRunner:
                             print(f"[{self.get_timestamp()}] Cleanup failed, skipping retry")
 
                 # Clean up after each scenario (unless stop requested)
-                if not self.stop_requested and i < len(scenarios) - 1:  # Don't cleanup after last scenario
+                # mypy narrows stop_requested to False here, but a signal handler
+                # can set it between the checks.
+                if (
+                    not self.stop_requested  # type: ignore[redundant-expr]
+                    and i < len(scenarios) - 1  # Don't cleanup after last scenario
+                ):
                     print(f"\n[{self.get_timestamp()}] Cleaning up before next scenario...")
                     self.cleanup_kubernetes()
 
@@ -325,13 +336,13 @@ class ScenarioRunner:
                 print("\nFailed scenarios:")
                 for r in self.results:
                     if not r["success"] and not r.get("retry_success", False):
-                        print(f"  - {os.path.basename(r['scenario'])}")
+                        print(f"  - {os.path.basename(str(r['scenario']))}")
 
             # Save final results
             self.save_results()
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Run JoinMarket scenarios")
     parser.add_argument("--scenario_dir", help="Directory containing scenario JSON files")
     parser.add_argument("--namespace", default="rajnoha-ns", help="Kubernetes namespace")
