@@ -176,6 +176,16 @@ class TestUpdateInvoicePayments:
         assert harness.distributor_impl.sent == []
         assert list(harness.invoices) == [(0, 3)]
 
+    def test_failed_payment_remains_scheduled_for_retry(self) -> None:
+        harness = FundingHarness()
+        harness.invoices = {(0, 0): [("retry-me", 1)]}
+        harness.distributor_impl.error = RuntimeError("temporary RPC failure")
+
+        with pytest.raises(CoinjoinEmulatorError, match="Invoice payment failed"):
+            harness.update_invoice_payments()
+
+        assert harness.invoices == {(0, 0): [("retry-me", 1)]}
+
 
 class TestPayInvoices:
     def test_invoices_are_paid_in_batches(self) -> None:
