@@ -1,11 +1,12 @@
 import argparse
 import sys
+from typing import cast
 
 from manager.kubernetes_local_proxy import KubernetesLocalProxy
 from manager.manager_remote import deploy_manager, download_logs_remote
 
 
-def run_scenario_batch(args):
+def run_scenario_batch(args: argparse.Namespace) -> bool:
     """Run a batch of scenarios using the scenario runner"""
     try:
         proxy = KubernetesLocalProxy(
@@ -42,7 +43,7 @@ def run_scenario_batch(args):
     return True
 
 
-def runner_status(args):
+def runner_status(args: argparse.Namespace) -> bool:
     """Check scenario runner status"""
     try:
         proxy = KubernetesLocalProxy(
@@ -65,7 +66,7 @@ def runner_status(args):
         print(f"Runner status: {status['status']}")
 
         if 'current_status' in status and status['current_status']:
-            current = status['current_status']
+            current = cast(dict[str, object], status["current_status"])
             print("\nCurrent progress:")
             print(f"  Scenario: {current.get('current_scenario', 'Unknown')}")
             print(f"  Completed: {current.get('completed', 0)}/{current.get('total', 0)}")
@@ -77,7 +78,7 @@ def runner_status(args):
     return True
 
 
-def runner_logs(args):
+def runner_logs(args: argparse.Namespace) -> bool:
     """Get scenario runner logs"""
     try:
         proxy = KubernetesLocalProxy(
@@ -121,7 +122,7 @@ def runner_logs(args):
     return True
 
 
-def runner_stop(args):
+def runner_stop(args: argparse.Namespace) -> bool:
     """Stop a running scenario batch - terminates entire run"""
     try:
         proxy = KubernetesLocalProxy(
@@ -154,7 +155,7 @@ def runner_stop(args):
     return True
 
 
-def runner_skip(args):
+def runner_skip(args: argparse.Namespace) -> bool:
     """Skip current scenario and continue to next"""
     try:
         proxy = KubernetesLocalProxy(
@@ -186,7 +187,7 @@ def runner_skip(args):
     return True
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Batch Scenario Runner Manager for Kubernetes - Manages running multiple scenarios sequentially",
         prog="manager_remote_batch.py"
