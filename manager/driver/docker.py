@@ -1,11 +1,11 @@
-from functools import cached_property
-from io import BytesIO
 import os
 import tarfile
+from functools import cached_property
+from io import BytesIO
 
-from docker.models.containers import Container
-from . import Driver
 import docker
+
+from . import Driver
 
 
 class DockerDriver(Driver):

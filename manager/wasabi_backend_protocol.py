@@ -1,6 +1,6 @@
 """Protocol definition for Wasabi backend implementations."""
 
-from typing import Protocol, Any
+from typing import Any, Protocol
 
 
 class WasabiBackendProtocol(Protocol):

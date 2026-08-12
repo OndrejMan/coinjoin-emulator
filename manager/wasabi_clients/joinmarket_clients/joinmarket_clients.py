@@ -1,12 +1,14 @@
-import uuid
-import os
 import json
+import os
 import time
+import uuid
 from datetime import datetime
-import requests
+
 import httpx
+import requests
 
 from .joinmarket_client_base import JoinMarketClientServer
+
 
 class MakerClient(JoinMarketClientServer):
     """

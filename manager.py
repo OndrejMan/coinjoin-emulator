@@ -1,20 +1,18 @@
-from traceback import print_exception
-import time
-import signal
-
-from manager.driver import Driver
-from manager.engine.joinmarket_engine import JoinmarketEngine
-from manager.engine.wasabi_engine import WasabiEngine
-from manager.engine.engine_base import EngineBase
-from manager.run_timezone import DEFAULT_RUN_TIMEZONE
-import manager.commands.genscen
-import manager.commands.genscen_joinmarket
-import sys
 import argparse
-import re
 import os
+import re
+import signal
+import sys
+from traceback import print_exception
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import manager.commands.genscen
+import manager.commands.genscen_joinmarket
+from manager.driver import Driver
+from manager.engine.engine_base import EngineBase
+from manager.engine.joinmarket_engine import JoinmarketEngine
+from manager.engine.wasabi_engine import WasabiEngine
+from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 
 args: argparse.Namespace | None = None
 engine: EngineBase | None = None

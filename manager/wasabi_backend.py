@@ -1,6 +1,7 @@
 import json
-import requests
 from time import sleep
+
+import requests
 
 WALLET_NAME = "wallet"
 

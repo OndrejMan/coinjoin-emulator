@@ -1,7 +1,7 @@
 import json
-from traceback import print_exception
-import requests
 from time import sleep
+
+import requests
 
 WALLET_NAME = "wallet"
 
@@ -45,6 +45,6 @@ class WasabiBackend26:
             try:
                 self._get_status()
                 break
-            except Exception as e:
+            except Exception:
                 pass
             sleep(1)
