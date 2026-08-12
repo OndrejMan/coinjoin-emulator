@@ -4,15 +4,16 @@ import os
 import random
 import shutil
 import sys
-from collections.abc import Iterator
+from collections.abc import Coroutine, Iterator
 from time import sleep, time
 from typing import cast
 
 import backoff
 
 from manager.engine.base.manifest import ProducerLabelEvidence
+from manager.driver import Driver
 from manager.engine.configuration import JoinMarketConfig, JoinMarketRole, ScenarioConfig, WalletConfig
-from manager.engine.engine_base import EngineBase
+from manager.engine.engine_base import EmulatorClient, EngineArgs, EngineBase, InvoiceDistributor
 from manager.engine.joinmarket.events import (
     collect_round_events,
     match_round_events_to_blocks,
@@ -25,14 +26,14 @@ from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import Orderbo
 
 class JoinmarketEngine(EngineBase):
 
-    def __init__(self, args, driver):
+    def __init__(self, args: EngineArgs, driver: Driver) -> None:
         super().__init__(args, driver,
                          log_src_path="/home/joinmarket/.joinmarket/logs")
-        self.obwatch_client = None
-        self._obwatch_missing_logged = False
+        self.obwatch_client: OrderbookWatchClient | None = None
+        self._obwatch_missing_logged: bool = False
         # Feature flag to enable async client updates (default: enabled for better performance)
-        self.async_updates = getattr(args, 'async_updates', True)
-        self.loop = None
+        self.async_updates = bool(getattr(args, "async_updates", True))
+        self.loop: asyncio.AbstractEventLoop | None = None
         self.last_resource_check = 0  # Track when we last checked resources
 
     def default_scenario(self) -> ScenarioConfig:
@@ -122,14 +123,14 @@ class JoinmarketEngine(EngineBase):
             ],
         )
 
-    def prepare_images(self):
+    def prepare_images(self) -> None:
         print("Preparing images")
         self.prepare_image("btc-node")
         self.prepare_image("joinmarket-client-server")
         self.prepare_image("irc-server")
 
 
-    def start_engine_infrastructure(self):
+    def start_engine_infrastructure(self) -> None:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         self.node.create_wallet("jm_wallet")
@@ -146,7 +147,7 @@ class JoinmarketEngine(EngineBase):
             print(f"- could not start orderbook watcher ({e})")
 
 
-    def start_irc_server(self):
+    def start_irc_server(self) -> None:
         # TODO: When the container fails to start, the exception is not thrown and it is not recognized.
         name = "irc-server"
 
@@ -166,7 +167,7 @@ class JoinmarketEngine(EngineBase):
             raise Exception("Could not start IRC server")
 
 
-    def start_distributor(self):
+    def start_distributor(self) -> None:
         name = "joinmarket-distributor"
         port = 28183  # Use a specific port for the distributor
         try:
@@ -187,16 +188,16 @@ class JoinmarketEngine(EngineBase):
         actual_ip = ip if self.args.proxy or self.args.in_cluster else (route if route else self.args.control_ip)
 
         print(f"- started {name} at {actual_ip}:{actual_port}")
-        self.distributor = self.init_joinmarket_clientserver(
+        self.distributor = cast(InvoiceDistributor, self.init_joinmarket_clientserver(
             name=name,
             port=actual_port,
-            host=actual_ip,
-            proxy=self.args.proxy
-        )
+            host=str(actual_ip),
+            proxy=self.args.proxy,
+        ))
 
         print("- started distributor")
 
-    def prepare_additional_funding(self, wallets):
+    def prepare_additional_funding(self, wallets: list[WalletConfig]) -> None:
         """
         JoinMarket-specific additional funding setup.
         Creates and funds fidelity bonds for wallets that have bond configuration.
@@ -222,15 +223,16 @@ class JoinmarketEngine(EngineBase):
                     continue
 
                 # Create the bond
-                bond_info = client.create_fidelity_bond(
-                    amount=amount,
-                    locktime=locktime,
+                jm_client = cast(JoinMarketClientServer, client)
+                bond_info = jm_client.create_fidelity_bond(
+                    amount=int(cast(int, amount)),
+                    locktime=str(locktime),
                     current_block=self.current_block
                 )
 
                 # Prepare funding invoice
-                bond_address = bond_info['address']
-                bond_invoice = (bond_address, amount)
+                bond_address = str(bond_info["address"])
+                bond_invoice = (bond_address, int(cast(int, amount)))
                 bond_invoices.append(bond_invoice)
                 bond_clients.append((client, bond_address))
 
@@ -248,8 +250,8 @@ class JoinmarketEngine(EngineBase):
                 self.pay_invoices(bond_invoices)
 
                 # Mark bonds as funded
-                for client, bond_address in bond_clients:
-                    client.mark_bond_funded(bond_address)
+                for bond_client, bond_address in bond_clients:
+                    cast(JoinMarketClientServer, bond_client).mark_bond_funded(bond_address)
 
                 print(f"- funded {len(bond_invoices)} fidelity bonds")
 
@@ -268,7 +270,7 @@ class JoinmarketEngine(EngineBase):
         else:
             print("- no fidelity bonds to fund")
 
-    def start_orderbook_watch(self):
+    def start_orderbook_watch(self) -> None:
         name = "joinmarket-obwatch"
         port = 62601
         try:
@@ -333,12 +335,12 @@ class JoinmarketEngine(EngineBase):
         print(f"- stored {len(labels)} JoinMarket round labels")
         return dict(producer_label_evidence(labels, []))
 
-    def store_engine_logs(self, data_path):
+    def store_engine_logs(self, data_path: str) -> dict[str, object] | None:
         print("- storing engine-logs")
         self.store_orderbook_snapshots(data_path)
         return self.store_round_events(data_path)
 
-    def store_orderbook_snapshots(self, data_path):
+    def store_orderbook_snapshots(self, data_path: str) -> None:
         # Store orderbook snapshots, grouped under data_path/orderbook/<client.name>
         print(f"- storing {data_path}")
         ob_root = os.path.join(data_path, "orderbook")
@@ -373,9 +375,14 @@ class JoinmarketEngine(EngineBase):
 
 
     @staticmethod
-    def init_joinmarket_clientserver(name, port, host="localhost", proxy=None):
+    def init_joinmarket_clientserver(
+        name: str,
+        port: int,
+        host: str = "localhost",
+        proxy: str | None = None,
+    ) -> JoinMarketClientServer:
         print(f"Starting joinmarket-client-server: {name}")
-        client = JoinMarketClientServer(name=name, port=port, host=host, proxy=proxy)
+        client = JoinMarketClientServer(name=name, port=port, host=host, proxy=proxy or "")
 
         ensure_client_session(client, name)
 
@@ -385,7 +392,7 @@ class JoinmarketEngine(EngineBase):
         return client
 
 
-    def start_client(self, idx: int, wallet: WalletConfig | None = None):
+    def start_client(self, idx: int, wallet: WalletConfig | None = None) -> EmulatorClient | None:
         name = f"jcs-{idx:03}"
         port = 28184 + idx
         try:
@@ -415,24 +422,27 @@ class JoinmarketEngine(EngineBase):
         print(f"- started {name} at {actual_ip}:{actual_port}")
 
         sleep(30)
+        if wallet is None:
+            raise ValueError("wallet configuration is required to start a JoinMarket client")
         client = JoinMarketClientServer.from_wallet(
             name=name,
             port=actual_port,
-            host=actual_ip,
+            host=str(actual_ip),
             wallet=wallet,
-            proxy=self.args.proxy)
+            proxy=self.args.proxy or "",
+        )
 
         print(f"driver starting {name}")
-        return client
+        return cast(EmulatorClient | None, client)
 
-    def stop_client(self, idx: int):
+    def stop_client(self, idx: int) -> None:
         name = f"jcs-{idx:03}"
         try:
             self.driver.stop(name)
         except Exception as e:
             print(f"- could not stop client {name}: {e}")
 
-    def _note_missing_obwatch(self):
+    def _note_missing_obwatch(self) -> None:
         """Report once that the orderbook watcher is unavailable for this run.
 
         Startup failures are tolerated, so a missing watcher is a valid state.
@@ -443,8 +453,9 @@ class JoinmarketEngine(EngineBase):
         self._obwatch_missing_logged = True
         print("- orderbook watcher is not running, skipping its updates for this run")
 
-    def update_coinjoins_joinmarket(self):
-        for client in self.clients:
+    def update_coinjoins_joinmarket(self) -> None:
+        for emulator_client in self.clients:
+            client = cast(JoinMarketClientServer, emulator_client)
             try:
                 # Check if client just reached its limit
                 was_active = not client.is_paused(self.current_block)
@@ -469,15 +480,15 @@ class JoinmarketEngine(EngineBase):
         else:
             self._note_missing_obwatch()
 
-    async def update_coinjoins_joinmarket_async(self):
+    async def update_coinjoins_joinmarket_async(self) -> None:
         """
         Async version: Update all clients in parallel using asyncio.gather()
         Adds jitter between task creation to prevent synchronized RPC storms
         """
         # Create tasks for all client updates with jitter to desynchronize RPC calls
-        client_tasks = []
-        for client in self.clients:
-            task = self._update_client_async(client)
+        client_tasks: list[Coroutine[object, object, int]] = []
+        for emulator_client in self.clients:
+            task = self._update_client_async(cast(JoinMarketClientServer, emulator_client))
             client_tasks.append(task)
             # Add jitter between task creations to desynchronize Bitcoin Core RPC calls
             jitter = random.uniform(0.01, 0.05)  # 10-50ms jitter
@@ -485,8 +496,7 @@ class JoinmarketEngine(EngineBase):
 
         # Add orderbook watcher client task if it exists
         if self.obwatch_client:
-            obwatch_task = self._update_obwatch_async(self.obwatch_client)
-            client_tasks.append(obwatch_task)
+            client_tasks.append(self._update_obwatch_async(self.obwatch_client))
         else:
             self._note_missing_obwatch()
 
@@ -498,11 +508,11 @@ class JoinmarketEngine(EngineBase):
             if isinstance(result, Exception):
                 client_name = self.clients[i].name if i < len(self.clients) else "unknown"
                 print(f"- could not update {client_name} ({result})")
-            else:
+            elif isinstance(result, int):
                 # Apply any change in round count
                 self.current_round += result
 
-    async def _update_client_async(self, client):
+    async def _update_client_async(self, client: JoinMarketClientServer) -> int:
         """Helper to update a single client asynchronously"""
         try:
             delta = await client.update_async(self.current_block, self.current_round)
@@ -511,7 +521,7 @@ class JoinmarketEngine(EngineBase):
             print(f"- could not update {client.name} ({e})")
             return 0
 
-    async def _update_obwatch_async(self, obwatch_client):
+    async def _update_obwatch_async(self, obwatch_client: JoinMarketClientServer) -> int:
         """Helper to update orderbook watcher client asynchronously"""
         try:
             return await obwatch_client.update_async(self.current_block, self.current_round)
@@ -519,7 +529,7 @@ class JoinmarketEngine(EngineBase):
             print(f"- could not update obwatch client ({e})")
             return 0
 
-    async def cleanup_async_clients(self):
+    async def cleanup_async_clients(self) -> None:
         """
         Cleanup async HTTP clients to prevent resource leaks.
         Should be called when shutting down the engine.
@@ -537,7 +547,7 @@ class JoinmarketEngine(EngineBase):
             await asyncio.gather(*cleanup_tasks, return_exceptions=True)
             print("- closed all async HTTP clients")
 
-    def check_client_resources(self):
+    def check_client_resources(self) -> None:
         """
         Check resource usage for a sample of client pods.
         Logs memory usage and alerts if pods are near limits.
@@ -549,7 +559,8 @@ class JoinmarketEngine(EngineBase):
 
         high_usage_count = 0
         for client in sample_clients:
-            stats = self.driver.get_pod_resource_usage(client.name)
+            stats = getattr(self.driver, "get_pod_resource_usage", None)
+            stats = stats(client.name) if stats is not None else None
             if stats:
                 mem_mb = stats['memory_mb']
                 mem_limit = stats['memory_limit_mb']
@@ -565,7 +576,7 @@ class JoinmarketEngine(EngineBase):
         if high_usage_count > 0:
             print(f"[RESOURCE] {high_usage_count}/{sample_size} sampled pods using >80% memory")
 
-    def shutdown_engine(self):
+    def shutdown_engine(self) -> None:
         """
         Shutdown the engine and cleanup resources.
         """
@@ -575,7 +586,7 @@ class JoinmarketEngine(EngineBase):
             except Exception as e:
                 print(f"- error during async client cleanup: {e}")
 
-    def run_engine(self):
+    def run_engine(self) -> None:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
 
@@ -607,7 +618,7 @@ class JoinmarketEngine(EngineBase):
                         print(f"Block exception: {e}", file=sys.stderr)
 
                 # Check resource usage every 5 minutes (10 iterations * 30s = 5 min)
-                current_time = time()
+                current_time = int(time())
                 if current_time - self.last_resource_check > 300:  # 5 minutes
                     try:
                         self.check_client_resources()
@@ -641,12 +652,12 @@ class JoinmarketEngine(EngineBase):
             self.node.mine_block()
 
         finally:
-            if self.loop and not self.loop.is_closed():
+            if self.loop is not None and not self.loop.is_closed():
                 self.loop.close()
 
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
-def ensure_client_session(client, name):
+def ensure_client_session(client: JoinMarketClientServer, name: str) -> None:
     if not client.session():
         print(f"- could not start {name} (session timeout)")
         raise Exception("Could not start distributor")

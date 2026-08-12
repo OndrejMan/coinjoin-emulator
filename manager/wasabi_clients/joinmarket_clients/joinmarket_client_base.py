@@ -291,6 +291,14 @@ class JoinMarketClientServer:
 
         raise Exception("timeout")
 
+    def update(self, current_block: int, current_round: int) -> int:
+        """Advance this client one engine tick; returns the change in round count."""
+        raise NotImplementedError
+
+    async def update_async(self, current_block: int, current_round: int) -> int:
+        """Async counterpart of update()."""
+        raise NotImplementedError
+
     def is_paused(self, current_block: int) -> bool:
         # Check delay - "delay[0]" means "don't run until current_block >= delay[0]"
         if current_block < self.next_coinjoin_allowed:
