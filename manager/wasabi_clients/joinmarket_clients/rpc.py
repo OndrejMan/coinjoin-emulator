@@ -108,10 +108,8 @@ class JoinMarketRpcMixin:
                 if attempt == repeat - 1:
                     raise
                 sleep(1)
-        if response is not None:
-            return cast(JsonDict, response.json())
-
-        raise TimeoutError("timeout")
+        # Only reachable when every attempt answered 401: the wallet never unlocked.
+        raise RpcError(f"{method} {endpoint} stayed unauthorized after {repeat} attempts")
 
     async def _rpc_async(
         self,
