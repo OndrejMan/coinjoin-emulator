@@ -6,7 +6,7 @@ from collections.abc import Coroutine
 from typing import TYPE_CHECKING, cast
 
 from manager.driver import Driver
-from manager.engine.engine_base import EmulatorClient
+from manager.engine.base.protocols import EmulatorClient
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
 

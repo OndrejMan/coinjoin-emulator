@@ -13,8 +13,9 @@ from typing import cast
 
 from manager.engine.base.manifest import ProducerLabelEvidence
 from manager.driver import Driver
+from manager.engine.base.protocols import EmulatorClient, EngineArgs, InvoiceDistributor
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
-from manager.engine.engine_base import EmulatorClient, EngineArgs, EngineBase, InvoiceDistributor
+from manager.engine.engine_base import EngineBase
 from manager.wasabi_backend_factory import (
     BackendArchitecture,
     create_backend,

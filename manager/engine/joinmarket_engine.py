@@ -7,8 +7,9 @@ from time import sleep, time
 
 from manager.engine.base.manifest import ProducerLabelEvidence
 from manager.driver import Driver
+from manager.engine.base.protocols import EngineArgs
 from manager.engine.configuration import JoinMarketConfig, JoinMarketRole, ScenarioConfig, WalletConfig
-from manager.engine.engine_base import EngineArgs, EngineBase
+from manager.engine.engine_base import EngineBase
 from manager.engine.joinmarket.events import (
     collect_round_events,
     match_round_events_to_blocks,

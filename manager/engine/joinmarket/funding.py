@@ -3,8 +3,8 @@
 from typing import TYPE_CHECKING, cast
 
 from manager.btc_node import BtcNode
+from manager.engine.base.protocols import EmulatorClient, InvoiceDistributor
 from manager.engine.configuration import WalletConfig
-from manager.engine.engine_base import EmulatorClient, InvoiceDistributor
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 
 

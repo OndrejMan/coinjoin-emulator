@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, cast
 import backoff
 
 from manager.driver import Driver
+from manager.engine.base.protocols import EmulatorClient, EngineArgs, InvoiceDistributor
 from manager.engine.configuration import WalletConfig
-from manager.engine.engine_base import EmulatorClient, EngineArgs, InvoiceDistributor
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
 
