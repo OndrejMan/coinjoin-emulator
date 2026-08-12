@@ -65,7 +65,7 @@ class PodmanDriver(Driver):
                 tar.extractall(dst_path)
 
             print(f"- stored backend logs")
-        except:
+        except Exception:
             print(f"- could not store backend logs")
 
     def peek(self, name, path):

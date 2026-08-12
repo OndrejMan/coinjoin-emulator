@@ -45,6 +45,6 @@ class WasabiCoordinator:
                 if status:
                     print(f"Coordinator ready: {status}")
                     break
-            except:
+            except Exception:
                 pass
             sleep(0.1)

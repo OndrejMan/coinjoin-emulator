@@ -252,7 +252,7 @@ class EngineBase:
         try:
             self.driver.download(client.name, self.log_src_path, client_path)
             print(f"- stored {client.name} logs, {self.log_src_path}, {client_path}")
-        except:
+        except Exception:
             print(f"- could not store {client.name} logs")
 
     def store_logs(self):
