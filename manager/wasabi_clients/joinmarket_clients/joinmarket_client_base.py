@@ -2,7 +2,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from time import sleep, time
-from typing import TypedDict, cast
+from typing import cast
 
 import httpx
 import requests
@@ -11,30 +11,20 @@ from bip_utils import Bip32Slip10Secp256k1, Bip39SeedGenerator
 
 from manager.engine.configuration import WalletConfig
 
+from .types import (
+    BTC,
+    DEFAULT_WAIT_WALLET_TIMEOUT,
+    PASSWORD,
+    WALLET_NAME,
+    WALLET_TYPE,
+    BondRecord,
+    JoinmarketConflictException,
+    JsonDict,
+)
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
-JsonDict = dict[str, object]
-
-
-class BondRecord(TypedDict):
-    """Bookkeeping for one fidelity bond this client created."""
-
-    amount: int
-    locktime: str
-    creation_block: int
-    funded: bool
-WALLET_NAME = "wallet"
-DEFAULT_WAIT_WALLET_TIMEOUT = 60
-PASSWORD = "password"
-WALLET_TYPE = "sw"
-BTC = 100_000_000
-
-
-class JoinmarketConflictException(Exception):
-    def __init__(self, message: str, response: object) -> None:
-        super().__init__(message)
-        self.response = response
 
 
 class JoinMarketClientServer:
