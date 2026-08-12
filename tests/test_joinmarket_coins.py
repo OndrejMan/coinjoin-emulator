@@ -123,6 +123,15 @@ class TestCoinHistory:
 
 
 class TestListKeys:
+    def test_live_coins_are_refreshed_before_keys_are_exported(self) -> None:
+        final_coinjoin_output = utxo(path="m/84'/1'/0'/1/6")
+        harness = CoinsHarness({"utxos": [final_coinjoin_output]})
+
+        keys = cast(list[JsonDict], harness.list_keys())
+
+        assert [key["address"] for key in keys] == [final_coinjoin_output["address"]]
+        assert keys[0]["full_key_path"] == "84'/1'/0'/1/6"
+
     def test_key_is_derived_for_every_coin_path(self) -> None:
         harness = CoinsHarness({"utxos": [utxo()]})
         harness.update_coin_history()
