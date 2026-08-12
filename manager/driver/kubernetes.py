@@ -5,6 +5,7 @@ import traceback
 from functools import cached_property
 from io import BytesIO
 from time import sleep
+from typing import cast
 
 import backoff
 from kubernetes import client, config
@@ -13,9 +14,18 @@ from kubernetes.stream import stream
 
 from . import Driver
 
+DEFAULT_CPU = 0.1
+DEFAULT_MEMORY = 768
+
 
 class KubernetesDriver(Driver):
-    def __init__(self, namespace="coinjoin", reuse_namespace=False, pull_secret_path=None, in_cluster=False):
+    def __init__(
+        self,
+        namespace: str = "coinjoin",
+        reuse_namespace: bool = False,
+        pull_secret_path: str | None = None,
+        in_cluster: bool = False,
+    ) -> None:
 
         if in_cluster:
             try:
@@ -31,10 +41,12 @@ class KubernetesDriver(Driver):
         self.pull_secret_path = pull_secret_path
         self.in_cluster = in_cluster
 
-    def _create_image_pull_secret(self):
+    def _create_image_pull_secret(self) -> None:
         secret_name = "regcred"
+        if not self.pull_secret_path:
+            raise ValueError("pull_secret_path is not configured")
         try:
-            with open(self.pull_secret_path, "r") as f:
+            with open(self.pull_secret_path, "r", encoding="utf-8") as f:
                 dockerconfigjson = f.read()
             dockerconfigjson_b64 = base64.b64encode(dockerconfigjson.encode("utf-8")).decode("utf-8")
 
@@ -58,7 +70,7 @@ class KubernetesDriver(Driver):
         except Exception as e:
             print(f"Failed to create image pull secret: {e}")
 
-    def create_namespace(self):
+    def create_namespace(self) -> None:
         namespace_manifest = {
             "apiVersion": "v1",
             "kind": "Namespace",
@@ -67,7 +79,7 @@ class KubernetesDriver(Driver):
         self.client.create_namespace(body=namespace_manifest)
 
         @backoff.on_exception(backoff.constant, Exception, interval=5, max_time=30)
-        def wait_for_active():
+        def wait_for_active() -> None:
             ns = self.client.read_namespace(self._namespace)
             if ns.status.phase != "Active":
                 print(f"Namespace '{self._namespace}' is not Active yet.")
@@ -77,24 +89,36 @@ class KubernetesDriver(Driver):
         wait_for_active()
 
     @cached_property
-    def namespace(self):
+    def namespace(self) -> str:
         if not self.reuse_namespace:
             self.create_namespace()
             if self.pull_secret_path:
                 self._create_image_pull_secret()
         return self._namespace
 
-    def has_image(self, name):
+    def has_image(self, name: str) -> bool:
         return True
 
-    def build(self, name, path):
+    def build(self, name: str, path: str) -> None:
         pass
 
-    def pull(self, name):
+    def pull(self, name: str) -> None:
         pass
 
-    def build_pod_manifest(self, name, image, env, ports, cpu, memory,
-                            user_id=None):
+    def build_pod_manifest(
+        self,
+        name: str,
+        image: str,
+        env: dict[str, str] | None,
+        ports: dict[int, int] | None,
+        cpu: float | None,
+        memory: int | None,
+        user_id: int | None = None,
+    ) -> dict[str, object]:
+        if cpu is None:
+            cpu = DEFAULT_CPU
+        if memory is None:
+            memory = DEFAULT_MEMORY
         if ports is None:
             ports = {}
         if env is None:
@@ -147,15 +171,16 @@ class KubernetesDriver(Driver):
 
     def run(
         self,
-        name,
-        image,
-        env=None,
-        ports=None,
-        cpu=None,
-        memory=None,
-        run_as_user=None,
-        **kwargs
-    ):
+        name: str,
+        image: str,
+        env: dict[str, str] | None = None,
+        ports: dict[int, int] | None = None,
+        cpu: float | None = None,
+        memory: int | None = None,
+        **kwargs: object,
+    ) -> tuple[str, dict[int, int], object]:
+        run_as_user = cast(int | None, kwargs.get("run_as_user"))
+        ports = ports or {}
         pod_manifest = self.build_pod_manifest(name, image, env, ports, cpu, memory, run_as_user)
         resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
 
@@ -208,7 +233,7 @@ class KubernetesDriver(Driver):
             )
             return pod_ip or "", port_mapping, None
 
-    def stop(self, name):
+    def stop(self, name: str) -> None:
         try:
             self.client.delete_namespaced_pod(name=name, namespace=self.namespace)
             self.client.delete_namespaced_service(
@@ -217,7 +242,7 @@ class KubernetesDriver(Driver):
         except Exception:
             pass
 
-    def download(self, name, src_path, dst_path):
+    def download(self, name: str, src_path: str, dst_path: str) -> None:
         if src_path[-1] == "/":
             src_path = src_path[:-1]
         src_parent, src_target = os.path.split(src_path)
@@ -297,7 +322,7 @@ class KubernetesDriver(Driver):
 
         # sleep(60)
 
-    def peek(self, name, path):
+    def peek(self, name: str, path: str) -> str:
         exec_command = ["cat", path]
         resp = stream(
             self.client.connect_get_namespaced_pod_exec,
@@ -319,7 +344,7 @@ class KubernetesDriver(Driver):
         resp.close()
         return output
 
-    def get_pod_resource_usage(self, name):
+    def get_pod_resource_usage(self, name: str) -> dict[str, float] | None:
         """
         Get memory usage of a pod by reading /proc/self/status.
         Returns dict with memory_mb and memory_limit_mb, or None if failed.
@@ -374,7 +399,7 @@ class KubernetesDriver(Driver):
             # Silently fail - pod might be terminating
             return None
 
-    def upload(self, name, src_path, dst_path):
+    def upload(self, name: str, src_path: str, dst_path: str) -> None:
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:tar") as tar:
             tar.add(src_path, arcname=dst_path)
@@ -407,7 +432,7 @@ class KubernetesDriver(Driver):
         resp.close()
 
 
-    def cleanup(self, image_prefix=""):
+    def cleanup(self, image_prefix: str = "") -> None:
         # without this, the cleaunup fails because of open websocket channel from log gathering
         # but when the fresh client is created, the log gathering fails...
         # "Working" config is letting the cleanup fail and restarting it after run...
