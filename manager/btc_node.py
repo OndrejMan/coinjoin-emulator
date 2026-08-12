@@ -2,6 +2,8 @@ import requests
 import json
 from time import sleep
 
+from .exceptions import RpcError
+
 WALLET = "wallet"
 
 
@@ -38,7 +40,12 @@ class BtcNode:
             "method": "getblockcount",
             "params": [],
         }
-        return self._rpc(request)
+        result = self._rpc(request)
+        if not isinstance(result, int):
+            # _rpc answers "timeout" instead of a result when the node does not
+            # respond; callers should see that as a failure, not as a height.
+            raise RpcError(f"btc-node returned no block count: {result!r}")
+        return result
 
     def get_block_hash(self, height):
         request = {
@@ -81,11 +88,7 @@ class BtcNode:
     def wait_ready(self):
         while True:
             try:
-                block_count = self.get_block_count()
-                if block_count == "timeout":
-                    print("Btc node not ready, timeout")
-                    continue
-                if block_count > 200:
+                if self.get_block_count() > 200:
                     break
             except Exception as e:
                 print(f"Btc node not ready: {e}")
