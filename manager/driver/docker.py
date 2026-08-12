@@ -82,7 +82,7 @@ class DockerDriver(Driver):
             fo.seek(0)
             with tarfile.open(fileobj=fo) as tar:
                 tar.extractall(dst_path)
-        except:
+        except Exception:
             pass
 
     def peek(self, name, path):

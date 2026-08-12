@@ -297,7 +297,7 @@ class WasabiEngine(EngineBase):
                         os.path.join(data_path, "wasabi-coordinator"),
                     )
                     print(f"- stored coordinator logs")
-                except:
+                except Exception:
                     print(f"- could not store coordinator logs")
             else:
                 # Store logs from legacy backend
@@ -307,7 +307,7 @@ class WasabiEngine(EngineBase):
                     os.path.join(data_path, "wasabi-backend"),
                 )
                 print(f"- stored backend logs")
-        except:
+        except Exception:
             print(f"- could not store backend logs")
 
     def start_coinjoin(self, client):
