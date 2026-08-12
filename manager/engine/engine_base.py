@@ -3,6 +3,7 @@ import time
 from manager.btc_node import BtcNode
 from manager import utils
 from manager.run_timezone import DEFAULT_RUN_TIMEZONE
+from manager.engine.base.manifest import write_producer_label_manifest
 from manager.engine.configuration import ScenarioConfig, WalletConfig, FundConfig
 from time import sleep
 import random
@@ -318,9 +319,9 @@ class EngineBase:
         print(f"- stored {stored_blocks} blocks")
 
         print("- storing engine logs")
-        print(f"{self.store_engine_logs}")
-        self.store_engine_logs(data_path)
-        print("- finished storing engine logs")
+        producer_label_evidence = self.store_engine_logs(data_path)
+        write_producer_label_manifest(data_path, producer_label_evidence)
+        print("- finished storing engine logs, stored producer-label manifest")
 
         print(f"- storing logs for {len(self.clients)} clients in parallel")
         with multiprocessing.pool.ThreadPool() as pool:
@@ -331,7 +332,7 @@ class EngineBase:
         os.replace(archive_path, os.path.join(experiment_path, "emulation_logs.zip"))
         print("- zip archive created")
 
-    def store_engine_logs(self, data_path):
+    def store_engine_logs(self, data_path: str) -> dict[str, object] | None:
         print("Storing engine logs / NOT IMPLEMENTED")
         raise NotImplementedError
 

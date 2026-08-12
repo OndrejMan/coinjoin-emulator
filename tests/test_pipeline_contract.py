@@ -19,7 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from manager.engine.configuration import ScenarioConfig, WalletConfig  # noqa: E402
-from manager.engine.engine_base import EngineBase  # noqa: E402
+from manager.engine.engine_base import EngineBase, write_producer_label_manifest  # noqa: E402
 
 
 def load_entrypoint():
@@ -157,3 +157,47 @@ def test_a_prepared_run_directory_without_artifacts_is_accepted(tmp_path, monkey
     (tmp_path / "logs" / "my-run" / "host_manifest.json").write_text("{}", encoding="utf-8")
 
     make_engine(run_id="my-run").ensure_log_run_path_available()
+
+
+# --- producer-label manifest ----------------------------------------------
+
+def test_manifest_records_sources_with_their_digest(tmp_path):
+    source = tmp_path / "labels.json"
+    source.write_text("[]", encoding="utf-8")
+    write_producer_label_manifest(
+        str(tmp_path),
+        {
+            "engine": "joinmarket",
+            "complete": True,
+            "reason": None,
+            "positive_rule": "rule",
+            "positive_count": 1,
+            "sources": ["labels.json"],
+        },
+    )
+
+    manifest = json.loads((tmp_path / "coinjoin_label_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == "1.0"
+    assert manifest["complete"] is True
+    assert manifest["sources"][0]["path"] == "labels.json"
+    assert len(manifest["sources"][0]["sha256"]) == 64
+
+
+def test_manifest_is_incomplete_without_evidence(tmp_path):
+    write_producer_label_manifest(str(tmp_path), None)
+    manifest = json.loads((tmp_path / "coinjoin_label_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["complete"] is False
+    assert manifest["reason"]
+
+
+def test_manifest_rejects_sources_outside_the_data_directory(tmp_path):
+    outside = tmp_path.parent / "outside.json"
+    outside.write_text("[]", encoding="utf-8")
+    write_producer_label_manifest(
+        str(tmp_path),
+        {"engine": "joinmarket", "complete": True, "sources": ["../outside.json"]},
+    )
+
+    manifest = json.loads((tmp_path / "coinjoin_label_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["complete"] is False
+    assert manifest["sources"] == []
