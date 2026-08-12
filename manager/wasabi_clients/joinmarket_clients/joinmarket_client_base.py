@@ -107,6 +107,7 @@ class JoinMarketClientServer:
         has_fidelity_bonds = bool(fidelity_bond.get("enabled", False))
 
         # Select the appropriate subclass based on wallet config.
+        client_cls: type["JoinMarketClientServer"]
         if type_ == "maker":
             from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import MakerClient
             client_cls = MakerClient
