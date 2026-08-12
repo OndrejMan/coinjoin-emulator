@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import types
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -117,3 +118,42 @@ def test_controller_markers_are_optional(tmp_path):
     entrypoint.args = types.SimpleNamespace(controller_done_marker="", controller_failed_marker="")
     assert entrypoint.finalize_controller_marker(0) == 0
     assert list(tmp_path.iterdir()) == []
+
+
+# --- artifact layout -------------------------------------------------------
+
+def test_store_logs_writes_the_emulator_artifact_layout(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    make_engine(run_id="my-run").store_logs()
+
+    run_path = tmp_path / "logs" / "my-run"
+    experiment = run_path / "coinjoin_emulator_data"
+    assert sorted(p.name for p in run_path.iterdir()) == ["coinjoin_emulator_data"]
+    assert sorted(p.name for p in experiment.iterdir()) == [
+        "data",
+        "emulation_logs.zip",
+        "scenario.json",
+    ]
+    assert (experiment / "data" / "btc-node" / "block_0.json").is_file()
+
+    with zipfile.ZipFile(experiment / "emulation_logs.zip") as archive:
+        roots = {name.split("/")[0] for name in archive.namelist()}
+    assert roots == {"coinjoin_emulator_data"}
+
+
+def test_run_refuses_to_overwrite_an_existing_run(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    engine = make_engine(run_id="my-run")
+    engine.ensure_log_run_path_available()
+    engine.store_logs()
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        engine.ensure_log_run_path_available()
+
+
+def test_a_prepared_run_directory_without_artifacts_is_accepted(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "logs" / "my-run").mkdir(parents=True)
+    (tmp_path / "logs" / "my-run" / "host_manifest.json").write_text("{}", encoding="utf-8")
+
+    make_engine(run_id="my-run").ensure_log_run_path_available()
