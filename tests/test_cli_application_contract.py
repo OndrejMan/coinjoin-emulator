@@ -52,7 +52,7 @@ def test_create_kubernetes_driver_preserves_branch_specific_constructor_argument
     with patch("manager.cli.KubernetesDriver") as driver:
         cli.create_driver(args)
 
-    driver.assert_called_once_with("coinjoin", True, "/work/config.json", True)
+    driver.assert_called_once_with("coinjoin", True, "/work/config.json", True, None)
 
 
 def test_system_exit_writes_a_failure_marker_after_all_cleanup_attempts(tmp_path: Path) -> None:
