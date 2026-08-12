@@ -92,3 +92,28 @@ def test_log_run_path_falls_back_to_timestamp_and_scenario_name():
     path = make_engine().log_run_path()
     assert path.startswith("./logs/")
     assert path.endswith("_scenario")
+
+
+# --- controller markers ----------------------------------------------------
+
+def test_controller_marker_is_written_for_the_matching_outcome(tmp_path):
+    entrypoint = load_entrypoint()
+    done = tmp_path / "nested" / "done.marker"
+    failed = tmp_path / "nested" / "failed.marker"
+    entrypoint.args = types.SimpleNamespace(
+        controller_done_marker=str(done), controller_failed_marker=str(failed)
+    )
+
+    assert entrypoint.finalize_controller_marker(0) == 0
+    assert done.exists() and not failed.exists()
+
+    done.unlink()
+    assert entrypoint.finalize_controller_marker(1) == 1
+    assert failed.exists() and not done.exists()
+
+
+def test_controller_markers_are_optional(tmp_path):
+    entrypoint = load_entrypoint()
+    entrypoint.args = types.SimpleNamespace(controller_done_marker="", controller_failed_marker="")
+    assert entrypoint.finalize_controller_marker(0) == 0
+    assert list(tmp_path.iterdir()) == []
