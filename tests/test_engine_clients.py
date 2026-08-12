@@ -1,6 +1,8 @@
 import multiprocessing.pool
 from typing import cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+import pytest
 
 from manager.engine.base.clients import EngineClientsMixin
 from manager.engine.base.protocols import EmulatorClient
@@ -11,6 +13,9 @@ class StartedClient:
     def __init__(self, idx: int) -> None:
         self.name = f"client-{idx}"
         self.idx = idx
+
+    def wait_wallet(self, timeout: int | None = None) -> bool:
+        return True
 
 
 class ClientsHarness(EngineClientsMixin):
@@ -70,15 +75,40 @@ class TestStartClients:
         assert harness.started == [0, 1, 1]
         assert len(harness.clients) == 2
 
-    def test_client_that_never_starts_is_left_out(self) -> None:
+    def test_client_that_never_starts_aborts_the_experiment(self) -> None:
         harness = ClientsHarness(failing={0})
         harness.permanently_failing.add(0)
 
-        with patch("manager.engine.base.clients.sleep"):
+        with patch("manager.engine.base.clients.sleep"), pytest.raises(
+            RuntimeError, match="Failed to start 1 clients after retries"
+        ):
             harness.start_clients([wallet(), wallet()])
 
-        assert [cast(StartedClient, client).idx for client in harness.clients] == [1]
+        assert harness.clients == []
         assert harness.stopped == [0, 0, 0]
+
+
+class TestValidateClients:
+    def test_requires_one_client_per_scenario_wallet(self) -> None:
+        harness = ClientsHarness()
+        harness.scenario.wallets = [wallet(), wallet()]
+        harness.clients = [cast(EmulatorClient, StartedClient(0))]
+
+        with pytest.raises(RuntimeError, match="Expected 2 clients, but only 1 started"):
+            harness.validate_clients()
+
+    def test_rejects_an_unhealthy_client(self) -> None:
+        harness = ClientsHarness()
+        harness.scenario.wallets = [wallet()]
+        client = Mock(name="client")
+        client.name = "client-0"
+        client.wait_wallet.return_value = False
+        harness.clients = [cast(EmulatorClient, client)]
+
+        with pytest.raises(RuntimeError, match="client-0.*timed out"):
+            harness.validate_clients()
+
+        client.wait_wallet.assert_called_once_with(timeout=120)
 
 
 class TestStartClassifiedWallets:

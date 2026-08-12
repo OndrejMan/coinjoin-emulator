@@ -142,6 +142,7 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
         self.start_infrastructure()
         self.fund_distributor(5000)
         self.start_clients(self.scenario.wallets)
+        self.validate_clients()
         time.sleep(60)
         self.prepare_invoices(self.scenario.wallets)
 
