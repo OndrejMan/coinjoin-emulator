@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 from collections.abc import Iterator
 from time import sleep, time
 
@@ -38,6 +39,7 @@ class JoinmarketEngine(
         self.async_updates = bool(getattr(args, "async_updates", True))
         self.loop: asyncio.AbstractEventLoop | None = None
         self.last_resource_check = 0  # Track when we last checked resources
+        self._core_wallet_lock = threading.Lock()
 
     def store_engine_logs(self, data_path: str) -> ProducerLabelEvidence | None:
         print("- storing engine-logs")
@@ -223,8 +225,6 @@ class JoinmarketEngine(
     def start_engine_infrastructure(self) -> None:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
-        self.node.create_wallet("jm_wallet")
-        print("- created jm_wallet in BitcoinCore")
 
         self.start_irc_server()
         print("- started irc-server")
