@@ -30,6 +30,7 @@ class JoinMarketLifecycleMixin:
     driver: Driver
     distributor: InvoiceDistributor | None
     obwatch_client: OrderbookWatchClient | None
+    clients: list[EmulatorClient]
     _core_wallet_lock: threading.Lock
 
     if TYPE_CHECKING:
@@ -38,7 +39,8 @@ class JoinMarketLifecycleMixin:
         def image_ref(self, name: str) -> str: ...
         def service_endpoint(
             self, ip: str, container_port: int, ports: dict[int, int], route: object = None
-        ) -> tuple[str, int]: ...
+        ) -> tuple[str, int]:
+            return ip, container_port
 
     def prepare_images(self) -> None:
         print("Preparing images")
@@ -209,3 +211,11 @@ class JoinMarketLifecycleMixin:
             self.driver.stop(name)
         except Exception as e:
             print(f"- could not stop client {name}: {e}")
+
+    def validate_clients(self) -> None:
+        super().validate_clients()  # type: ignore[misc]  # supplied by EngineBase's client mixin
+        roles = {getattr(client, "type", "") for client in self.clients}
+        if "taker" not in roles:
+            raise RuntimeError("JoinMarket scenario requires at least one started taker client")
+        if "maker" not in roles:
+            raise RuntimeError("JoinMarket scenario requires at least one started maker client")
