@@ -137,10 +137,10 @@ if __name__ == "__main__":
 
     if args.command == "genscen":
         manager.commands.genscen.handler(args)
-        exit(0)
+        sys.exit(0)
     if args.command == "genscen-joinmarket":
         manager.commands.genscen_joinmarket.handler(args)
-        exit(0)
+        sys.exit(0)
 
     match args.driver:
         case "docker":
@@ -166,7 +166,7 @@ if __name__ == "__main__":
             driver = OpenshiftDriver(args.namespace, args.reuse_namespace, k8s_pull_secret)
         case _:
             print(f"Unknown driver '{args.driver}'")
-            exit(1)
+            sys.exit(1)
 
     match args.engine:
         case "joinmarket":
@@ -175,7 +175,7 @@ if __name__ == "__main__":
             engine = WasabiEngine(args, driver)
         case _:
             print(f"Unknown engine '{args.engine}'")
-            exit(1)
+            sys.exit(1)
 
     engine.load_scenario()
 
@@ -188,4 +188,4 @@ if __name__ == "__main__":
             run()
         case _:
             print(f"Unknown command '{args.command}'")
-            exit(1)
+            sys.exit(1)
