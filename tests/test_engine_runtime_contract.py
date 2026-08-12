@@ -76,6 +76,32 @@ def test_manager_image_packages_local_infrastructure_build_contexts() -> None:
     assert (repository / "containers" / "btc-node" / "Dockerfile").is_file()
 
 
+def test_joinmarket_local_build_has_a_published_base_image_default() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    dockerfile = (
+        repository / "containers" / "joinmarket-client-server" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "ARG JOINMARKET_TEST_IMAGE=ghcr.io/ondrejman/joinmarket-test:latest"
+        in dockerfile
+    )
+    assert "joinmarket-latest:taker-logs" not in dockerfile
+
+
+def test_joinmarket_entrypoint_is_owned_by_the_non_root_build_user() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    dockerfile = (
+        repository / "containers" / "joinmarket-client-server" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "COPY --chown=joinmarket:joinmarket jmwalletd_entrypoint.py "
+        "/usr/local/bin/jmwalletd_entrypoint.py"
+        in dockerfile
+    )
+
+
 def test_in_cluster_driver_uses_service_dns_and_container_port() -> None:
     driver = Mock(in_cluster=True)
     runtime = engine(args(in_cluster=False), driver)

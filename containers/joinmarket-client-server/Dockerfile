@@ -1,6 +1,7 @@
-# The base image is built from joinmarket-clientserver in the same workflow;
-# the default keeps a local `docker build` working against a locally built base.
-ARG JOINMARKET_TEST_IMAGE=joinmarket-latest:taker-logs
+# The publishing workflow can override this with an owner-specific base image.
+# Local infrastructure builds use the published default instead of relying on
+# an untagged developer-only image in the Docker daemon.
+ARG JOINMARKET_TEST_IMAGE=ghcr.io/ondrejman/joinmarket-test:latest
 FROM ${JOINMARKET_TEST_IMAGE}
 
 
@@ -26,7 +27,7 @@ RUN mkdir -p /home/joinmarket/.joinmarket/ssl \
 RUN python3 /jm/clientserver/scripts/wallet-tool.py generate; exit 0
 
 COPY --chown=joinmarket:joinmarket run.sh /home/joinmarket/
-COPY jmwalletd_entrypoint.py /usr/local/bin/jmwalletd_entrypoint.py
+COPY --chown=joinmarket:joinmarket jmwalletd_entrypoint.py /usr/local/bin/jmwalletd_entrypoint.py
 COPY --chown=joinmarket:joinmarket joinmarket.cfg /home/joinmarket/.joinmarket/
 RUN chmod +x /home/joinmarket/run.sh /usr/local/bin/jmwalletd_entrypoint.py
 WORKDIR /home/joinmarket
