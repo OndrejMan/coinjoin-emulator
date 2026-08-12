@@ -6,11 +6,14 @@ from manager.driver import Driver
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
 from manager.engine.engine_base import EngineBase
+from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 import manager.commands.genscen
 import manager.commands.genscen_joinmarket
 import sys
 import argparse
+import re
 import os
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 args: argparse.Namespace | None = None
@@ -24,6 +27,28 @@ def handle_shutdown_signal(signum, frame):
     print(f"\n[manager.py] Received {signal_name}, triggering cleanup...", flush=True)
     # Raise SystemExit which will trigger the finally block
     sys.exit(1)
+
+RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
+def timezone_name(value: str) -> str:
+    """Validate an IANA timezone while preserving its canonical input string."""
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError) as error:
+        raise argparse.ArgumentTypeError(f"unknown IANA timezone: {value}") from error
+    return value
+
+
+def run_id(value: str) -> str:
+    if len(value) > 63 or ".." in value or not RUN_ID_PATTERN.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            "run ID must be at most 63 characters, begin and end with an "
+            "alphanumeric character, contain only [A-Za-z0-9._-], and must "
+            "not contain '..'"
+        )
+    return value
+
 
 def run():
     if engine is None:
@@ -76,6 +101,13 @@ if __name__ == "__main__":
         default="docker",
     )
     parser.add_argument("--no-logs", action="store_true", default=False)
+    parser.add_argument(
+        "--run-timezone",
+        type=timezone_name,
+        default=DEFAULT_RUN_TIMEZONE,
+        metavar="IANA_ZONE",
+        help=f"IANA timezone used in newly created run directory names (default: {DEFAULT_RUN_TIMEZONE}).",
+    )
 
     parser.add_argument(
         "--in-cluster",
@@ -114,6 +146,12 @@ if __name__ == "__main__":
     )
     run_subparser.add_argument(
         "--control-ip", type=str, help="control ip", default="localhost"
+    )
+    run_subparser.add_argument(
+        "--run-id",
+        type=run_id,
+        default=None,
+        help="Deterministic output directory name instead of the timestamp/scenario name.",
     )
     run_subparser.add_argument("--proxy", type=str, default="")
     run_subparser.add_argument("--namespace", type=str, default="coinjoin")
