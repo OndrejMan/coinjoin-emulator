@@ -4,6 +4,7 @@
 
 import json
 import os
+import shlex
 import subprocess
 import time
 import uuid
@@ -175,6 +176,10 @@ class KubernetesLocalProxy:
             "--image-prefix", image_prefix,
             "--scenario", scenario_path  # This is the path INSIDE the container
         ]
+        manager_shell_command = shlex.join(manager_cmd)
+        completion_wrapper = shlex.quote(
+            f'{manager_shell_command}; code=$?; echo "$code" > "$1/exit_status"; exit "$code"'
+        )
 
         background_cmd = self._kubectl_base_cmd + [
             "exec", "-n", self.namespace,
@@ -183,7 +188,8 @@ class KubernetesLocalProxy:
             f"""
                 SIM_DIR=/tmp/simulations/{self.simulation_id}
                 mkdir -p $SIM_DIR
-                nohup {' '.join(manager_cmd)} > $SIM_DIR/output.log 2>&1 &
+                nohup sh -c {completion_wrapper} \
+                    sh "$SIM_DIR" > "$SIM_DIR/output.log" 2>&1 &
                 echo $! > $SIM_DIR/pid
                 echo '{{"status": "running", "pid": "'$!'", "start_time": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "scenario": "{scenario_path}"}}' > $SIM_DIR/status.json
             """
