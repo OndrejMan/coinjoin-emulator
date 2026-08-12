@@ -83,6 +83,9 @@ class TakerClient(JoinMarketClientServer):
     This class implements the logic for a taker that does *not* have tumbler options.
     """
 
+    def has_unconfirmed_round(self) -> bool:
+        return any(event.get("status") == "started" for event in self.round_events)
+
     def update_status(self) -> JsonDict:
         """
         Get the status of the client and update the coinjoin_in_process flag.
@@ -107,7 +110,13 @@ class TakerClient(JoinMarketClientServer):
         self.update_status()
 
         delta = 0
-        if not self.coinjoin_in_process and not self.is_paused(current_block):
+        if self.has_unconfirmed_round() and not self.coinjoin_in_process:
+            return -1 if self.coinjoin_start + 8 < current_block else 0
+        if (
+            not self.coinjoin_in_process
+            and not self.is_paused(current_block)
+            and not self.has_unconfirmed_round()
+        ):
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
             self.start_coinjoin(**offer)  # type: ignore[arg-type]
@@ -155,7 +164,9 @@ class TakerClient(JoinMarketClientServer):
             return 0
 
         delta = 0
-        if not self.coinjoin_in_process:
+        if self.has_unconfirmed_round() and not self.coinjoin_in_process:
+            return -1 if self.coinjoin_start + 8 < current_block else 0
+        if not self.coinjoin_in_process and not self.has_unconfirmed_round():
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
             await self.start_coinjoin_async(**offer)  # type: ignore[arg-type]
@@ -175,7 +186,7 @@ class TakerClient(JoinMarketClientServer):
         # TODO: The 8 block limit could be a parameter.
         # mypy narrows the flag from the branch above; update_status() can change
         # it in between, so the check is not actually redundant.
-        elif self.coinjoin_in_process and self.coinjoin_start + 8 < current_block:  # type: ignore[redundant-expr]
+        elif self.coinjoin_in_process and self.coinjoin_start + 8 < current_block:
             self.stop_coinjoin()
             self.coinjoin_in_process = False
             self.next_coinjoin_allowed = current_block + self.time_between_rounds

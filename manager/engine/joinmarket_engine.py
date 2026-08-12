@@ -5,9 +5,10 @@ import sys
 import threading
 from collections.abc import Iterator
 from time import sleep, time
+from typing import cast
 
-from manager.engine.base.manifest import ProducerLabelEvidence
 from manager.driver import Driver
+from manager.engine.base.manifest import ProducerLabelEvidence
 from manager.engine.base.protocols import EngineArgs
 from manager.engine.configuration import JoinMarketConfig, JoinMarketRole, ScenarioConfig, WalletConfig
 from manager.engine.engine_base import EngineBase
@@ -19,8 +20,9 @@ from manager.engine.joinmarket.events import (
 from manager.engine.joinmarket.funding import JoinMarketFundingMixin
 from manager.engine.joinmarket.lifecycle import JoinMarketLifecycleMixin
 from manager.engine.joinmarket.logs import store_orderbook_snapshots
-from manager.engine.joinmarket.round_event_record import RoundEvent
+from manager.engine.joinmarket.round_event_record import RoundEvent, RoundEventRecord
 from manager.engine.joinmarket.rounds import JoinMarketRoundsMixin
+from manager.engine.joinmarket.transaction_output_record import TransactionOutputRecord
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
 
 
@@ -40,6 +42,7 @@ class JoinmarketEngine(
         self.loop: asyncio.AbstractEventLoop | None = None
         self.last_resource_check = 0  # Track when we last checked resources
         self._core_wallet_lock = threading.Lock()
+        self._round_scan_height = -1
 
     def store_engine_logs(self, data_path: str) -> ProducerLabelEvidence | None:
         print("- storing engine-logs")
@@ -249,6 +252,42 @@ class JoinmarketEngine(
             for client in self.clients
         ])
 
+    def live_round_events(self) -> list[RoundEvent]:
+        """Return the current client-owned records for in-run state changes."""
+        return [
+            cast(RoundEvent, event)
+            for client in self.clients
+            for event in getattr(client, "round_events", [])
+        ]
+
+    def confirm_started_rounds(self) -> int:
+        """Count rounds only after their unique destination appears in a mined block."""
+        if self.node is None:
+            return 0
+        pending: dict[str, RoundEvent] = {}
+        for client in self.clients:
+            client_events = cast(list[RoundEvent], getattr(client, "round_events", []))
+            for event in client_events:
+                if event.get("status") == "started" and event.get("destination_address"):
+                    pending[str(event["destination_address"])] = event
+        tip = self.node.get_block_count()
+        for height in range(self._round_scan_height + 1, tip + 1):
+            block = self.node.get_block_info(self.node.get_block_hash(height))
+            for transaction in cast(list[dict[str, object]], block.get("tx") or []):
+                txid = transaction.get("txid")
+                if not isinstance(txid, str) or not txid:
+                    continue
+                for output in cast(list[dict[str, object]], transaction.get("vout") or []):
+                    if (address := TransactionOutputRecord.from_data(output).address) is not None:
+                        event = pending.get(address)
+                        if event is not None:
+                            RoundEventRecord.from_data(event).add_destination_match(txid, height)
+        self._round_scan_height = max(self._round_scan_height, tip)
+        self.current_round = sum(
+            1 for event in self.live_round_events() if event.get("status") == "confirmed"
+        )
+        return self.current_round
+
     def match_joinmarket_rounds_to_blocks(self, data_path: str) -> list[RoundEvent]:
         """Reconcile copied client records with blocks exported under data_path."""
         node_path = os.path.join(data_path, "btc-node")
@@ -382,7 +421,7 @@ class JoinmarketEngine(
             print()
             print("- limit reached")
             sleep(60)
-            self.node.mine_block()
+            self.node.mine_block(3)
 
         finally:
             if self.loop is not None and not self.loop.is_closed():
