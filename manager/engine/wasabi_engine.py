@@ -1,6 +1,7 @@
 import os
 from traceback import print_exception
 
+from manager.engine.base.manifest import ProducerLabelEvidence
 from manager.engine.engine_base import EngineBase
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
 from manager.wasabi_backend_protocol import WasabiBackendProtocol
@@ -17,10 +18,18 @@ from manager.wasabi_clients import WasabiClient
 from time import sleep, time
 import sys
 import random
+from pathlib import Path
+import re
 import json
 import tempfile
 import multiprocessing
 import multiprocessing.pool
+
+
+SUCCESSFUL_BROADCAST_RE = re.compile(
+    r"successfully\s+broadcast(?:ed)?\s+(?:the\s+)?coinjoin(?:\s+transaction)?:\s*([0-9a-f]{64})",
+    re.IGNORECASE,
+)
 
 
 class WasabiEngine(EngineBase):
@@ -284,7 +293,7 @@ class WasabiEngine(EngineBase):
     def stop_client(self, idx: int):
         self.driver.stop(f"wasabi-client-{idx:03}")
 
-    def store_engine_logs(self, data_path):
+    def store_engine_logs(self, data_path: str) -> ProducerLabelEvidence:
         try:
             if self.backend_architecture == BackendArchitecture.SPLIT:
                 self.driver.download(
@@ -313,6 +322,36 @@ class WasabiEngine(EngineBase):
                 print(f"- stored backend logs")
         except Exception:
             print(f"- could not store backend logs")
+            return {
+                "engine": "wasabi",
+                "complete": False,
+                "reason": "could not download Wasabi backend logs",
+                "positive_rule": "transaction id appears in a successful coordinator broadcast record",
+                "sources": [],
+            }
+
+        label_root = os.path.join(
+            data_path,
+            "wasabi-coordinator" if self.backend_architecture == BackendArchitecture.SPLIT else "wasabi-backend",
+        )
+        log_paths: list[str] = sorted(
+            str(path) for path in Path(label_root).rglob("Logs.txt") if path.is_file()
+        )
+        successful_txids: set[str] = {
+            match.group(1).lower()
+            for path in log_paths
+            for match in SUCCESSFUL_BROADCAST_RE.finditer(
+                Path(path).read_text(encoding="utf-8", errors="replace")
+            )
+        }
+        return {
+            "engine": "wasabi",
+            "complete": bool(log_paths),
+            "reason": None if log_paths else "captured Wasabi logs contain no Logs.txt source",
+            "positive_rule": "transaction id appears in a successful coordinator broadcast record",
+            "positive_count": len(successful_txids),
+            "sources": [os.path.relpath(path, data_path) for path in log_paths],
+        }
 
     def start_coinjoin(self, client):
         sleep(random.random() / 10)
@@ -400,4 +439,3 @@ class WasabiEngine(EngineBase):
                     "/home/wasabi/.walletwasabi/backend/WabiSabi/CoinJoinIdStore.txt",
                 ).split("\n")[:-1]
             )
-
