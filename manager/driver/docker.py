@@ -47,6 +47,8 @@ class DockerDriver(Driver):
         memory: int | None = None,
         **kwargs: object,
     ) -> tuple[str, dict[int, int], object]:
+        volumes = cast(dict[str, dict[str, str]] | None, kwargs.get("volumes"))
+        command = cast(list[str] | None, kwargs.get("command"))
         container = self.client.containers.run(
             image,
             detach=True,
@@ -56,6 +58,8 @@ class DockerDriver(Driver):
             network=self.network.id,
             ports=ports or {},
             environment=env or {},
+            volumes=volumes,
+            command=command,
         )
         network_settings = cast(dict[str, object], container.attrs["NetworkSettings"])
         container_ip = str(network_settings["IPAddress"])
