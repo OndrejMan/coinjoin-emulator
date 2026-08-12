@@ -4,9 +4,12 @@ set -uo pipefail
 MODE=${MODE:-walletd}
 
 if [ "${MODE}" = "obwatch" ]; then
+  sed -i "s/^blockchain_source = .*/blockchain_source = no-blockchain/" \
+    /home/joinmarket/.joinmarket/joinmarket.cfg
   socat TCP-LISTEN:62601,fork,reuseaddr TCP:127.0.0.1:62602 &
-  exec python3 /jm/clientserver/scripts/obwatch/ob-watcher.py -p 62602 \
+  python3 /jm/clientserver/scripts/obwatch/ob-watcher.py -p 62602 \
     2>&1 | tee -a /home/joinmarket/obwatch.log
+  exit "${PIPESTATUS[0]}"
 fi
 
 JM_RPC_WALLET_FILE=${JM_RPC_WALLET_FILE:-jm_wallet}
