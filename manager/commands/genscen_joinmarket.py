@@ -127,7 +127,7 @@ class JoinMarketConfigGenerator:
         num_utxos = random.randint(self.wallet_config.min_utxos, self.wallet_config.max_utxos)
         total_btc = random.uniform(self.wallet_config.min_total_btc, self.wallet_config.max_total_btc)
 
-        wallet = {
+        wallet: Dict[str, Any] = {
             "funds": self.generate_utxos(total_btc, num_utxos),
             "type": "taker",
             "tumbler_options": {
@@ -201,7 +201,7 @@ class JoinMarketConfigGenerator:
         if taker_delays is None:
             taker_delays = [0, 30, 60, 90, 120][:num_takers]
 
-        config = {
+        config: Dict[str, Any] = {
             "name": name,
             "default_version": "joinmarket",
             "rounds": rounds,
