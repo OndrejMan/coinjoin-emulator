@@ -36,7 +36,11 @@ def test_legacy_taker_without_offers_uses_main_defaults() -> None:
 
 
 def test_explicit_offers_take_precedence_over_legacy_defaults() -> None:
-    offer = {"mixdepth": 2, "amount_sats": 75_000, "counterparties": 5}
+    offer: dict[str, object] = {
+        "mixdepth": 2,
+        "amount_sats": 75_000,
+        "counterparties": 5,
+    }
 
     client = make_client(JoinMarketRole.TAKER, [offer])
 
