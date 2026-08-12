@@ -35,6 +35,7 @@ class JoinMarketConfig:
     tumbler_options: dict[str, Any] | None = None
     time_between_rounds: int | None = None
     fidelity_bond: dict[str, Any] | None = None
+    max_coinjoins: int | None = None
 
 
 @dataclass
@@ -132,6 +133,7 @@ class ScenarioConfig:
                 tumbler_options=wallet_data.get("tumbler_options"),
                 time_between_rounds=wallet_data.get("time_between_rounds"),
                 fidelity_bond=wallet_data.get("fidelity_bond"),
+                max_coinjoins=wallet_data.get("max_coinjoins"),
             )
         
         return WalletConfig(
