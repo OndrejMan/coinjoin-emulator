@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import shutil
 import sys
 from collections.abc import Iterator
 from time import sleep, time
@@ -17,6 +16,7 @@ from manager.engine.joinmarket.events import (
 )
 from manager.engine.joinmarket.funding import JoinMarketFundingMixin
 from manager.engine.joinmarket.lifecycle import JoinMarketLifecycleMixin
+from manager.engine.joinmarket.logs import store_orderbook_snapshots
 from manager.engine.joinmarket.round_event_record import RoundEvent
 from manager.engine.joinmarket.rounds import JoinMarketRoundsMixin
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
@@ -32,6 +32,11 @@ class JoinmarketEngine(JoinMarketFundingMixin, JoinMarketRoundsMixin, JoinMarket
         self.async_updates = bool(getattr(args, "async_updates", True))
         self.loop: asyncio.AbstractEventLoop | None = None
         self.last_resource_check = 0  # Track when we last checked resources
+
+    def store_engine_logs(self, data_path: str) -> ProducerLabelEvidence | None:
+        print("- storing engine-logs")
+        store_orderbook_snapshots(data_path, self.obwatch_client)
+        return self.store_round_events(data_path)
 
     def default_scenario(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -174,43 +179,6 @@ class JoinmarketEngine(JoinMarketFundingMixin, JoinMarketRoundsMixin, JoinMarket
         print(f"- stored {len(labels)} JoinMarket round labels")
         return dict(producer_label_evidence(labels, []))
 
-    def store_engine_logs(self, data_path: str) -> dict[str, object] | None:
-        print("- storing engine-logs")
-        self.store_orderbook_snapshots(data_path)
-        return self.store_round_events(data_path)
-
-    def store_orderbook_snapshots(self, data_path: str) -> None:
-        # Store orderbook snapshots, grouped under data_path/orderbook/<client.name>
-        print(f"- storing {data_path}")
-        ob_root = os.path.join(data_path, "orderbook")
-        os.makedirs(ob_root, exist_ok=True)
-        client = self.obwatch_client
-
-        # Check if orderbook watcher client exists
-        if client is None:
-            print("- no orderbook watcher client to store")
-            return
-
-        src = getattr(client, "snapshot_dir", None)
-        if not src or not os.path.isdir(src):
-            print(f"- no snapshots to store for {client.name}")
-            return
-        dst = os.path.join(ob_root, client.name)
-        os.makedirs(dst, exist_ok=True)
-        try:
-            # Prefer copytree with dirs_exist_ok when possible to preserve structure
-            # Copy content of src into dst (merge)
-            for root, dirs, files in os.walk(src):
-                print(f"- found {root}")
-                rel = os.path.relpath(root, src)
-                target_dir = os.path.join(dst, rel) if rel != "." else dst
-                os.makedirs(target_dir, exist_ok=True)
-                for f in files:
-                    print(f"- found {f}")
-                    shutil.copy2(os.path.join(root, f), os.path.join(target_dir, f))
-            print(f"- stored orderbook snapshots for {client.name}")
-        except Exception as e:
-            print(f"- could not store orderbook snapshots for {client.name}: {e}")
 
 
 
