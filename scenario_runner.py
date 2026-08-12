@@ -321,7 +321,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run JoinMarket scenarios")
     parser.add_argument("--scenario_dir", help="Directory containing scenario JSON files")
     parser.add_argument("--namespace", default="rajnoha-ns", help="Kubernetes namespace")
-    parser.add_argument("--in-cluster", action="store_true", default="False", help="When scenario runner is running in cluster")
+    parser.add_argument("--in-cluster", action="store_true", default=False, help="When scenario runner is running in cluster")
     parser.add_argument("--image-prefix", default="drajnoha/", help="Docker image prefix")
     parser.add_argument("--proxy", default="socks5://127.0.0.1:8123", help="Proxy URL")
     parser.add_argument("--shadowsocks-config",
