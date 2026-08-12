@@ -285,14 +285,17 @@ class EngineBase:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         try:
-            while stored_blocks < self.node.get_block_count():  # type: ignore
-                block_hash = self.node.get_block_hash(stored_blocks)
-                block = self.node.get_block_info(block_hash)
-                with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
-                    json.dump(block, f, indent=2)
-                stored_blocks += 1
-        except (TypeError, RpcError):
-            print("Failed to get block count")
+            block_count = self.node.get_block_count()
+        except (TypeError, RpcError) as error:
+            # Only the block count is optional: without it there is nothing to export.
+            print(f"Failed to get block count: {error}")
+            block_count = 0
+        while stored_blocks < block_count:
+            block_hash = self.node.get_block_hash(stored_blocks)
+            block = self.node.get_block_info(block_hash)
+            with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
+                json.dump(block, f, indent=2)
+            stored_blocks += 1
 
         print(f"- stored {stored_blocks} blocks")
 
