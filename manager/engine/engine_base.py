@@ -20,6 +20,12 @@ BATCH_SIZE = 5  # smaller batches avoid UTXO race conditions
 BTC = 100_000_000
 
 
+def _has_fidelity_bond(wallet):
+    """True when the wallet asks for a fidelity bond (typed scenario model)."""
+    bond = (wallet.joinmarket.fidelity_bond if wallet.joinmarket else None) or {}
+    return bool(bond.get("enabled", False))
+
+
 class EngineBase:
     def __init__(self, args, driver, log_src_path):
         self.args = args
@@ -125,7 +131,7 @@ class EngineBase:
         fb_wallets = []
 
         for idx, wallet in wallet_list:
-            if wallet.get("fidelity_bond", {}).get("enabled", False):
+            if _has_fidelity_bond(wallet):
                 fb_wallets.append((idx, wallet))
             else:
                 regular_wallets.append((idx, wallet))
@@ -165,7 +171,7 @@ class EngineBase:
         wallet_list = [(idx, wallet) for idx, wallet in enumerate(wallets, start=len(self.clients))]
 
         # Count wallet types for logging
-        fb_count = sum(1 for _, w in wallet_list if w.get("fidelity_bond", {}).get("enabled", False))
+        fb_count = sum(1 for _, w in wallet_list if _has_fidelity_bond(w))
         print(f"- {len(wallet_list) - fb_count} regular wallets, {fb_count} fidelity bond wallets")
 
         with multiprocessing.pool.ThreadPool() as pool:
