@@ -94,6 +94,7 @@ def test_system_exit_writes_a_failure_marker_after_all_cleanup_attempts(tmp_path
 
     assert run_engine(args, driver, engine) == 1
     engine.stop_coinjoins.assert_called_once_with()
+    engine.shutdown_engine.assert_called_once_with()
     engine.store_logs.assert_called_once_with()
     driver.cleanup.assert_called_once_with("")
     assert (tmp_path / "failed").read_text(encoding="utf-8") == "done\n"
