@@ -1,5 +1,5 @@
 import json
-from time import sleep
+from time import monotonic, sleep
 from typing import cast
 
 import requests
@@ -7,6 +7,9 @@ import requests
 from .exceptions import RpcError
 
 WALLET = "wallet"
+FUNDING_WALLET_TX_FEE = 0.0001
+QUIET_SAMPLE_COUNT = 6
+QUIET_SAMPLE_INTERVAL_SECONDS = 0.5
 
 
 class BtcNode:
@@ -58,6 +61,12 @@ class BtcNode:
             raise RpcError(f"btc-node returned no block count: {result!r}")
         return result
 
+    def get_blockchain_info(self) -> dict[str, object]:
+        return cast(
+            dict[str, object],
+            self._rpc({"method": "getblockchaininfo", "params": []}),
+        )
+
     def get_block_hash(self, height: int) -> str:
         request: dict[str, object] = {
             "method": "getblockhash",
@@ -96,17 +105,100 @@ class BtcNode:
         }
         self._rpc(request, WALLET)
 
-    def wait_ready(self) -> None:
-        while True:
-            try:
-                if self.get_block_count() > 200:
-                    break
-            except Exception as e:
-                print(f"Btc node not ready: {e}")
-            sleep(10)
+    def estimate_smart_fee(self) -> dict[str, object]:
+        return cast(
+            dict[str, object],
+            self._rpc({"method": "estimatesmartfee", "params": [6]}),
+        )
 
-        # wait for the fee-building transactions
-        sleep(20)
+    def wait_ready(self, timeout: int = 600) -> None:
+        deadline = monotonic() + timeout
+        last_state = "no successful RPC sample"
+        while monotonic() < deadline:
+            try:
+                block_count = self.get_block_count()
+                info = self.get_blockchain_info()
+                progress = info.get("verificationprogress")
+                synchronized = (
+                    block_count > 200
+                    and info.get("headers") == block_count
+                    and info.get("initialblockdownload") is False
+                    and isinstance(progress, (int, float))
+                    and progress >= 1.0
+                )
+                last_state = (
+                    f"blocks={block_count} headers={info.get('headers')} "
+                    f"initialblockdownload={info.get('initialblockdownload')} progress={progress}"
+                )
+                if synchronized:
+                    self.ensure_funding_wallet_ready()
+                    break
+            except (requests.exceptions.RequestException, RpcError) as error:
+                last_state = f"RPC error: {error}"
+            sleep(0.1)
+        else:
+            raise TimeoutError(
+                f"btc-node RPC at {self.host}:{self.port} was not ready after {timeout}s ({last_state})"
+            )
+
+        self.wait_fee_building_complete(max(0.0, deadline - monotonic()))
+
+    def wait_fee_building_complete(self, timeout: float = 300) -> None:
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
+            try:
+                if self.estimate_smart_fee().get("feerate") is not None:
+                    break
+            except (requests.exceptions.RequestException, RpcError):
+                pass
+            sleep(1)
+        else:
+            raise TimeoutError(f"btc-node produced no smart fee estimate after {timeout:.0f}s")
+
+        streak = 0
+        quiet_height: int | None = None
+        while monotonic() < deadline:
+            try:
+                info = self.get_blockchain_info()
+                blocks = info.get("blocks")
+                progress = info.get("verificationprogress")
+                synchronized = (
+                    isinstance(blocks, int)
+                    and blocks == info.get("headers")
+                    and info.get("initialblockdownload") is False
+                    and isinstance(progress, (int, float))
+                    and progress >= 1.0
+                )
+                if synchronized and blocks == quiet_height:
+                    streak += 1
+                elif synchronized:
+                    quiet_height = cast(int, blocks)
+                    streak = 1
+                else:
+                    quiet_height = None
+                    streak = 0
+                if streak >= QUIET_SAMPLE_COUNT:
+                    return
+            except (requests.exceptions.RequestException, RpcError):
+                quiet_height = None
+                streak = 0
+            sleep(QUIET_SAMPLE_INTERVAL_SECONDS)
+        raise TimeoutError(f"btc-node did not become quietly synchronized after {timeout:.0f}s")
+
+    def ensure_funding_wallet_ready(self) -> None:
+        loaded = cast(list[str], self._rpc({"method": "listwallets", "params": []}))
+        if WALLET not in loaded:
+            try:
+                self._rpc({"method": "loadwallet", "params": [WALLET]})
+            except RpcError as error:
+                if "already loaded" in str(error):
+                    pass
+                elif self._is_wallet_missing_error(error):
+                    self.create_wallet(WALLET)
+                else:
+                    raise
+        self._rpc({"method": "getwalletinfo", "params": []}, WALLET)
+        self._rpc({"method": "settxfee", "params": [FUNDING_WALLET_TX_FEE]}, WALLET)
 
     def create_wallet(
         self,
@@ -183,4 +275,17 @@ class BtcNode:
             isinstance(error, dict)
             and error.get("code") == -4
             and "Database already exists" in str(error.get("message", ""))
+        )
+
+    @staticmethod
+    def _is_wallet_missing_error(error: Exception) -> bool:
+        message = str(error)
+        return any(
+            marker in message
+            for marker in (
+                "Path does not exist",
+                "not found",
+                "No such file or directory",
+                "Wallet file verification failed",
+            )
         )
