@@ -236,7 +236,7 @@ class WasabiEngine(EngineBase):
 
         sleep(random.random() * 3)
         name = f"wasabi-client-{idx:03}"
-        client_env = {
+        optional_env = {
             "ADDR_BTC_NODE": self.args.btc_node_ip or self.node.internal_ip,
             "ADDR_WASABI_BACKEND": self.args.wasabi_backend_ip or backend_address,
             "WASABI_ANON_SCORE_TARGET": (str(anon_score_target) if anon_score_target else None),
@@ -244,7 +244,11 @@ class WasabiEngine(EngineBase):
         }
 
         if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
-            client_env["ADDR_WASABI_COORDINATOR"] = self.coordinator.internal_ip
+            optional_env["ADDR_WASABI_COORDINATOR"] = self.coordinator.internal_ip
+
+        # The driver passes the environment straight to the container runtime,
+        # which has no representation for an unset value.
+        client_env = {key: value for key, value in optional_env.items() if value is not None}
 
         try:
             ip, manager_ports, _ = self.driver.run(
