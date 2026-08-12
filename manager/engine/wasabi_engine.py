@@ -34,6 +34,8 @@ SUCCESSFUL_BROADCAST_RE = re.compile(
     r"successfully\s+broadcast(?:ed)?\s+(?:the\s+)?coinjoin(?:\s+transaction)?:\s*([0-9a-f]{64})",
     re.IGNORECASE,
 )
+WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
+WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
 
 
 class WasabiEngine(EngineBase):
@@ -406,7 +408,7 @@ class WasabiEngine(EngineBase):
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         initial_block = self.node.get_block_count()
-        while (self.scenario.rounds == 0 or self.current_round <= self.scenario.rounds) and (
+        while (self.scenario.rounds == 0 or self.current_round < self.scenario.rounds) and (
             self.scenario.blocks == 0 or self.current_block < self.scenario.blocks
         ):
             for _ in range(3):
@@ -434,16 +436,33 @@ class WasabiEngine(EngineBase):
             sleep(1)
         print()
         print("- limit reached")
+        self.mine_settlement_blocks()
+
+    def mine_settlement_blocks(self) -> None:
+        """Mine confirmations for the last broadcast before artifacts are captured."""
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        print(f"- mining {WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT} settlement blocks")
+        if not self.node.mine_block(WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT):
+            raise RuntimeError(
+                f"Bitcoin node did not mine {WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT} settlement blocks"
+            )
+        print("- settlement blocks mined")
 
     def _get_current_round(self) -> int:
-        if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
-            resp = self.coordinator._get_status()  # pylint: disable=protected-access
-            if resp is not None:
-                for round_state in cast(list[dict[str, object]], resp["RoundStates"]):
-                    if round_state["Phase"] == "TransactionSigning":
-                        self.round_ids.add(str(round_state["RoundId"]))
-                return len(self.round_ids)
-            return 0
+        if self.backend_architecture == BackendArchitecture.SPLIT:
+            # TransactionSigning is not a completed CoinJoin: a signer can
+            # still fail and trigger a blame round. Count the same successful
+            # coordinator broadcasts that become producer labels instead.
+            coordinator_log = self.driver.peek(
+                "wasabi-coordinator",
+                WASABI_COORDINATOR_LOG_PATH,
+            )
+            successful_txids = {
+                match.group(1).lower()
+                for match in SUCCESSFUL_BROADCAST_RE.finditer(coordinator_log)
+            }
+            return len(successful_txids)
 
         # In legacy versions, rounds are tracked by the backend
         return sum(
