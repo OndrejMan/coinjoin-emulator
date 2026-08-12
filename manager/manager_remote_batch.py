@@ -1,7 +1,7 @@
 import sys
 import argparse
-from kubernetes_local_proxy import KubernetesLocalProxy
-from manager_remote import deploy_manager, download_logs_remote
+from manager.kubernetes_local_proxy import KubernetesLocalProxy
+from manager.manager_remote import deploy_manager, download_logs_remote
 
 def run_scenario_batch(args):
     """Run a batch of scenarios using the scenario runner"""
