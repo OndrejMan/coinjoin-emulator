@@ -92,9 +92,14 @@ class DockerDriver(Driver):
                 fo.write(d)
             fo.seek(0)
             with tarfile.open(fileobj=fo) as tar:
-                tar.extractall(dst_path)
-        except Exception:
-            pass
+                try:
+                    tar.extractall(dst_path, filter="data")
+                except TypeError:
+                    tar.extractall(dst_path)
+        except (docker.errors.APIError, docker.errors.NotFound, tarfile.TarError, OSError) as error:
+            raise RuntimeError(
+                f"Failed to download {name}:{src_path} to {dst_path}: {error}"
+            ) from error
 
     def peek(self, name: str, path: str) -> str:
         stream, _ = self.client.containers.get(name).get_archive(path)
