@@ -22,7 +22,8 @@ class ScenarioRunner:
                  proxy: str = "socks5://127.0.0.1:8123",
                  shadowsocks_config: str = "/home/drajnoha/Code/PycharmProjects/coinjoin-simulator/shadowsocks/config_local.yaml",
                  cleanup_wait: int = 150,
-                 in_cluster: bool = False):
+                 in_cluster: bool = False,
+                 engine: str = "joinmarket"):
 
         self.scenario_dir = scenario_dir
         self.namespace = namespace
@@ -30,6 +31,7 @@ class ScenarioRunner:
         self.proxy = proxy
         self.shadowsocks_config = shadowsocks_config
         self.cleanup_wait = cleanup_wait
+        self.engine = engine
         self.sslocal_process = None
         self.results = []
         self.in_cluster = in_cluster
@@ -96,7 +98,7 @@ class ScenarioRunner:
         cmd = [
             "python", "manager.py",
             "--driver", "kubernetes",
-            "--engine", "joinmarket",
+            "--engine", self.engine,
             "clean",
             "--reuse-namespace",
             "--namespace", self.namespace,
@@ -136,7 +138,7 @@ class ScenarioRunner:
         cmd = [
             "python", "manager.py",
             "--driver", "kubernetes",
-            "--engine", "joinmarket",
+            "--engine", self.engine,
             "run",
             "--namespace", self.namespace,
             "--reuse-namespace",
@@ -323,6 +325,10 @@ def main():
     parser.add_argument("--namespace", default="rajnoha-ns", help="Kubernetes namespace")
     parser.add_argument("--in-cluster", action="store_true", default=False, help="When scenario runner is running in cluster")
     parser.add_argument("--image-prefix", default="drajnoha/", help="Docker image prefix")
+    parser.add_argument(
+        "--engine", choices=["joinmarket", "wasabi"], default="joinmarket",
+        help="Simulation engine passed on to manager.py",
+    )
     parser.add_argument("--proxy", default="socks5://127.0.0.1:8123", help="Proxy URL")
     parser.add_argument("--shadowsocks-config",
                         default="/home/drajnoha/Code/PycharmProjects/coinjoin-simulator/shadowsocks/config_local.yaml",
@@ -340,7 +346,8 @@ def main():
         proxy=args.proxy,
         shadowsocks_config=args.shadowsocks_config,
         cleanup_wait=args.cleanup_wait,
-        in_cluster=args.in_cluster
+        in_cluster=args.in_cluster,
+        engine=args.engine
     )
 
     runner.run_all(start_from=args.start_from)

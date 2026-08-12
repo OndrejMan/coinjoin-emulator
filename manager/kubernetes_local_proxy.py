@@ -103,6 +103,7 @@ class KubernetesLocalProxy:
             "--namespace", self.namespace,
             "--image-prefix", image_prefix,
             "--cleanup-wait", str(cleanup_wait),
+            "--engine", engine,
             "--in-cluster"  # New flag we'll add
         ]
 
