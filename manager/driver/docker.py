@@ -49,7 +49,7 @@ class DockerDriver(Driver):
     ) -> tuple[str, dict[int, int], object]:
         volumes = cast(dict[str, dict[str, str]] | None, kwargs.get("volumes"))
         command = cast(list[str] | None, kwargs.get("command"))
-        container = self.client.containers.run(
+        self.client.containers.run(
             image,
             detach=True,
             auto_remove=True,
@@ -61,8 +61,6 @@ class DockerDriver(Driver):
             volumes=volumes,
             command=command,
         )
-        network_settings = cast(dict[str, object], container.attrs["NetworkSettings"])
-        container_ip = str(network_settings["IPAddress"])
 
         # Normalize port mapping to match the Kubernetes format:
         # Docker reports {'8080/tcp': [{'HostIp': '', 'HostPort': '8080'}]},
@@ -74,7 +72,10 @@ class DockerDriver(Driver):
                 # For Docker networking, internal container port maps to itself
                 port_mapping[internal_port] = internal_port
         
-        return container_ip, port_mapping, None
+        # Containers on the user-defined bridge network resolve each other by
+        # name.  This is stable across Docker API versions, unlike the legacy
+        # top-level NetworkSettings.IPAddress field.
+        return name, port_mapping, None
 
     def stop(self, name: str) -> None:
         try:
