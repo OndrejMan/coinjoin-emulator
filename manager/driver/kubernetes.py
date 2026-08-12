@@ -1,6 +1,8 @@
 import base64
+import glob
 import os
 import tarfile
+import time
 import traceback
 from functools import cached_property
 from io import BytesIO
@@ -223,7 +225,7 @@ class KubernetesDriver(Driver):
 
         if self.in_cluster:
             # For in-cluster: return service DNS name, original port mapping, no route
-            port_mapping = {target_port: container_port for target_port, container_port in ports.items()}
+            port_mapping = dict(ports.items())
             service_dns_name = f"{name}.{self.namespace}.svc.cluster.local"
             return service_dns_name, port_mapping, None
         # For external: return pod IP, node port mapping, no route (existing behavior)
@@ -283,8 +285,6 @@ class KubernetesDriver(Driver):
             tar.extractall(dst_path)
 
         # Wait for required files to appear in dst_path
-        import glob
-        import time
         start_time = time.time()
         timeout = 120  # 2 minutes
         found = False

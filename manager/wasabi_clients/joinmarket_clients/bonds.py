@@ -18,6 +18,7 @@ class JoinMarketFidelityBondMixin:
     has_fidelity_bonds: bool
 
     if TYPE_CHECKING:
+        # pylint: disable=unused-argument  # these are stub signatures
         def _rpc(
             self,
             method: str,

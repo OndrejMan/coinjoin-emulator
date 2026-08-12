@@ -5,11 +5,16 @@ Generates customizable JoinMarket simulation configurations with takers and make
 """
 
 import argparse
+import datetime
 import json
+import os
 import random
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, cast
+
+import numpy as np
 
 
 class OfferType(Enum):
@@ -96,8 +101,7 @@ class JoinMarketConfigGenerator:
 
         # Ensure we have enough for minimum UTXO sizes
         min_total = num_utxos * self.wallet_config.min_utxo_size
-        if total_sats < min_total:
-            total_sats = min_total
+        total_sats = max(total_sats, min_total)
 
         # Generate random distribution
         utxos = []
@@ -268,7 +272,6 @@ def format_name(args: argparse.Namespace) -> str:
 def random_partition(total: int, n: int) -> List[int]:
     # Partition 'total' into 'n' positive random integers (satoshis)
     # Returns a list of n integers summing to total
-    import numpy as np
     if n == 1:
         return [total]
     cuts = np.sort(np.random.randint(1, total, n - 1)).tolist()
@@ -354,7 +357,6 @@ def generate_fidelity_bond_config_quantile(
     if not args.enable_fidelity_bonds:
         return None
 
-    import datetime
 
     # Calculate locktime in YYYY-MM format (JoinMarket API format)
     months = random.randint(args.bond_min_locktime_months, args.bond_max_locktime_months)
@@ -386,7 +388,6 @@ def generate_fidelity_bond_config(args: argparse.Namespace) -> Dict[str, object]
     if not args.enable_fidelity_bonds:
         return None
 
-    import datetime
 
     # Calculate locktime in YYYY-MM format (JoinMarket API format)
     # Current date + random months
@@ -576,11 +577,9 @@ def handler(args: argparse.Namespace) -> None:
             quantiles = cast(List[float], raw_quantiles)
             if len(quantiles) != 6:
                 print(f"ERROR: {name} quantiles must have exactly 6 values (0%,20%,40%,60%,80%,100%)")
-                import sys
                 sys.exit(1)
             if not all(quantiles[i] <= quantiles[i+1] for i in range(len(quantiles)-1)):
                 print(f"ERROR: {name} quantiles must be in ascending order")
-                import sys
                 sys.exit(1)
     else:
         print("Using traditional min/max distributions")
@@ -600,7 +599,6 @@ def handler(args: argparse.Namespace) -> None:
                 f"taker_count={args.taker_count}, tumbler_taker_count={args.tumbler_taker_count}, "
                 f"makercountrange={makercountrange[0]}."
             )
-            import sys
             sys.exit(1)
 
     # Taker wallet parameters (automatically scaled down)
@@ -829,14 +827,12 @@ def handler(args: argparse.Namespace) -> None:
         )
         print(f"- requires {(total_bond_amount / 100_000_000):0.8f} BTC for fidelity bonds")
         print(f"- total funding requirement: {((total_wallet_funds + total_bond_amount) / 100_000_000):0.8f} BTC")
-    import os
     os.makedirs(args.out_dir, exist_ok=True)
     out_path = os.path.join(args.out_dir, scenario["name"])
     if not out_path.endswith(".json"):
         out_path += ".json"
     if os.path.exists(out_path) and not args.force:
         print(f"- file {out_path} already exists")
-        import sys
         sys.exit(1)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(scenario, f, indent=2)

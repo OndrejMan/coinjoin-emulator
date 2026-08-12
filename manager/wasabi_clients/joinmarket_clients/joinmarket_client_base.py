@@ -40,7 +40,7 @@ class JoinMarketClientServer(
         name: str = "joinmarket-client-server",
         proxy: str = "",
         version: str = "",
-        type: str = "maker",
+        type: str = "maker",  # pylint: disable=redefined-builtin  # part of the client API
         delay: tuple[int, int] = (0, 0),
         stop: tuple[int, int] = (0, 0),
         offers: list[dict[str, object]] | None = None,
@@ -102,7 +102,9 @@ class JoinMarketClientServer(
         fidelity_bond = (joinmarket.fidelity_bond if joinmarket else None) or {}
         has_fidelity_bonds = bool(fidelity_bond.get("enabled", False))
 
-        # Select the appropriate subclass based on wallet config.
+        # Select the appropriate subclass based on wallet config. The subclasses
+        # import this module, so they can only be imported here.
+        # pylint: disable=import-outside-toplevel
         client_cls: type["JoinMarketClientServer"]
         if type_ == "maker":
             from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import MakerClient

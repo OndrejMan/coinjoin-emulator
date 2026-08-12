@@ -19,7 +19,7 @@ engine: EngineBase | None = None
 driver: Driver | None = None
 versions = set()
 
-def handle_shutdown_signal(signum, frame):
+def handle_shutdown_signal(signum, _frame):
     """Convert SIGTERM to SystemExit to ensure finally block runs"""
     signal_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
     print(f"\n[manager.py] Received {signal_name}, triggering cleanup...", flush=True)

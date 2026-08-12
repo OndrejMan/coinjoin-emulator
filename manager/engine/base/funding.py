@@ -62,7 +62,7 @@ class EngineFundingMixin:
         for client, funds in client_invoices:
             for fund in funds:
                 block = 0
-                round = 0
+                round = 0  # pylint: disable=redefined-builtin  # the coinjoin round
                 if isinstance(fund, int):
                     value = fund
                 elif isinstance(fund, FundConfig):
@@ -120,4 +120,3 @@ class EngineFundingMixin:
         Args:
             wallets: List of wallet configurations
         """
-        pass
