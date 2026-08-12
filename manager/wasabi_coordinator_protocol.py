@@ -25,5 +25,5 @@ class WasabiCoordinatorProtocol(Protocol):
             Round information as a dictionary, or None on error
         """
     
-    def wait_ready(self) -> None:
+    def wait_ready(self, timeout: int = 120) -> None:
         """Wait for coordinator to be ready."""
