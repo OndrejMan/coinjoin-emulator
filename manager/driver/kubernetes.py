@@ -4,6 +4,7 @@ import shlex
 import tarfile
 import time
 import traceback
+import uuid
 from functools import cached_property
 from io import BytesIO
 from time import sleep
@@ -23,6 +24,8 @@ DEFAULT_MEMORY = 768
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
+UPLOAD_COMMAND_CHUNK_SIZE = 16 * 1024
+UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_UPLOAD_TIMEOUT", "120"))
 
 
 class KubernetesDriver(Driver):
@@ -424,33 +427,61 @@ class KubernetesDriver(Driver):
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:tar") as tar:
             tar.add(src_path, arcname=dst_path)
-        commands = [buf.getvalue()]
+        payload = base64.b64encode(buf.getvalue()).decode("ascii")
+        remote_payload = f"/tmp/coinjoin-emulator-upload-{uuid.uuid4().hex}.b64"
+        deadline = time.monotonic() + UPLOAD_TIMEOUT_SECONDS
 
-        exec_command = ["tar", "xf", "-", "-C", "/"]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
+        def exec_checked(exec_command: list[str]) -> None:
+            resp = stream(
+                self.client.connect_get_namespaced_pod_exec,
+                name,
+                self.namespace,
+                command=exec_command,
+                stderr=True,
+                stdin=False,
+                stdout=True,
+                tty=False,
+                _preload_content=False,
+            )
+            stderr_chunks: list[str] = []
+            while resp.is_open():
+                if time.monotonic() >= deadline:
+                    resp.close()
+                    raise TimeoutError(f"Timed out uploading {src_path} to {name}:{dst_path}")
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    resp.read_stdout()
+                if resp.peek_stderr():
+                    stderr_chunks.append(resp.read_stderr())
+            returncode = getattr(resp, "returncode", None)
+            resp.close()
+            stderr = "".join(stderr_chunks).strip()
+            if returncode not in (None, 0) or stderr:
+                detail = f": {stderr}" if stderr else ""
+                raise RuntimeError(f"upload to {name}:{dst_path} failed{detail}")
 
-        while resp.is_open():
-            resp.update(timeout=1)
-            if resp.peek_stdout():
-                print(f"STDOUT: {resp.read_stdout()}")
-            if resp.peek_stderr():
-                print(f"STDERR: {resp.read_stderr()}")
-            if commands:
-                c = commands.pop(0)
-                resp.write_stdin(c)
-            else:
-                break
-        resp.close()
+        try:
+            for offset in range(0, len(payload), UPLOAD_COMMAND_CHUNK_SIZE):
+                chunk = payload[offset : offset + UPLOAD_COMMAND_CHUNK_SIZE]
+                redirect = ">" if offset == 0 else ">>"
+                exec_checked(
+                    ["sh", "-c", f'printf "%s" "$1" {redirect} "$2"', "sh", chunk, remote_payload]
+                )
+            exec_checked(
+                [
+                    "sh",
+                    "-c",
+                    'base64 -d "$1" | tar xf - -C /; status=$?; rm -f -- "$1"; exit "$status"',
+                    "sh",
+                    remote_payload,
+                ]
+            )
+        except Exception:
+            try:
+                exec_checked(["rm", "-f", "--", remote_payload])
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass
+            raise
 
 
     def cleanup(self, image_prefix: str = "") -> None:
