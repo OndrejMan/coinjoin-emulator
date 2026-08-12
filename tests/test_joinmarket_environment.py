@@ -42,6 +42,9 @@ class RoleClient:
     def wait_wallet(self, timeout: int | None) -> bool:
         return True
 
+    def get_balance(self) -> int:
+        return 0
+
 
 class LifecycleHarness(JoinMarketLifecycleMixin, EngineClientsMixin):
     def __init__(self, *roles: str) -> None:

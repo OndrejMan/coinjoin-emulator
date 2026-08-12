@@ -17,6 +17,9 @@ class StartedClient:
     def wait_wallet(self, timeout: int | None = None) -> bool:
         return True
 
+    def get_balance(self) -> int:
+        return 0
+
 
 class ClientsHarness(EngineClientsMixin):
     def __init__(self, failing: set[int] | None = None) -> None:
@@ -102,13 +105,27 @@ class TestValidateClients:
         harness.scenario.wallets = [wallet()]
         client = Mock(name="client")
         client.name = "client-0"
-        client.wait_wallet.return_value = False
+        client.get_balance.side_effect = OSError("wallet RPC unavailable")
         harness.clients = [cast(EmulatorClient, client)]
 
-        with pytest.raises(RuntimeError, match="client-0.*timed out"):
+        with pytest.raises(RuntimeError, match="client-0.*wallet RPC unavailable"):
             harness.validate_clients()
 
-        client.wait_wallet.assert_called_once_with(timeout=120)
+        client.get_balance.assert_called_once_with()
+        client.wait_wallet.assert_not_called()
+
+    def test_healthcheck_does_not_restart_an_existing_wallet(self) -> None:
+        harness = ClientsHarness()
+        harness.scenario.wallets = [wallet()]
+        client = Mock(name="client")
+        client.name = "client-0"
+        client.get_balance.return_value = 0
+        harness.clients = [cast(EmulatorClient, client)]
+
+        harness.validate_clients()
+
+        client.get_balance.assert_called_once_with()
+        client.wait_wallet.assert_not_called()
 
 
 class TestStartClassifiedWallets:
