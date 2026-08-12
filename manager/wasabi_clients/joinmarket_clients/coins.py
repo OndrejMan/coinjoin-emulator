@@ -57,7 +57,14 @@ class JoinMarketCoinsMixin:
             list(self.coin_history.values()))
 
     def list_keys(self) -> object:
-        """List all keys in the wallet."""
+        """List keys for every coin observed up to the time of export.
+
+        A final CoinJoin can create wallet outputs after the engine's last
+        status poll.  Refresh the history here so those live outputs are not
+        missing from ``keys.json`` and subsequently attributed to a fictitious
+        coordinator by the analysis pipeline.
+        """
+        self.update_coin_history()
         seed_bytes = Bip39SeedGenerator(self.seedphrase).Generate()
         coins = self.list_coins()
         keys: list[JsonDict] = []
