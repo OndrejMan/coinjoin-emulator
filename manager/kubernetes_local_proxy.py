@@ -276,7 +276,7 @@ class KubernetesLocalProxy:
                 "tail", f"-{lines}", f"/tmp/simulations/{sim_id}/output.log"
             ]
 
-            result = subprocess.run(tail_cmd, capture_output=True, text=True)
+            result = subprocess.run(tail_cmd, capture_output=True, text=True, check=False)
             print(result.stdout)
 
     def get_runner_status(self, runner_id: str | None = None) -> dict[str, object]:
@@ -359,7 +359,7 @@ class KubernetesLocalProxy:
                 "tail", f"-{lines}", log_file
             ]
 
-            result = subprocess.run(tail_cmd, capture_output=True, text=True)
+            result = subprocess.run(tail_cmd, capture_output=True, text=True, check=False)
             print(result.stdout)
 
     def _resolve_pod_name(self) -> str | None:
@@ -480,7 +480,7 @@ class KubernetesLocalProxy:
             "sh", "-c", split_script
         ]
 
-        result = subprocess.run(split_cmd, capture_output=True, text=True)
+        result = subprocess.run(split_cmd, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise Exception(f"Failed to split file: {result.stderr}")
 
@@ -580,7 +580,7 @@ class KubernetesLocalProxy:
             self.orchestrator_pod, "--",
             "sh", "-c", f"rm -f {file_pattern}"
         ]
-        result = subprocess.run(cleanup_cmd, capture_output=True)
+        result = subprocess.run(cleanup_cmd, capture_output=True, check=False)
         if result.returncode != 0:
             print(f"Warning: Failed to clean up remote files: {file_pattern}")
 
@@ -903,7 +903,7 @@ class KubernetesLocalProxy:
                 "sh", "-c", find_sim_logs_script
             ]
 
-            result = subprocess.run(find_cmd, capture_output=True, text=True)
+            result = subprocess.run(find_cmd, capture_output=True, text=True, check=False)
             if result.returncode != 0:
                 print("Could not find simulation logs")
                 return False
@@ -975,7 +975,7 @@ class KubernetesLocalProxy:
         ]
 
         print("Creating archive of logs...")
-        result = subprocess.run(tar_cmd, capture_output=True, text=True)
+        result = subprocess.run(tar_cmd, capture_output=True, text=True, check=False)
         print(result.stdout)
 
         if result.returncode != 0:
@@ -997,7 +997,7 @@ class KubernetesLocalProxy:
         os.makedirs(local_destination, exist_ok=True)
 
         extract_cmd = ["tar", "-xzf", local_tar, "-C", local_destination]
-        result = subprocess.run(extract_cmd, capture_output=True, text=True)
+        result = subprocess.run(extract_cmd, capture_output=True, text=True, check=False)
 
         if result.returncode == 0:
             print(f"✓ Logs extracted to {local_destination}")
@@ -1007,7 +1007,7 @@ class KubernetesLocalProxy:
                 self.orchestrator_pod, "--",
                 "rm", "-f", tar_name
             ]
-            subprocess.run(cleanup_cmd, capture_output=True)
+            subprocess.run(cleanup_cmd, capture_output=True, check=False)
             return True
         print(f"Failed to extract archive: {result.stderr}")
         return False
