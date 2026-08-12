@@ -293,7 +293,7 @@ class KubernetesDriver(Driver):
         waited = False
         while True:
             tumble_log = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.log"))
-            tumble_schedule = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.schedule*"))
+            tumble_schedule = bool(glob.glob(os.path.join(dst_path, "logs/TUMBLE.schedule*")))
             j_logs = glob.glob(os.path.join(dst_path, "logs/J*.log"))
             yifen = os.path.exists(os.path.join(dst_path, "logs/yigen-statement.csv"))
 
