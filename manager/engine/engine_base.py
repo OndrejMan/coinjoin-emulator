@@ -278,9 +278,18 @@ class EngineBase:
         timestamp = datetime.datetime.now(ZoneInfo(run_timezone)).strftime("%Y-%m-%d_%H-%M")
         return f"./logs/{timestamp}_{self.scenario.name}"
 
+    def ensure_log_run_path_available(self) -> None:
+        # The pipeline launcher may pre-create the run directory to place its
+        # host manifest there; only a directory that already holds emulator
+        # artifacts marks a genuine earlier run.
+        run_path = self.log_run_path()
+        if os.path.exists(os.path.join(run_path, "coinjoin_emulator_data")):
+            raise RuntimeError(f"Run log directory already exists: {run_path}")
+
     def store_logs(self):
         print("Storing logs")
-        experiment_path = self.log_run_path()
+        run_path = self.log_run_path()
+        experiment_path = os.path.join(run_path, "coinjoin_emulator_data")
         data_path = os.path.join(experiment_path, "data")
         os.makedirs(data_path)
 
@@ -317,7 +326,9 @@ class EngineBase:
         with multiprocessing.pool.ThreadPool() as pool:
             pool.starmap(self.store_client_logs, [(client, data_path) for client in self.clients])
 
-        shutil.make_archive(experiment_path, "zip", *os.path.split(experiment_path))
+        archive_base = os.path.join(run_path, ".emulation_logs")
+        archive_path = shutil.make_archive(archive_base, "zip", run_path, "coinjoin_emulator_data")
+        os.replace(archive_path, os.path.join(experiment_path, "emulation_logs.zip"))
         print("- zip archive created")
 
     def store_engine_logs(self, data_path):
@@ -417,6 +428,8 @@ class EngineBase:
     
     def run(self):
         print(f"=== Scenario {self.scenario.name} ===")
+        if not getattr(self.args, "no_logs", False):
+            self.ensure_log_run_path_available()
         self.prepare_images()
         self.start_infrastructure()
         self.fund_distributor(5000)
