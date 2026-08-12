@@ -63,7 +63,7 @@ class JoinMarketFundingMixin:
 
             except Exception as e:
                 print(f"Error creating fidelity bond for {client.name}: {e}")
-                raise Exception(f"Failed to create fidelity bond for {client.name}: {e}")
+                raise Exception(f"Failed to create fidelity bond for {client.name}: {e}") from e
 
         if bond_invoices:
             print(f"Funding {len(bond_invoices)} fidelity bonds")
@@ -89,6 +89,6 @@ class JoinMarketFundingMixin:
 
             except Exception as e:
                 print(f"Failed to fund fidelity bonds: {e}")
-                raise Exception(f"Failed to fund fidelity bonds: {e}")
+                raise Exception(f"Failed to fund fidelity bonds: {e}") from e
         else:
             print("- no fidelity bonds to fund")

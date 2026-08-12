@@ -164,7 +164,7 @@ class JoinMarketRpcMixin:
             except httpx.HTTPStatusError as e:
                 print(f"[RPC-ASYNC ERROR] {method} {endpoint}: HTTP {e.response.status_code}")
                 if attempt == repeat - 1:
-                    raise Exception(f"HTTP Error {e.response.status_code}: {e.response.text}")
+                    raise Exception(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
                 await asyncio.sleep(1)
             except Exception as e:
                 print(f"[RPC-ASYNC ERROR] {method} {endpoint}: {e}")

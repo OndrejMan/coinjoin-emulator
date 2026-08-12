@@ -66,7 +66,7 @@ class JoinMarketFidelityBondMixin:
             }
 
         except Exception as e:
-            raise Exception(f"Failed to create fidelity bond: {e}")
+            raise Exception(f"Failed to create fidelity bond: {e}") from e
 
     def get_fidelity_bonds(self) -> dict[str, BondRecord]:
         """
