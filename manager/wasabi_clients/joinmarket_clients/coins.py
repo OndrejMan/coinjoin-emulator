@@ -1,5 +1,9 @@
 """Coin and key listings, in the shape the Wasabi-oriented engine expects."""
 
+# The sibling methods are declared under TYPE_CHECKING, so pylint cannot see
+# that they return a value.
+# pylint: disable=assignment-from-no-return
+
 from typing import TYPE_CHECKING, cast
 
 from bip_utils import Bip32Slip10Secp256k1, Bip39SeedGenerator

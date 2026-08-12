@@ -1,5 +1,9 @@
 """Wallet lifecycle: creation, unlocking, balances and addresses."""
 
+# The sibling methods are declared under TYPE_CHECKING, so pylint cannot see
+# that they return a value.
+# pylint: disable=assignment-from-no-return
+
 from collections.abc import Callable
 from time import sleep, time
 from typing import TYPE_CHECKING, cast

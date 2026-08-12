@@ -14,6 +14,7 @@ from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import Orderbo
 class JoinMarketRoundsMixin:
     """Drives the clients one block at a time, synchronously or concurrently."""
 
+
     driver: Driver
     clients: list[EmulatorClient]
     obwatch_client: OrderbookWatchClient | None
@@ -21,7 +22,9 @@ class JoinMarketRoundsMixin:
     async_updates: bool
     last_resource_check: int
     current_block: int
-    current_round: int
+    # Owned by the engine; the default lets pylint see it as a member and keeps
+    # the mixin usable on its own.
+    current_round: int = 0
 
     if TYPE_CHECKING:
         def collect_round_events(self) -> list[dict[str, object]]: ...
