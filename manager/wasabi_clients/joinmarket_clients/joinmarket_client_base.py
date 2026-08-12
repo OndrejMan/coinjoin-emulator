@@ -345,6 +345,8 @@ class JoinMarketClientServer:
                     print("Failed to run schedule, attempt timed out.")
                 await asyncio.sleep(1)  # Add a small delay between retries
 
+        raise TimeoutError(f"Could not run the tumbler schedule for {self.walletname}")
+
     async def get_schedule_async(self):
         """Async version of get_schedule"""
         method = "GET"
@@ -805,6 +807,8 @@ class JoinMarketClientServer:
                 if time() - start >= 60:
                     print("Failed to run schedule, attempt timed out.")
                 sleep(1)  # Add a small delay between retries
+
+        raise TimeoutError(f"Could not run the tumbler schedule for {self.walletname}")
 
     def get_schedule(self):
         """Get the schedule that is currently running."""
