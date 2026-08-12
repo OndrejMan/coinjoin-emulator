@@ -7,9 +7,12 @@ OpenshiftDriver: Kubernetes driver extension for OpenShift compatibility.
 - All other logic is reused from KubernetesDriver.
 """
 import subprocess
-from kubernetes.client.rest import ApiException
+
 from kubernetes import client
+from kubernetes.client.rest import ApiException
+
 from .kubernetes import KubernetesDriver
+
 
 class OpenshiftDriver(KubernetesDriver):
     def __init__(self, namespace="coinjoin", reuse_namespace=False, pull_secret_path=None):
@@ -126,7 +129,7 @@ class OpenshiftDriver(KubernetesDriver):
                 "oc", "create", "route", "passthrough", route_name,
                 f"--service={service_name}",
                 f"--port={target_port}",
-                f"-n", self.namespace,
+                "-n", self.namespace,
                 "--insecure-policy=Redirect"
             ]
             print(f"Creating route for service '{service_name}': {' '.join(cmd)}")
