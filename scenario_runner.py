@@ -20,7 +20,10 @@ class ScenarioRunner:
                  namespace: str = "rajnoha-ns",
                  image_prefix: str = "drajnoha/",
                  proxy: str = "socks5://127.0.0.1:8123",
-                 shadowsocks_config: str = "/home/drajnoha/Code/PycharmProjects/coinjoin-simulator/shadowsocks/config_local.yaml",
+                 shadowsocks_config: str = (
+                     "/home/drajnoha/Code/PycharmProjects/coinjoin-simulator"
+                     "/shadowsocks/config_local.yaml"
+                 ),
                  cleanup_wait: int = 150,
                  in_cluster: bool = False,
                  engine: str = "joinmarket"):
@@ -55,7 +58,10 @@ class ScenarioRunner:
         # Forward the signal to the currently running subprocess (manager.py)
         # This allows manager.py to do its cleanup (stop_coinjoins, store_logs, etc.)
         if self.current_process and self.current_process.poll() is None:  # Process is still running
-            print(f"[{self.get_timestamp()}] Forwarding {signal_name} to running manager.py (PID: {self.current_process.pid})...")
+            print(
+                f"[{self.get_timestamp()}] Forwarding {signal_name} to running "
+                f"manager.py (PID: {self.current_process.pid})..."
+            )
             try:
                 self.current_process.send_signal(signum)
             except ProcessLookupError:
@@ -69,7 +75,10 @@ class ScenarioRunner:
 
         # Forward SIGTERM to the currently running subprocess to stop it gracefully
         if self.current_process and self.current_process.poll() is None:  # Process is still running
-            print(f"[{self.get_timestamp()}] Sending SIGTERM to running manager.py (PID: {self.current_process.pid})...")
+            print(
+                f"[{self.get_timestamp()}] Sending SIGTERM to running "
+                f"manager.py (PID: {self.current_process.pid})..."
+            )
             try:
                 self.current_process.send_signal(signal.SIGTERM)
             except ProcessLookupError:
@@ -247,7 +256,10 @@ class ScenarioRunner:
 
                 # Check if skip was requested during the run
                 if self.skip_requested:
-                    print(f"[{self.get_timestamp()}] Skip requested, marking scenario as skipped and continuing to next...")
+                    print(
+                        f"[{self.get_timestamp()}] Skip requested, marking scenario "
+                        "as skipped and continuing to next..."
+                    )
                     self.results.append({
                         "scenario": scenario,
                         "success": False,
@@ -323,7 +335,10 @@ def main():
     parser = argparse.ArgumentParser(description="Run JoinMarket scenarios")
     parser.add_argument("--scenario_dir", help="Directory containing scenario JSON files")
     parser.add_argument("--namespace", default="rajnoha-ns", help="Kubernetes namespace")
-    parser.add_argument("--in-cluster", action="store_true", default=False, help="When scenario runner is running in cluster")
+    parser.add_argument(
+        "--in-cluster", action="store_true", default=False,
+        help="When scenario runner is running in cluster",
+    )
     parser.add_argument("--image-prefix", default="drajnoha/", help="Docker image prefix")
     parser.add_argument(
         "--engine", choices=["joinmarket", "wasabi"], default="joinmarket",

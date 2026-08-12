@@ -203,7 +203,10 @@ if __name__ == "__main__":
     run_subparser.add_argument("--proxy", type=str, default="")
     run_subparser.add_argument("--namespace", type=str, default="coinjoin")
     run_subparser.add_argument("--reuse-namespace", action="store_true", default=False)
-    run_subparser.add_argument("--k8s-pull-secret", type=str, default=None, help="Path to Docker config.json for k8s imagePullSecret (or set K8S_PULL_SECRET env var)")
+    run_subparser.add_argument(
+        "--k8s-pull-secret", type=str, default=None,
+        help="Path to Docker config.json for k8s imagePullSecret (or set K8S_PULL_SECRET env var)",
+    )
 
     clean_subparser = subparsers.add_parser("clean", help="clean up")
     clean_subparser.add_argument("--namespace", type=str, default="coinjoin")
@@ -214,7 +217,10 @@ if __name__ == "__main__":
     clean_subparser.add_argument(
         "--image-prefix", type=str, default="", help="image prefix"
     )
-    clean_subparser.add_argument("--k8s-pull-secret", type=str, default=None, help="Path to Docker config.json for k8s imagePullSecret (or set K8S_PULL_SECRET env var)")
+    clean_subparser.add_argument(
+        "--k8s-pull-secret", type=str, default=None,
+        help="Path to Docker config.json for k8s imagePullSecret (or set K8S_PULL_SECRET env var)",
+    )
 
     genscen_subparser = subparsers.add_parser("genscen", help="generate scenario file")
     manager.commands.genscen.setup_parser(genscen_subparser)

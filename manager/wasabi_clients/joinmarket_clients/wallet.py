@@ -108,7 +108,10 @@ class JoinMarketWalletMixin:
             self._wait_wallet_display(time() + budget)
             return True
         except Exception:
-            print(f"[TIMEOUT] Wallet {self.walletname} not ready after {int(time() - self._wait_wallet_start)}s on {self.host}:{self.port}")
+            print(
+                f"[TIMEOUT] Wallet {self.walletname} not ready after "
+                f"{int(time() - self._wait_wallet_start)}s on {self.host}:{self.port}"
+            )
             return False
 
     def display_wallet(self) -> JsonDict:

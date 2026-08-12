@@ -224,7 +224,8 @@ def main() -> int:
     batch_parser = subparsers.add_parser("run",
                                         help="Start a new batch scenario runner")
     batch_parser.add_argument("--scenario-dir", type=str, required=True,
-                             help="Path to scenario directory inside the orchestrator container (e.g., '/app/scenarios/experiment1')")
+                             help=("Path to scenario directory inside the orchestrator "
+                                   "container (e.g., '/app/scenarios/experiment1')"))
     batch_parser.add_argument("--engine", type=str, choices=["joinmarket", "wasabi"],
                              default="joinmarket",
                              help="Coinjoin simulation engine to use")
@@ -237,7 +238,8 @@ def main() -> int:
     runner_status_parser = subparsers.add_parser("status",
                                                  help="Check status of running scenario batch")
     runner_status_parser.add_argument("--runner-id", type=str,
-                                     help="Runner ID (optional, uses saved ID from .runner-{namespace} if not provided)")
+                                     help=("Runner ID (optional, uses saved ID from "
+                                           ".runner-{namespace} if not provided)"))
 
     # Logs command
     runner_logs_parser = subparsers.add_parser("logs",
@@ -255,7 +257,8 @@ def main() -> int:
 
     # Stop command
     runner_stop_parser = subparsers.add_parser("stop",
-                                              help="Terminate entire scenario batch run (stops current scenario and exits)")
+                                              help=("Terminate entire scenario batch run "
+                                                    "(stops current scenario and exits)"))
     runner_stop_parser.add_argument("--runner-id", type=str,
                                     help="Runner ID (optional, uses saved ID from .runner-{namespace} if not provided)")
 

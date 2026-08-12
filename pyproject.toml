@@ -117,6 +117,10 @@ line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
-ignore = ["E501"]
 fixable = ["ALL"]
 unfixable = []
+
+[tool.ruff.lint.per-file-ignores]
+# The remote orchestration layer embeds shell scripts as heredocs; their lines
+# cannot be rewrapped without changing what the shell runs.
+"manager/kubernetes_local_proxy.py" = ["E501"]

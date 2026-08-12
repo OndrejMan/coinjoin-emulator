@@ -1,7 +1,8 @@
 """
 OpenshiftDriver: Kubernetes driver extension for OpenShift compatibility.
 
-- Injects serviceAccountName and securityContext (runAsUser, runAsGroup, runAsNonRoot) into pod/deployment securityContext.
+- Injects serviceAccountName and securityContext (runAsUser, runAsGroup, runAsNonRoot)
+  into pod/deployment securityContext.
 - Avoids code duplication by inheriting from KubernetesDriver.
 - Ensures containers work under OpenShift's restricted SCC (random UID, root group).
 - All other logic is reused from KubernetesDriver.
@@ -42,7 +43,10 @@ class OpenshiftDriver(KubernetesDriver):
                 "-z", service_account, "-n", self.namespace
             ], capture_output=True, text=True)
             if result.returncode == 0:
-                print(f"[INFO] Granted 'anyuid' SCC to service account '{service_account}' in namespace '{self.namespace}'.")
+                print(
+                    f"[INFO] Granted 'anyuid' SCC to service account '{service_account}' "
+                    f"in namespace '{self.namespace}'."
+                )
             else:
                 print(f"[WARNING] Could not grant 'anyuid' SCC to '{service_account}': {result.stderr.strip()}")
         except Exception as e:
@@ -98,7 +102,9 @@ class OpenshiftDriver(KubernetesDriver):
         )
         return self._create_and_wait_for_pod(pod_manifest, name, skip_ip)
 
-    def _create_and_wait_for_pod(self, pod_manifest: dict[str, object], name: str, skip_ip: bool) -> tuple[str, dict[int, int], object]:
+    def _create_and_wait_for_pod(
+        self, pod_manifest: dict[str, object], name: str, skip_ip: bool
+    ) -> tuple[str, dict[int, int], object]:
         # Use parent's client to create and wait for pod
         resp = self.client.create_namespaced_pod(
             namespace=self.namespace,
