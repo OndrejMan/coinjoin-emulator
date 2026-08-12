@@ -38,7 +38,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Run mypy
-        run: uv run mypy manager
+        run: uv run mypy manager tests
 
       - name: Run pylint
         run: uv run pylint manager manager.py

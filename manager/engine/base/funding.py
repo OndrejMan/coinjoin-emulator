@@ -3,7 +3,6 @@
 import math
 import random
 from time import sleep
-from typing import TYPE_CHECKING
 
 from manager import utils
 from manager.btc_node import BtcNode
@@ -25,9 +24,6 @@ class EngineFundingMixin:
     current_block: int
     current_round: int
     invoices: dict[tuple[int, int], list[tuple[str, int]]]
-
-    if TYPE_CHECKING:
-        pass
 
     def fund_distributor(self, btc_amount: int | float) -> None:
         print("Funding distributor")

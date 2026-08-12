@@ -1,3 +1,7 @@
+# The remote orchestration layer is a single script kept close to the shell it
+# drives; splitting it would spread one deployment procedure over many files.
+# pylint: disable=too-many-lines
+
 import json
 import os
 import subprocess
