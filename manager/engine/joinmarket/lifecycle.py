@@ -36,6 +36,9 @@ class JoinMarketLifecycleMixin:
         # pylint: disable=unused-argument  # these are stub signatures
         def prepare_image(self, name: str, path: str | None = None) -> None: ...
         def image_ref(self, name: str) -> str: ...
+        def service_endpoint(
+            self, ip: str, container_port: int, ports: dict[int, int], route: object = None
+        ) -> tuple[str, int]: ...
 
     def prepare_images(self) -> None:
         print("Preparing images")
@@ -93,8 +96,7 @@ class JoinMarketLifecycleMixin:
             print(f"- could not start {name} ({e})")
             raise StartupError("Could not start distributor") from e
 
-        actual_port = port if self.args.proxy else (443 if route else distributor_node_ports[port])
-        actual_ip = ip if self.args.proxy or self.args.in_cluster else (route if route else self.args.control_ip)
+        actual_ip, actual_port = self.service_endpoint(ip, port, distributor_node_ports, route)
 
         print(f"- started {name} at {actual_ip}:{actual_port}")
         self.distributor = cast(InvoiceDistributor, self.init_joinmarket_clientserver(
@@ -127,8 +129,7 @@ class JoinMarketLifecycleMixin:
             raise StartupError("Could not start orderbook watcher") from e
 
         # Determine how to reach the service from the controller
-        actual_port = 62601 if self.args.proxy else (443 if route else obwatch_ports[port])
-        actual_ip = ip if self.args.proxy or self.args.in_cluster else (route if route else self.args.control_ip)
+        actual_ip, actual_port = self.service_endpoint(ip, 62601, obwatch_ports, route)
 
         print(f"- started {name} at {actual_ip}:{actual_port}")
 
@@ -184,8 +185,7 @@ class JoinMarketLifecycleMixin:
 
         # In kubernetes, the pod is addressed using the ip unique for that service and all pods have the port
         # 28183 in use. The port rotation is needed for the local docker run, where the ports are mapped to the local
-        actual_port = 28183 if self.args.proxy else (443 if route else port)
-        actual_ip = ip if self.args.proxy or self.args.in_cluster else (route if route else self.args.control_ip)
+        actual_ip, actual_port = self.service_endpoint(ip, 28183, {28183: port}, route)
 
         print(f"- started {name} at {actual_ip}:{actual_port}")
 

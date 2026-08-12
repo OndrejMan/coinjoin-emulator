@@ -160,11 +160,20 @@ def create_driver(args: ParsedArgs) -> Driver:
             return PodmanDriver()
         case "kubernetes":
             pull_secret = getattr(args, "k8s_pull_secret", None) or os.environ.get("K8S_PULL_SECRET")
+            in_cluster = bool(args.in_cluster or os.environ.get("KUBERNETES_SERVICE_HOST"))
+            if (
+                getattr(args, "disable_port_forward", False)
+                and not getattr(args, "proxy", "")
+                and not in_cluster
+            ):
+                raise ValueError(
+                    "--disable-port-forward requires --proxy or an in-cluster manager"
+                )
             return KubernetesDriver(
                 args.namespace,
                 args.reuse_namespace,
                 pull_secret,
-                args.in_cluster,
+                in_cluster,
                 getattr(args, "run_id", None),
             )
         case "openshift":

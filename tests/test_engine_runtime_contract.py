@@ -63,6 +63,16 @@ def test_local_build_wins_over_remote_image() -> None:
     driver.has_image.assert_not_called()
 
 
+def test_in_cluster_driver_uses_service_dns_and_container_port() -> None:
+    driver = Mock(in_cluster=True)
+    runtime = engine(args(in_cluster=False), driver)
+
+    assert runtime.service_endpoint("btc-node.coinjoin.svc", 18443, {18443: 31234}) == (
+        "btc-node.coinjoin.svc",
+        18443,
+    )
+
+
 @patch("manager.engine.engine_base.BtcNode")
 def test_btc_folder_and_node_arguments_reach_driver(node_class: Mock, tmp_path: object) -> None:
     driver = Mock()
