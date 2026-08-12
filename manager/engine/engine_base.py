@@ -11,12 +11,6 @@ from manager.engine.base.protocols import EmulatorClient, EngineArgs, InvoiceDis
 from manager.engine.configuration import ScenarioConfig, WalletConfig
 
 
-def _has_fidelity_bond(wallet: WalletConfig) -> bool:
-    """True when the wallet asks for a fidelity bond (typed scenario model)."""
-    bond = (wallet.joinmarket.fidelity_bond if wallet.joinmarket else None) or {}
-    return bool(bond.get("enabled", False))
-
-
 class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
     def __init__(self, args: EngineArgs, driver: Driver, log_src_path: str) -> None:
         self.args = args
