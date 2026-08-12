@@ -24,6 +24,12 @@ COPY pyproject.toml requirements.txt ./
 RUN uv venv && uv pip install -r requirements.txt
 
 COPY . .
+
+# A local checkout can contain owner-only files after a restrictive umask.
+# Kubernetes runs this manager image as a non-root UID, so normalize source
+# readability inside the image instead of depending on host file modes.
+RUN chmod -R a+rX /app
+
 RUN mkdir /app/logs && chown -R 1000:1000 /app/logs
 
 ENV PYTHONPATH=/app
