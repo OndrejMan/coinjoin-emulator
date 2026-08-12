@@ -16,6 +16,7 @@ from manager.driver import Driver
 from manager.engine.base.protocols import EmulatorClient, EngineArgs, InvoiceDistributor
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
 from manager.engine.engine_base import EngineBase
+from manager.exceptions import StartupError
 from manager.wasabi_backend_factory import (
     BackendArchitecture,
     create_backend,
@@ -201,7 +202,7 @@ class WasabiEngine(EngineBase):
         self.distributor = cast(InvoiceDistributor, distributor)
         if not distributor.wait_wallet(timeout=360):
             print("- could not start distributor (application timeout)")
-            raise Exception("Could not start distributor")
+            raise StartupError("Could not start distributor")
         print("- started distributor")
 
     def init_wasabi_client(

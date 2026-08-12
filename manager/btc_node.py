@@ -40,7 +40,7 @@ class BtcNode:
             print(e)
             return "timeout"
         if response.json()["error"] is not None:
-            raise Exception(response.json()["error"])
+            raise RpcError(response.json()["error"])
         return response.json()["result"]
 
     def get_block_count(self) -> int:

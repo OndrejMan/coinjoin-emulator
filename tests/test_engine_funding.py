@@ -7,6 +7,7 @@ from manager.btc_node import BtcNode
 from manager.engine.base.funding import BTC, DISTRIBUTOR_UTXOS, EngineFundingMixin
 from manager.engine.base.protocols import EmulatorClient, InvoiceDistributor
 from manager.engine.configuration import FundConfig, WalletConfig
+from manager.exceptions import CoinjoinEmulatorError
 
 
 class FundingClient:
@@ -188,12 +189,12 @@ class TestPayInvoices:
         harness = FundingHarness()
         harness.distributor_impl.error = Exception("Bad Request")
 
-        with pytest.raises(Exception, match="Invoice payment failed"):
+        with pytest.raises(CoinjoinEmulatorError, match="Invoice payment failed"):
             harness.pay_invoices([("address", 1000)])
 
     def test_paying_without_a_distributor_is_reported(self) -> None:
         harness = FundingHarness()
         harness.distributor = None
 
-        with pytest.raises(Exception, match="Invoice payment failed"):
+        with pytest.raises(CoinjoinEmulatorError, match="Invoice payment failed"):
             harness.pay_invoices([("address", 1000)])

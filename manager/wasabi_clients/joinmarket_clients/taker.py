@@ -8,6 +8,8 @@ import asyncio
 from time import sleep, time
 from typing import TYPE_CHECKING, cast
 
+from manager.exceptions import CoinjoinEmulatorError
+
 from .types import JsonDict
 
 
@@ -48,7 +50,7 @@ class JoinMarketTakerMixin:
     async def run_schedule_async(self) -> JsonDict:
         """Async version of run_schedule"""
         if not self.tumbler_options:
-            raise Exception("No tumbler options provided")
+            raise CoinjoinEmulatorError("No tumbler options provided")
         address_count = int(cast(int, self.tumbler_options.get("address_count", 3)))
         destination_addresses = [self.get_new_address() for _ in range(address_count)]
 
@@ -168,7 +170,7 @@ class JoinMarketTakerMixin:
         - tumbler_options: optional, dict, additional tumbler configuration options
         """
         if not self.tumbler_options:
-            raise Exception("No tumbler options provided")
+            raise CoinjoinEmulatorError("No tumbler options provided")
         address_count = int(cast(int, self.tumbler_options.get("address_count", 3)))
         destination_addresses = [self.get_new_address() for _ in range(address_count)]
 

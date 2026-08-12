@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
+from manager.exceptions import RpcError
 from manager.wasabi_clients.joinmarket_clients.types import BTC, JsonDict
 from manager.wasabi_clients.joinmarket_clients.wallet import JoinMarketWalletMixin
 
@@ -103,7 +104,7 @@ class TestBalance:
     def test_missing_balance_information_is_reported(self) -> None:
         harness = WalletHarness({"walletinfo": {}})
 
-        with pytest.raises(Exception, match="Could not retrieve available balance"):
+        with pytest.raises(RpcError, match="Could not retrieve available balance"):
             harness.get_balance()
 
 

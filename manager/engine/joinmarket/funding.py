@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 from manager.btc_node import BtcNode
 from manager.engine.base.protocols import EmulatorClient, InvoiceDistributor
 from manager.engine.configuration import WalletConfig
+from manager.exceptions import CoinjoinEmulatorError
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 
 
@@ -68,7 +69,7 @@ class JoinMarketFundingMixin:
 
             except Exception as e:
                 print(f"Error creating fidelity bond for {client.name}: {e}")
-                raise Exception(f"Failed to create fidelity bond for {client.name}: {e}") from e
+                raise CoinjoinEmulatorError(f"Failed to create fidelity bond for {client.name}: {e}") from e
 
         if bond_invoices:
             print(f"Funding {len(bond_invoices)} fidelity bonds")
@@ -94,6 +95,6 @@ class JoinMarketFundingMixin:
 
             except Exception as e:
                 print(f"Failed to fund fidelity bonds: {e}")
-                raise Exception(f"Failed to fund fidelity bonds: {e}") from e
+                raise CoinjoinEmulatorError(f"Failed to fund fidelity bonds: {e}") from e
         else:
             print("- no fidelity bonds to fund")

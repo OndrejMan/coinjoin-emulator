@@ -9,6 +9,7 @@ from manager import utils
 from manager.btc_node import BtcNode
 from manager.engine.base.protocols import EmulatorClient, InvoiceDistributor
 from manager.engine.configuration import FundConfig, WalletConfig
+from manager.exceptions import CoinjoinEmulatorError
 
 DISTRIBUTOR_UTXOS = 200
 BATCH_SIZE = 5  # smaller batches avoid UTXO race conditions
@@ -106,7 +107,7 @@ class EngineFundingMixin:
                             print(f"- transaction error ({e})")
                 else:
                     print("- invoice payment failed")
-                    raise Exception("Invoice payment failed")
+                    raise CoinjoinEmulatorError("Invoice payment failed")
 
         except Exception as e:
             print("- invoice payment failed")
