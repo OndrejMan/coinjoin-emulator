@@ -251,9 +251,9 @@ class BtcNode:
         except ValueError as error:
             response.raise_for_status()
             raise RpcError(f"Unexpected btc-node response creating wallet {wallet}") from error
-        if not isinstance(body, dict) or "error" not in body or "result" not in body:
+        if not isinstance(body, dict) or ("error" not in body and "result" not in body):
             raise RpcError(f"Unexpected btc-node response creating wallet {wallet}: {body!r}")
-        if body["error"] is None:
+        if body.get("error") is None:
             response.raise_for_status()
         return cast(dict[str, object], body)
 
