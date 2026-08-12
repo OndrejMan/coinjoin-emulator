@@ -4,7 +4,12 @@ from unittest.mock import patch
 import pytest
 
 from manager.btc_node import BtcNode
-from manager.engine.base.funding import BTC, DISTRIBUTOR_UTXOS, EngineFundingMixin
+from manager.engine.base.funding import (
+    BTC,
+    DISTRIBUTOR_UTXOS,
+    INITIAL_DISTRIBUTOR_BTC,
+    EngineFundingMixin,
+)
 from manager.engine.base.protocols import EmulatorClient, InvoiceDistributor
 from manager.engine.configuration import FundConfig, WalletConfig
 from manager.exceptions import CoinjoinEmulatorError
@@ -62,6 +67,15 @@ class FundingHarness(EngineFundingMixin):
 
 
 class TestFundDistributor:
+    def test_initial_funding_bounds_bitcoin_rpc_pressure(self) -> None:
+        harness = FundingHarness()
+        harness.distributor_impl.balance = INITIAL_DISTRIBUTOR_BTC * BTC
+
+        harness.fund_distributor(INITIAL_DISTRIBUTOR_BTC)
+
+        assert INITIAL_DISTRIBUTOR_BTC == 500
+        assert len(harness.node_impl.funded) == 10
+
     def test_distributor_is_funded_across_many_utxos(self) -> None:
         harness = FundingHarness()
         harness.distributor_impl.balance = 400 * BTC
