@@ -840,6 +840,8 @@ class KubernetesLocalProxy:
         result = subprocess.run(stop_cmd, capture_output=True, text=True, check=True)
         print(f"Stop command result: {result.stdout}")
 
+        return {"status": "stopped", "simulation_id": sim_id}
+
     def download_logs(self, local_destination="./logs", all_logs=False, last_n=None):
         """
         Download logs from the orchestrator container to local machine.
