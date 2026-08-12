@@ -336,7 +336,7 @@ class JoinmarketEngine(EngineBase):
         return client
 
 
-    def start_client(self, idx: int, wallet: WalletConfig):
+    def start_client(self, idx: int, wallet: WalletConfig | None = None):
         name = f"jcs-{idx:03}"
         port = 28184 + idx
         try:
