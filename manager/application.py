@@ -126,13 +126,15 @@ def _run_cleanup(
             exit_code = 1
     elif not args.no_logs:
         log.warning("- skipping log storage: Bitcoin node is not initialized")
-    if args.download_btc_data:
+    if args.download_btc_data and engine.node is not None:
         try:
             btc_data_downloader(driver, args.download_btc_data, args.download_path)
         except BaseException as error:
             log.error(f"- failed to download btc data: {error}")
             print_exception(error)
             exit_code = 1
+    elif args.download_btc_data:
+        log.warning("- skipping btc data download: Bitcoin node is not initialized")
     try:
         driver.cleanup(args.image_prefix)
     except BaseException as error:
