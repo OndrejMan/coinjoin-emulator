@@ -168,7 +168,7 @@ class JoinMarketLifecycleMixin:
         self._create_joinmarket_core_wallet(core_wallet)
         try:
             print(f"Starting joinmarket-client-server: {name}")
-            ip, _, route = self.driver.run(
+            ip, client_ports, route = self.driver.run(
                 name,
                 self.image_ref("joinmarket-client-server"),
                 env=joinmarket_container_env(self.args, core_wallet),
@@ -187,7 +187,9 @@ class JoinMarketLifecycleMixin:
 
         # In kubernetes, the pod is addressed using the ip unique for that service and all pods have the port
         # 28183 in use. The port rotation is needed for the local docker run, where the ports are mapped to the local
-        actual_ip, actual_port = self.service_endpoint(ip, 28183, {28183: port}, route)
+        # host. Only the driver knows the reachable port: docker and podman echo the requested rotation back, while
+        # kubernetes allocates a NodePort that has nothing to do with it.
+        actual_ip, actual_port = self.service_endpoint(ip, 28183, client_ports or {28183: port}, route)
 
         print(f"- started {name} at {actual_ip}:{actual_port}")
 
