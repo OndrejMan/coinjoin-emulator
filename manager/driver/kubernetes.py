@@ -7,6 +7,7 @@ import traceback
 import uuid
 from functools import cached_property
 from io import BytesIO
+from threading import RLock
 from time import sleep
 from typing import cast
 
@@ -52,6 +53,17 @@ class KubernetesDriver(Driver):
         self.pull_secret_path = pull_secret_path
         self.in_cluster = in_cluster
         self.run_id = run_id
+
+    @cached_property
+    def _exec_lock(self) -> RLock:
+        """Serialize websocket exec calls that temporarily mutate ApiClient.request.
+
+        ``kubernetes.stream.stream`` swaps the shared API client's request method
+        while an exec connection is open.  Artifact collection uses a thread pool,
+        so concurrent downloads otherwise occasionally cross their websocket
+        streams and corrupt the archive payload.
+        """
+        return RLock()
 
     def _create_image_pull_secret(self) -> None:
         secret_name = "regcred"
@@ -306,32 +318,36 @@ class KubernetesDriver(Driver):
         exec_command = [
             "sh",
             "-c",
-            f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64",
+            # GNU base64 wraps output by default.  The websocket may split at any
+            # byte, so transmit one uninterrupted ASCII stream and decode it in
+            # strict mode below.
+            f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64 | tr -d '\\n'",
         ]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
         encoded_chunks: list[str] = []
         stderr_chunks: list[str] = []
         deadline = time.monotonic() + 1800
-        while resp.is_open():
-            if time.monotonic() >= deadline:
-                resp.close()
-                raise TimeoutError(f"Timed out downloading {name}:{src_path}")
-            resp.update(timeout=1)
-            if resp.peek_stdout():
-                encoded_chunks.append(resp.read_stdout())
-            if resp.peek_stderr():
-                stderr_chunks.append(resp.read_stderr())
-        resp.close()
+        with self._exec_lock:
+            resp = stream(
+                self.client.connect_get_namespaced_pod_exec,
+                name,
+                self.namespace,
+                command=exec_command,
+                stderr=True,
+                stdin=True,
+                stdout=True,
+                tty=False,
+                _preload_content=False,
+            )
+            while resp.is_open():
+                if time.monotonic() >= deadline:
+                    resp.close()
+                    raise TimeoutError(f"Timed out downloading {name}:{src_path}")
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    encoded_chunks.append(resp.read_stdout())
+                if resp.peek_stderr():
+                    stderr_chunks.append(resp.read_stderr())
+            resp.close()
         stderr = "".join(stderr_chunks)
         if stderr.strip():
             raise RuntimeError(f"download command wrote stderr: {stderr.strip()}")
@@ -348,34 +364,8 @@ class KubernetesDriver(Driver):
 
     def peek(self, name: str, path: str) -> str:
         exec_command = ["cat", path]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
-
         output = ""
-        while resp.is_open():
-            resp.update(timeout=1)
-            if resp.peek_stdout():
-                output += resp.read_stdout()
-        resp.close()
-        return output
-
-    def get_pod_resource_usage(self, name: str) -> dict[str, float] | None:
-        """
-        Get memory usage of a pod by reading /proc/self/status.
-        Returns dict with memory_mb and memory_limit_mb, or None if failed.
-        """
-        try:
-            # Read process memory info from /proc
-            exec_command = ["cat", "/proc/self/status"]
+        with self._exec_lock:
             resp = stream(
                 self.client.connect_get_namespaced_pod_exec,
                 name,
@@ -387,13 +377,39 @@ class KubernetesDriver(Driver):
                 tty=False,
                 _preload_content=False,
             )
-
-            output = ""
             while resp.is_open():
                 resp.update(timeout=1)
                 if resp.peek_stdout():
                     output += resp.read_stdout()
             resp.close()
+        return output
+
+    def get_pod_resource_usage(self, name: str) -> dict[str, float] | None:
+        """
+        Get memory usage of a pod by reading /proc/self/status.
+        Returns dict with memory_mb and memory_limit_mb, or None if failed.
+        """
+        try:
+            # Read process memory info from /proc
+            exec_command = ["cat", "/proc/self/status"]
+            output = ""
+            with self._exec_lock:
+                resp = stream(
+                    self.client.connect_get_namespaced_pod_exec,
+                    name,
+                    self.namespace,
+                    command=exec_command,
+                    stderr=True,
+                    stdin=True,
+                    stdout=True,
+                    tty=False,
+                    _preload_content=False,
+                )
+                while resp.is_open():
+                    resp.update(timeout=1)
+                    if resp.peek_stdout():
+                        output += resp.read_stdout()
+                resp.close()
 
             # Parse VmRSS (Resident Set Size - actual RAM used)
             memory_kb = None
@@ -432,29 +448,30 @@ class KubernetesDriver(Driver):
         deadline = time.monotonic() + UPLOAD_TIMEOUT_SECONDS
 
         def exec_checked(exec_command: list[str]) -> None:
-            resp = stream(
-                self.client.connect_get_namespaced_pod_exec,
-                name,
-                self.namespace,
-                command=exec_command,
-                stderr=True,
-                stdin=False,
-                stdout=True,
-                tty=False,
-                _preload_content=False,
-            )
             stderr_chunks: list[str] = []
-            while resp.is_open():
-                if time.monotonic() >= deadline:
-                    resp.close()
-                    raise TimeoutError(f"Timed out uploading {src_path} to {name}:{dst_path}")
-                resp.update(timeout=1)
-                if resp.peek_stdout():
-                    resp.read_stdout()
-                if resp.peek_stderr():
-                    stderr_chunks.append(resp.read_stderr())
-            returncode = getattr(resp, "returncode", None)
-            resp.close()
+            with self._exec_lock:
+                resp = stream(
+                    self.client.connect_get_namespaced_pod_exec,
+                    name,
+                    self.namespace,
+                    command=exec_command,
+                    stderr=True,
+                    stdin=False,
+                    stdout=True,
+                    tty=False,
+                    _preload_content=False,
+                )
+                while resp.is_open():
+                    if time.monotonic() >= deadline:
+                        resp.close()
+                        raise TimeoutError(f"Timed out uploading {src_path} to {name}:{dst_path}")
+                    resp.update(timeout=1)
+                    if resp.peek_stdout():
+                        resp.read_stdout()
+                    if resp.peek_stderr():
+                        stderr_chunks.append(resp.read_stderr())
+                returncode = getattr(resp, "returncode", None)
+                resp.close()
             stderr = "".join(stderr_chunks).strip()
             if returncode not in (None, 0) or stderr:
                 detail = f": {stderr}" if stderr else ""

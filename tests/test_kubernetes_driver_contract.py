@@ -1,5 +1,8 @@
 """Kubernetes ownership, storage, and startup-failure contracts."""
 
+import base64
+import tarfile
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -101,6 +104,37 @@ class ClosedExecResponse:
         return None
 
 
+class DownloadExecResponse:
+    returncode = 0
+
+    def __init__(self, stdout: str) -> None:
+        self.stdout = stdout
+        self.open = True
+
+    def is_open(self) -> bool:
+        return self.open
+
+    def update(self, timeout: int) -> None:
+        del timeout
+        self.open = False
+
+    def peek_stdout(self) -> bool:
+        return bool(self.stdout)
+
+    def read_stdout(self) -> str:
+        stdout, self.stdout = self.stdout, ""
+        return stdout
+
+    def peek_stderr(self) -> bool:
+        return False
+
+    def read_stderr(self) -> str:
+        return ""
+
+    def close(self) -> None:
+        return None
+
+
 def test_upload_uses_chunked_base64_commands(tmp_path: Path) -> None:
     runtime = driver()
     source = tmp_path / "scenario.json"
@@ -112,3 +146,21 @@ def test_upload_uses_chunked_base64_commands(tmp_path: Path) -> None:
     commands = [call.kwargs["command"] for call in run.call_args_list]
     assert commands[0][:3] == ["sh", "-c", 'printf "%s" "$1" > "$2"']
     assert commands[-1][2].startswith("base64 -d")
+
+
+def test_download_uses_unwrapped_base64_and_extracts_the_archive(tmp_path: Path) -> None:
+    runtime = driver()
+    archive = BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as tar:
+        payload = b"regtest data"
+        member = tarfile.TarInfo("data/marker")
+        member.size = len(payload)
+        tar.addfile(member, BytesIO(payload))
+    response = DownloadExecResponse(base64.b64encode(archive.getvalue()).decode("ascii"))
+
+    with patch("manager.driver.kubernetes.stream", return_value=response) as run:
+        runtime.download("btc-node", "/home/bitcoin/data/", str(tmp_path))
+
+    command = run.call_args.kwargs["command"]
+    assert command[2].endswith("base64 | tr -d '\\n'")
+    assert (tmp_path / "data" / "marker").read_bytes() == b"regtest data"
