@@ -140,6 +140,7 @@ class KubernetesDriver(Driver):
         user_id: int | None = None,
         volumes: dict[str, dict[str, str]] | None = None,
         command: list[str] | None = None,
+        group_id: int | None = None,
     ) -> dict[str, object]:
         if cpu is None:
             cpu = DEFAULT_CPU
@@ -179,7 +180,7 @@ class KubernetesDriver(Driver):
                             "runAsNonRoot": True,
                             "seccompProfile": {"type": "RuntimeDefault"},
                             "runAsUser": user_id,
-                            "runAsGroup": user_id,
+                            "runAsGroup": user_id if group_id is None else group_id,
                         }
 
         labels = {"app": name, MANAGED_BY_LABEL: MANAGED_BY_VALUE}
@@ -225,11 +226,13 @@ class KubernetesDriver(Driver):
         **kwargs: object,
     ) -> tuple[str, dict[int, int], object]:
         run_as_user = cast(int | None, kwargs.get("run_as_user"))
+        run_as_group = cast(int | None, kwargs.get("run_as_group"))
         volumes = cast(dict[str, dict[str, str]] | None, kwargs.get("volumes"))
         command = cast(list[str] | None, kwargs.get("command"))
         ports = ports or {}
         pod_manifest = self.build_pod_manifest(
-            name, image, env, ports, cpu, memory, run_as_user, volumes, command
+            name, image, env, ports, cpu, memory, run_as_user, volumes, command,
+            group_id=run_as_group,
         )
         try:
             resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)

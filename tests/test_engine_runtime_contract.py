@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock, patch
 
+import pytest
+
 from manager.driver import Driver
 from manager.engine.base.protocols import EngineArgs
 from manager.engine.configuration import ScenarioConfig, WalletConfig
@@ -140,4 +142,56 @@ def test_btc_folder_and_node_arguments_reach_driver(node_class: Mock, tmp_path: 
         str(tmp_path): {"bind": "/home/bitcoin/data", "mode": "rw"}
     }
     assert call.kwargs["command"] == ["./run.sh", "-blocksxor=0", "-prune=0"]
+    node_class.return_value.wait_ready.assert_called_once_with()
+
+
+@patch("manager.engine.engine_base.BtcNode")
+def test_shared_btc_folder_runs_node_as_storage_identity(
+    node_class: Mock, tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("KUBERNETES_STORAGE_UID", "1000")
+    monkeypatch.setenv("KUBERNETES_STORAGE_GID", "2000")
+    driver = Mock()
+    driver.run.return_value = ("node-ip", {18443: 18443, 18444: 18444}, None)
+
+    engine(args(btcFolder=str(tmp_path)), driver).start_btc_node()
+
+    # bitcoind creates regtest/ as 0700, so the caller can only read the shared
+    # datadir afterwards when the node ran under its own uid/gid.
+    call = driver.run.call_args
+    assert call.kwargs["run_as_user"] == 1000
+    assert call.kwargs["run_as_group"] == 2000
+    node_class.return_value.wait_ready.assert_called_once_with()
+
+
+@patch("manager.engine.engine_base.BtcNode")
+def test_storage_identity_is_ignored_without_a_shared_btc_folder(
+    node_class: Mock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("KUBERNETES_STORAGE_UID", "1000")
+    driver = Mock()
+    driver.run.return_value = ("node-ip", {18443: 18443, 18444: 18444}, None)
+
+    engine(args(), driver).start_btc_node()
+
+    call = driver.run.call_args
+    assert call.kwargs["run_as_user"] is None
+    assert call.kwargs["run_as_group"] is None
+    node_class.return_value.wait_ready.assert_called_once_with()
+
+
+@patch("manager.engine.engine_base.BtcNode")
+def test_root_storage_identity_leaves_the_image_user_in_place(
+    node_class: Mock, tmp_path: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Pods declare runAsNonRoot, and root can read the datadir whoever owns it.
+    monkeypatch.setenv("KUBERNETES_STORAGE_UID", "0")
+    monkeypatch.setenv("KUBERNETES_STORAGE_GID", "0")
+    driver = Mock()
+    driver.run.return_value = ("node-ip", {18443: 18443, 18444: 18444}, None)
+
+    engine(args(btcFolder=str(tmp_path)), driver).start_btc_node()
+
+    call = driver.run.call_args
+    assert call.kwargs["run_as_user"] is None
     node_class.return_value.wait_ready.assert_called_once_with()

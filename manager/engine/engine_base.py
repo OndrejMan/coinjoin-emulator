@@ -12,6 +12,19 @@ from manager.engine.base.protocols import EmulatorClient, EngineArgs, InvoiceDis
 from manager.engine.configuration import ScenarioConfig, WalletConfig
 
 
+def int_env(name: str) -> int | None:
+    """Read a positive integer id from the environment, ignoring unusable values.
+
+    Root (0) is skipped on purpose: pods declare ``runAsNonRoot`` and a root
+    caller can read the shared datadir whatever owns it.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw.isdigit():
+        return None
+    value = int(raw)
+    return value if value > 0 else None
+
+
 class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
     def __init__(self, args: EngineArgs, driver: Driver, log_src_path: str) -> None:
         self.args = args
@@ -103,16 +116,18 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
 
     def start_btc_node(self) -> None:
         node_volumes = None
+        # bitcoind creates <datadir>/regtest with mode 0700, so the image's own
+        # user (100:101) would leave the shared datadir unreadable for whoever
+        # runs the analysis afterwards. Run the node as the storage identity of
+        # the caller when the datadir is a shared host path.
+        storage_uid = None
+        storage_gid = None
         if self.args.btcFolder:
             absolute_host_path = os.path.abspath(self.args.btcFolder)
             mount = {"bind": "/home/bitcoin/data", "mode": "rw"}
-            storage_uid = os.environ.get("KUBERNETES_STORAGE_UID")
-            storage_gid = os.environ.get("KUBERNETES_STORAGE_GID")
-            if storage_uid:
-                mount["uid"] = storage_uid
-            if storage_gid:
-                mount["gid"] = storage_gid
             node_volumes = {absolute_host_path: mount}
+            storage_uid = int_env("KUBERNETES_STORAGE_UID")
+            storage_gid = int_env("KUBERNETES_STORAGE_GID") if storage_uid else None
 
         command = ["./run.sh", *self.args.btc_node_arg] if self.args.btc_node_arg else None
         btc_node_ip, btc_node_ports, route = self.driver.run(
@@ -124,6 +139,8 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
             service_account="btc-node",
             volumes=node_volumes,
             command=command,
+            run_as_user=storage_uid,
+            run_as_group=storage_gid,
         )
 
         print(btc_node_ip, btc_node_ports)

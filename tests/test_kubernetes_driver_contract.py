@@ -164,3 +164,38 @@ def test_download_uses_unwrapped_base64_and_extracts_the_archive(tmp_path: Path)
     command = run.call_args.kwargs["command"]
     assert command[2].endswith("base64 | tr -d '\\n'")
     assert (tmp_path / "data" / "marker").read_bytes() == b"regtest data"
+
+
+def test_storage_identity_reaches_the_pod_security_context() -> None:
+    runtime = driver()
+
+    manifest = runtime.build_pod_manifest(
+        "btc-node",
+        "example/btc:exact",
+        {},
+        {18443: 18443},
+        2.0,
+        2048,
+        1000,
+        volumes={"/data/run": {"bind": "/home/bitcoin/data", "mode": "rw"}},
+        group_id=2000,
+    )
+
+    spec = manifest["spec"]
+    assert isinstance(spec, dict)
+    security_context = spec["containers"][0]["securityContext"]
+    assert security_context["runAsUser"] == 1000
+    assert security_context["runAsGroup"] == 2000
+    assert security_context["runAsNonRoot"] is True
+
+
+def test_group_defaults_to_the_user_when_unset() -> None:
+    runtime = driver()
+
+    manifest = runtime.build_pod_manifest(
+        "btc-node", "example/btc:exact", {}, {18443: 18443}, 2.0, 2048, 1000
+    )
+
+    spec = manifest["spec"]
+    assert isinstance(spec, dict)
+    assert spec["containers"][0]["securityContext"]["runAsGroup"] == 1000

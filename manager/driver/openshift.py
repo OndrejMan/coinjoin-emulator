@@ -64,12 +64,13 @@ class OpenshiftDriver(KubernetesDriver):
         user_id: int | None = None,
         volumes: dict[str, dict[str, str]] | None = None,
         command: list[str] | None = None,
+        group_id: int | None = None,
         service_account: str = "jm",
         run_as_user: int = 1000,
         run_as_group: int = 1000,
     ) -> dict[str, object]:
         manifest = super().build_pod_manifest(
-            name, image, env, ports, cpu, memory, user_id, volumes, command
+            name, image, env, ports, cpu, memory, user_id, volumes, command, group_id=group_id
         )
         # Inject ServiceAccount and securityContext
         spec = cast(dict[str, object], manifest["spec"])
@@ -96,8 +97,9 @@ class OpenshiftDriver(KubernetesDriver):
         These parameters are per-run, allowing different containers to use different accounts/UIDs.
         """
         service_account = str(kwargs.get("service_account", "jm"))
-        run_as_user = int(cast(int, kwargs.get("run_as_user", 1000)))
-        run_as_group = int(cast(int, kwargs.get("run_as_group", 1000)))
+        # Callers may pass these through as None when they have no opinion.
+        run_as_user = int(cast(int, kwargs.get("run_as_user") or 1000))
+        run_as_group = int(cast(int, kwargs.get("run_as_group") or run_as_user))
         skip_ip = bool(kwargs.get("skip_ip", False))
         volumes = cast(dict[str, dict[str, str]] | None, kwargs.get("volumes"))
         command = cast(list[str] | None, kwargs.get("command"))
