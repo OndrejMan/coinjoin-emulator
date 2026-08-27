@@ -35,6 +35,7 @@ The ranges below are disjoint and together contain all 155 rewritten commits.
 | MR 7 | Finish lint cleanup and post-refactor fixes | `ada32c7` | `73beeaf` | `mr-07-lint-post-refactor` | 17 | `maintenance`, `lint`, `bugfix`, `refactor` | MR 4–6 |
 | MR 8 | Harden remote orchestration and image integration | `73beeaf` | `5210290` | `mr-08-remote-image-integration` | 9 | `bugfix`, `remote`, `kubernetes`, `ci`, `images` | MR 5 and MR 7 |
 | MR 9 | Apply end-to-end runtime hardening | `5210290` | `5e45a8b` | `mr-09-e2e-hardening` | 38 | `bugfix`, `e2e`, `docker`, `podman`, `kubernetes`, `joinmarket`, `bitcoin` | MR 1–8 |
+| MR 10 | Restore parity with the current `main` runtime | `5e45a8b` | `mr-10-main-parity-hardening` | `mr-10-main-parity-hardening` | 12 | `bugfix`, `parity`, `docker`, `podman`, `kubernetes`, `joinmarket`, `wasabi` | MR 9 |
 
 The annotated `mr-*` tags are the canonical visible separators. Display them
 directly in the history with:
@@ -160,6 +161,32 @@ Review with:
 ```bash
 git log --oneline 5210290..5e45a8b
 git diff 5210290..5e45a8b
+```
+
+### MR 10 – Restore parity with the current `main` runtime
+
+This block preserves David Rajnoha's internal architecture while restoring the
+runtime guarantees added to `main` after the original rewrite. The first five
+runtime commits replace the mixed `Small fixes` and `WIP` suffix with atomic
+commits; the tree at `2711ff6` is identical to the old development tip
+`817f776`. The remaining commits port only behavior that is still needed:
+
+- complete JoinMarket address evidence, including already-spent inputs;
+- explicit Kubernetes exec readiness and safe handling of live-tar warnings;
+- reservation of Wasabi's fixed service ports with a Kubernetes compatibility
+  fallback; and
+- bounded retries for known transient Wasabi coordinator startup failures.
+
+The `main`-only extraction of its local port-forward class and the test-helper
+file move are deliberately absent. Rajnoha's branch uses a different remote
+proxy architecture, and those two changes do not add a missing runtime
+contract here.
+
+Review with:
+
+```bash
+git log --oneline mr-09-e2e-hardening..mr-10-main-parity-hardening
+git diff mr-09-e2e-hardening..mr-10-main-parity-hardening
 ```
 
 ## Recommended integration workflow
