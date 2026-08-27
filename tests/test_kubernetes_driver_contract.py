@@ -18,6 +18,10 @@ from manager.exceptions import KubernetesResourceQuotaError, StartupError
 def driver() -> KubernetesDriver:
     runtime = object.__new__(KubernetesDriver)
     runtime.client = Mock()
+    runtime.client.read_namespaced_pod_status.return_value = SimpleNamespace(
+        spec=SimpleNamespace(node_name="node-1"),
+        status=SimpleNamespace(phase="Running"),
+    )
     runtime._namespace = "coinjoin"  # pylint: disable=protected-access
     runtime.reuse_namespace = True
     runtime.pull_secret_path = None
@@ -164,6 +168,39 @@ def test_download_uses_unwrapped_base64_and_extracts_the_archive(tmp_path: Path)
     command = run.call_args.kwargs["command"]
     assert command[2].endswith("base64 | tr -d '\\n'")
     assert (tmp_path / "data" / "marker").read_bytes() == b"regtest data"
+
+
+@pytest.mark.parametrize("phase", ["Succeeded", "Failed"])
+def test_download_refuses_pods_whose_containers_have_exited(tmp_path: Path, phase: str) -> None:
+    runtime = driver()
+    api = cast(Mock, runtime.client)
+    api.read_namespaced_pod_status.return_value = SimpleNamespace(
+        spec=SimpleNamespace(node_name="node-1"),
+        status=SimpleNamespace(phase=phase),
+    )
+
+    with patch(
+        "manager.driver.kubernetes.stream",
+        side_effect=AssertionError("download must not exec into a terminated container"),
+    ):
+        with pytest.raises(RuntimeError, match=f"phase {phase}"):
+            runtime.download("wasabi-coordinator", "/home/wasabi", str(tmp_path))
+
+
+def test_download_refuses_an_unscheduled_pod(tmp_path: Path) -> None:
+    runtime = driver()
+    api = cast(Mock, runtime.client)
+    api.read_namespaced_pod_status.return_value = SimpleNamespace(
+        spec=SimpleNamespace(node_name=None),
+        status=SimpleNamespace(phase="Pending"),
+    )
+
+    with patch(
+        "manager.driver.kubernetes.stream",
+        side_effect=AssertionError("download must not exec into an unscheduled pod"),
+    ):
+        with pytest.raises(RuntimeError, match="never scheduled"):
+            runtime.download("btc-node", "/home/bitcoin/data", str(tmp_path))
 
 
 def test_storage_identity_reaches_the_pod_security_context() -> None:

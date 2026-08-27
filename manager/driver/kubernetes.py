@@ -9,7 +9,7 @@ from functools import cached_property
 from io import BytesIO
 from threading import RLock
 from time import sleep
-from typing import cast
+from typing import Protocol, cast
 
 import backoff
 from kubernetes import client, config
@@ -27,6 +27,16 @@ MANAGED_BY_VALUE = "coinjoin-emulator"
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
 UPLOAD_COMMAND_CHUNK_SIZE = 16 * 1024
 UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_UPLOAD_TIMEOUT", "120"))
+
+
+class ExecStream(Protocol):
+    def is_open(self) -> bool: ...
+    def update(self, timeout: int) -> None: ...
+    def peek_stdout(self) -> bool: ...
+    def read_stdout(self) -> str: ...
+    def peek_stderr(self) -> bool: ...
+    def read_stderr(self) -> str: ...
+    def close(self) -> None: ...
 
 
 class KubernetesDriver(Driver):
@@ -314,7 +324,42 @@ class KubernetesDriver(Driver):
         except Exception:
             pass
 
+    def _require_exec_ready(self, name: str) -> None:
+        """Reject pods whose container cannot service a Kubernetes exec request."""
+        pod = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace)
+        node_name = getattr(getattr(pod, "spec", None), "node_name", None)
+        phase = getattr(getattr(pod, "status", None), "phase", None)
+        if not node_name:
+            raise RuntimeError(
+                f"pod {name} was never scheduled onto a node, so there is nothing to read from it"
+            )
+        if phase != "Running":
+            raise RuntimeError(
+                f"pod {name} is in phase {phase}, so its container is gone and nothing can be read from it"
+            )
+
+    def _exec_stream(self, name: str, exec_command: list[str], action: str) -> ExecStream:
+        """Open an exec stream and normalize Kubernetes API failures."""
+        try:
+            return cast(
+                ExecStream,
+                stream(
+                    self.client.connect_get_namespaced_pod_exec,
+                    name,
+                    self.namespace,
+                    command=exec_command,
+                    stderr=True,
+                    stdin=True,
+                    stdout=True,
+                    tty=False,
+                    _preload_content=False,
+                ),
+            )
+        except ApiException as error:
+            raise RuntimeError(f"could not {action} on pod {name}: {error}") from error
+
     def download(self, name: str, src_path: str, dst_path: str) -> None:
+        self._require_exec_ready(name)
         if src_path[-1] == "/":
             src_path = src_path[:-1]
         src_parent, src_target = os.path.split(src_path)
@@ -330,17 +375,7 @@ class KubernetesDriver(Driver):
         stderr_chunks: list[str] = []
         deadline = time.monotonic() + 1800
         with self._exec_lock:
-            resp = stream(
-                self.client.connect_get_namespaced_pod_exec,
-                name,
-                self.namespace,
-                command=exec_command,
-                stderr=True,
-                stdin=True,
-                stdout=True,
-                tty=False,
-                _preload_content=False,
-            )
+            resp = self._exec_stream(name, exec_command, f"download {src_path}")
             while resp.is_open():
                 if time.monotonic() >= deadline:
                     resp.close()
@@ -366,20 +401,11 @@ class KubernetesDriver(Driver):
                 tar.extractall(dst_path)
 
     def peek(self, name: str, path: str) -> str:
+        self._require_exec_ready(name)
         exec_command = ["cat", path]
         output = ""
         with self._exec_lock:
-            resp = stream(
-                self.client.connect_get_namespaced_pod_exec,
-                name,
-                self.namespace,
-                command=exec_command,
-                stderr=True,
-                stdin=True,
-                stdout=True,
-                tty=False,
-                _preload_content=False,
-            )
+            resp = self._exec_stream(name, exec_command, f"read {path}")
             while resp.is_open():
                 resp.update(timeout=1)
                 if resp.peek_stdout():
