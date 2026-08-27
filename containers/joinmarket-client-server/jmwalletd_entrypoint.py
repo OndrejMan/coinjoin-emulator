@@ -53,6 +53,22 @@ class BlockchainInterface(Protocol):
     RegtestBitcoinCoreInterface: RegtestBitcoinCoreInterfaceType
 
 
+class WalletDisplay(Protocol):
+    _display_all_addresses: bool
+
+    def __call__(
+        self,
+        wallet_service: object,
+        showprivkey: bool,
+        *args: object,
+        **kwargs: object,
+    ) -> object: ...
+
+
+class WalletRpcModule(Protocol):
+    wallet_display: WalletDisplay
+
+
 class PatchedRpcMethod(Protocol):
     _descriptor_regtest_fallback: bool
 
@@ -136,6 +152,50 @@ def install_descriptor_regtest_fallback(
     return True
 
 
+def install_display_all_addresses(
+    wallet_rpc: WalletRpcModule | None = None,
+) -> bool:
+    """Make ``GET /wallet/<name>/display`` report every address the wallet derived.
+
+    JoinMarket has no ``listkeys`` RPC, so the display output is the only
+    complete record of which addresses a wallet owns. By default
+    ``wallet_display`` keeps an address only while it still holds a balance
+    (or is an unused external one), which drops exactly the addresses the
+    analysis needs: a CoinJoin input is spent by definition, so its address
+    has a zero balance by the time the emulator collects wallet artifacts.
+    Those coins would then belong to no known wallet and be misattributed.
+    """
+    if wallet_rpc is None:
+        # pylint: disable-next=import-error,import-outside-toplevel
+        from jmclient import wallet_rpc as imported_wallet_rpc
+
+        wallet_rpc = cast(WalletRpcModule, imported_wallet_rpc)
+
+    original_display = wallet_rpc.wallet_display
+    if getattr(original_display, "_display_all_addresses", False):
+        return False
+
+    def wallet_display_all(
+        wallet_service: object,
+        showprivkey: bool,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        # ``displayall`` is the third positional parameter; callers inside
+        # jmwalletd pass it by neither name nor position, but overriding both
+        # forms keeps the patch correct if that ever changes.
+        if args:
+            args = (True, *args[1:])
+        else:
+            kwargs["displayall"] = True
+        return original_display(wallet_service, showprivkey, *args, **kwargs)
+
+    patched_display = cast(WalletDisplay, wallet_display_all)
+    patched_display._display_all_addresses = True  # pylint: disable=protected-access
+    wallet_rpc.wallet_display = patched_display
+    return True
+
+
 def parse_args(argv: list[str]) -> tuple[bool, list[str]]:
     parser = argparse.ArgumentParser(
         description="Run JoinMarket wallet RPC server with emulator runtime options"
@@ -170,6 +230,9 @@ def main(argv: list[str] | None = None) -> int:
         log_info("Enabled JoinMarket descriptor regtest fallback")
     else:
         log_info("Disabled JoinMarket descriptor regtest fallback")
+
+    install_display_all_addresses()
+    log_info("Wallet display reports all derived addresses, including spent ones")
 
     sys.argv = [JMWALLETD_PATH, *jmwalletd_args]
     runpy.run_path(JMWALLETD_PATH, run_name="__main__")

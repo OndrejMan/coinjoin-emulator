@@ -44,6 +44,21 @@ class DockerDriverTest(unittest.TestCase):
             ["./run.sh", "-blocksxor=0"],
         )
 
+    def test_run_keeps_wasabi_ports_out_of_the_containers_ephemeral_pool(self) -> None:
+        client = Mock()
+        client.networks.create.return_value = SimpleNamespace(id="coinjoin-network-id")
+        client.containers.run.return_value = None
+        client.containers.get.side_effect = docker_not_found()
+
+        with patch("manager.driver.docker.docker.from_env", return_value=client):
+            driver = DockerDriver(namespace="coinjoin-test")
+            driver.run("wasabi-coordinator", "wasabi-coordinator:2.6.0", ports={37128: 37128})
+
+        self.assertEqual(
+            client.containers.run.call_args.kwargs["sysctls"],
+            {"net.ipv4.ip_local_reserved_ports": "37127-37260"},
+        )
+
     def test_run_removes_stale_container_before_reusing_name(self) -> None:
         stale_container = Mock()
         client = Mock()

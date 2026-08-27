@@ -1,7 +1,8 @@
+import base64
+import copy
 import importlib.util
-import socket
-import sys
-import types
+import io
+import tarfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -10,173 +11,24 @@ from unittest import TestCase
 from unittest.mock import Mock, patch
 
 from manager.exceptions import CoinjoinEmulatorError, KubernetesResourceQuotaError
+from tests.kubernetes_helpers import (
+    FakePortForwardServer,
+    load_kubernetes_symbols,
+    run_driver_with_mapped_volume,
+)
 
 # pylint: disable=protected-access
 
 if TYPE_CHECKING:
-    from kubernetes.client import CoreV1Api as CoreV1ApiClass
 
-    from manager.driver.kubernetes import KubernetesDriver as KubernetesDriverClass
-    from manager.driver.kubernetes import PortForwardServer as PortForwardServerClass
-
-
-def _install_fake_kubernetes_modules() -> None:
-    if importlib.util.find_spec("kubernetes") is not None:
-        return
-
-    kubernetes_module = types.ModuleType("kubernetes")
-    client_module = types.ModuleType("kubernetes.client")
-    config_module = types.ModuleType("kubernetes.config")
-    stream_module = types.ModuleType("kubernetes.stream")
-    exceptions_module = types.ModuleType("kubernetes.client.exceptions")
-    config_exception_module = types.ModuleType("kubernetes.config.config_exception")
-    models_module = types.ModuleType("kubernetes.client.models")
-    core_v1_event_module = types.ModuleType("kubernetes.client.models.core_v1_event")
-    v1_pod_module = types.ModuleType("kubernetes.client.models.v1_pod")
-
-    class ApiException(Exception):
-        pass
-
-    class _FakeConfigException(Exception):
-        pass
-
-    setattr(client_module, "CoreV1Api", object)
-    setattr(client_module, "V1DeleteOptions", object)
-    setattr(core_v1_event_module, "CoreV1Event", object)
-    setattr(v1_pod_module, "V1Pod", object)
-    setattr(config_module, "load_kube_config", lambda: None)
-    setattr(config_module, "load_incluster_config", lambda: None)
-    setattr(stream_module, "portforward", lambda *args, **kwargs: None)
-    setattr(stream_module, "stream", lambda *args, **kwargs: None)
-    setattr(exceptions_module, "ApiException", ApiException)
-    setattr(config_exception_module, "ConfigException", _FakeConfigException)
-
-    setattr(kubernetes_module, "client", client_module)
-    setattr(kubernetes_module, "config", config_module)
-
-    sys.modules["kubernetes"] = kubernetes_module
-    sys.modules["kubernetes.client"] = client_module
-    sys.modules["kubernetes.config"] = config_module
-    sys.modules["kubernetes.stream"] = stream_module
-    sys.modules["kubernetes.client.exceptions"] = exceptions_module
-    sys.modules["kubernetes.config.config_exception"] = config_exception_module
-    sys.modules["kubernetes.client.models"] = models_module
-    sys.modules["kubernetes.client.models.core_v1_event"] = core_v1_event_module
-    sys.modules["kubernetes.client.models.v1_pod"] = v1_pod_module
-
-
-def _load_kubernetes_symbols() -> tuple[type["KubernetesDriverClass"], type["PortForwardServerClass"]]:
-    _install_fake_kubernetes_modules()
-    module = importlib.import_module("manager.driver.kubernetes")
-    return (
-        cast(type["KubernetesDriverClass"], module.KubernetesDriver),
-        cast(type["PortForwardServerClass"], module.PortForwardServer),
-    )
-
-
-class FakePortForwardServer:
-    next_port = 41000
-    started: list["FakePortForwardServer"] = []
-
-    def __init__(
-        self,
-        kube_client: object,
-        namespace: str,
-        pod_name: str,
-        remote_port: int,
-    ) -> None:
-        self.kube_client = kube_client
-        self.namespace = namespace
-        self.pod_name = pod_name
-        self.remote_port = remote_port
-        self.local_port = FakePortForwardServer.next_port
-        FakePortForwardServer.next_port += 1
-
-    @classmethod
-    def reset(cls) -> None:
-        cls.next_port = 41000
-        cls.started = []
-
-    def start(self) -> None:
-        FakePortForwardServer.started.append(self)
-
-    def close(self) -> None:
-        pass
-
-
-def _capture_service_body(
-    service_bodies: list[dict[str, object]],
-    body: dict[str, object],
-) -> SimpleNamespace:
-    service_bodies.append(body)
-    return SimpleNamespace(
-        spec=SimpleNamespace(
-            ports=[
-                SimpleNamespace(target_port=18443, node_port=31843),
-            ]
-        )
-    )
-
-
-def _run_driver_with_mapped_volume(
-    *, run_id: str | None = None
-) -> tuple[
-    "KubernetesDriverClass", str, dict[int, int], list[dict[str, object]], list[dict[str, object]]
-]:
-    KubernetesDriver, _ = _load_kubernetes_symbols()
-    FakePortForwardServer.reset()
-    pod_bodies: list[dict[str, object]] = []
-    service_bodies: list[dict[str, object]] = []
-    kube_client = SimpleNamespace(
-        create_namespaced_pod=lambda **kwargs: pod_bodies.append(cast(dict[str, object], kwargs["body"])),
-        read_namespaced_pod_status=lambda **kwargs: SimpleNamespace(status=SimpleNamespace(pod_ip="10.42.0.10")),
-        create_namespaced_service=lambda **kwargs: _capture_service_body(
-            service_bodies,
-            cast(dict[str, object], kwargs["body"]),
-        ),
-    )
-
-    with (
-        patch("manager.driver.kubernetes.config.load_kube_config"),
-        patch(
-            "manager.driver.kubernetes.client.CoreV1Api",
-            return_value=kube_client,
-        ),
-        patch(
-            "manager.driver.kubernetes.PortForwardServer",
-            FakePortForwardServer,
-        ),
-    ):
-        driver = KubernetesDriver(
-            namespace="coinjoin-test",
-            reuse_namespace=True,
-            run_id=run_id,
-        )
-        pod_ip, ports = driver.run(
-            "btc-node",
-            "btc-node:latest",
-            ports={18443: 18443},
-            cpu=0.5,
-            cpu_request=0.1,
-            command=["./run.sh", "-blocksxor=0"],
-            volumes={
-                "/tmp/btc-data": {
-                    "bind": "/home/bitcoin/data",
-                    "mode": "rw",
-                    "uid": "1234",
-                    "gid": "5678",
-                }
-            },
-        )
-
-    return driver, pod_ip, ports, pod_bodies, service_bodies
+    from manager.driver.kubernetes_port_forward import PortForwardServer as PortForwardServerClass
 
 
 class KubernetesDriverTest(TestCase):
     @patch("manager.driver.kubernetes.config.load_incluster_config")
     @patch("manager.driver.kubernetes.config.load_kube_config")
     def test_falls_back_to_incluster_auth(self, load_kube_config: Mock, load_incluster_config: Mock) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         from kubernetes.config.config_exception import ConfigException  # pylint: disable=import-outside-toplevel
 
         load_kube_config.side_effect = ConfigException("no kubeconfig")
@@ -184,48 +36,8 @@ class KubernetesDriverTest(TestCase):
             KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
         load_incluster_config.assert_called_once_with()
 
-    def test_port_forward_retries_transient_handshake_failure(self) -> None:
-        _, PortForwardServer = _load_kubernetes_symbols()
-
-        class FakeForward:
-            closed = False
-
-            def socket(self, remote_port: int) -> object:
-                return {"remote_port": remote_port}
-
-            def close(self) -> None:
-                self.closed = True
-
-        fake_kube_client = cast(
-            "CoreV1ApiClass",
-            SimpleNamespace(connect_get_namespaced_pod_portforward=object()),
-        )
-        server = PortForwardServer(fake_kube_client, "coinjoin-test", "wasabi-client-005", 37128)
-        self.addCleanup(server.close)
-        client_socket = Mock(spec=socket.socket)
-        fake_forward = FakeForward()
-        bridge_calls: list[tuple[object, object]] = []
-
-        def bridge(client_socket_obj: object, upstream_socket: object) -> None:
-            bridge_calls.append((client_socket_obj, upstream_socket))
-
-        with (
-            patch.object(server, "bridge", side_effect=bridge),
-            patch(
-                "manager.driver.kubernetes.portforward",
-                side_effect=[RuntimeError("Handshake status 502 Bad Gateway"), fake_forward],
-            ) as portforward,
-            patch("manager.driver.kubernetes.sleep"),
-        ):
-            server.handle_connection(cast(socket.socket, client_socket))
-
-        self.assertEqual(portforward.call_count, 2)
-        self.assertEqual(bridge_calls, [(client_socket, {"remote_port": 37128})])
-        client_socket.close.assert_called_once_with()
-        self.assertTrue(fake_forward.closed)
-
     def test_run_accepts_and_maps_docker_style_volumes(self) -> None:
-        driver, pod_ip, ports, pod_bodies, service_bodies = _run_driver_with_mapped_volume()
+        driver, pod_ip, ports, pod_bodies, service_bodies = run_driver_with_mapped_volume()
         self.assertEqual(pod_ip, "10.42.0.10")
         self.assertEqual(driver.control_host, "127.0.0.1")
         self.assertEqual(ports, {18443: 41000})
@@ -282,8 +94,90 @@ class KubernetesDriverTest(TestCase):
             ],
         )
 
+    def test_run_keeps_wasabi_ports_out_of_the_pods_ephemeral_pool(self) -> None:
+        _, _, _, pod_bodies, _ = run_driver_with_mapped_volume()
+
+        pod_spec = cast(dict[str, object], pod_bodies[0]["spec"])
+        pod_security_context = cast(dict[str, object], pod_spec["securityContext"])
+        self.assertEqual(
+            pod_security_context["sysctls"],
+            [{"name": "net.ipv4.ip_local_reserved_ports", "value": "37127-37260"}],
+        )
+
+    def test_run_falls_back_when_the_api_server_forbids_the_sysctl(self) -> None:
+        KubernetesDriver, _ = load_kubernetes_symbols()
+        forbidden = self._api_error(
+            403,
+            '{"message":"pods \\"wasabi-coordinator\\" is forbidden: '
+            'forbidden sysctl: \\"net.ipv4.ip_local_reserved_ports\\" not allowlisted"}',
+        )
+        pod_bodies: list[dict[str, object]] = []
+
+        def create_pod(**kwargs: object) -> None:
+            body = cast(dict[str, object], kwargs["body"])
+            pod_bodies.append(copy.deepcopy(body))
+            if len(pod_bodies) == 1:
+                raise forbidden
+
+        kube_client = SimpleNamespace(create_namespaced_pod=create_pod)
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch("manager.driver.kubernetes.client.CoreV1Api", return_value=kube_client),
+        ):
+            driver = KubernetesDriver(namespace="man5-ns", reuse_namespace=True)
+            driver.run("wasabi-coordinator", "wasabi-coordinator:2.6.0", skip_ip=True)
+
+        self.assertEqual(len(pod_bodies), 2)
+        self.assertIn("securityContext", cast(dict[str, object], pod_bodies[0]["spec"]))
+        self.assertNotIn("securityContext", cast(dict[str, object], pod_bodies[1]["spec"]))
+        self.assertIn("wasabi-coordinator", driver.managed_pod_names)
+
+    def test_run_recreates_the_pod_when_the_kubelet_forbids_the_sysctl(self) -> None:
+        KubernetesDriver, _ = load_kubernetes_symbols()
+        FakePortForwardServer.reset()
+        pod_bodies: list[dict[str, object]] = []
+        rejected = SimpleNamespace(
+            spec=SimpleNamespace(node_name="node-1"),
+            status=SimpleNamespace(
+                pod_ip=None,
+                phase="Failed",
+                reason="SysctlForbidden",
+                message="forbidden sysctl: net.ipv4.ip_local_reserved_ports",
+                container_statuses=[],
+            ),
+        )
+        started = SimpleNamespace(
+            spec=SimpleNamespace(node_name="node-1"),
+            status=SimpleNamespace(pod_ip="10.42.0.10", phase="Running", container_statuses=[]),
+        )
+        statuses = [rejected, started]
+
+        kube_client = SimpleNamespace(
+            create_namespaced_pod=lambda **kwargs: pod_bodies.append(
+                copy.deepcopy(cast(dict[str, object], kwargs["body"]))
+            ),
+            read_namespaced_pod_status=lambda **_kwargs: statuses[min(len(pod_bodies), len(statuses)) - 1],
+            delete_namespaced_pod=lambda **_kwargs: None,
+            delete_namespaced_service=lambda **_kwargs: None,
+            read_namespaced_pod=Mock(side_effect=self._not_found_error()),
+            read_namespaced_service=Mock(side_effect=self._not_found_error()),
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch("manager.driver.kubernetes.client.CoreV1Api", return_value=kube_client),
+        ):
+            driver = KubernetesDriver(namespace="man5-ns", reuse_namespace=True)
+            pod_ip, _ = driver.run("wasabi-coordinator", "wasabi-coordinator:2.6.0", ports={})
+
+        self.assertEqual(pod_ip, "10.42.0.10")
+        self.assertEqual(len(pod_bodies), 2)
+        self.assertNotIn("securityContext", cast(dict[str, object], pod_bodies[1]["spec"]))
+        self.assertIn("wasabi-coordinator", driver.managed_pod_names)
+
     def test_run_labels_pods_and_services_with_run_id(self) -> None:
-        _, _, _, pod_bodies, service_bodies = _run_driver_with_mapped_volume(
+        _, _, _, pod_bodies, service_bodies = run_driver_with_mapped_volume(
             run_id="wasabi-run-1"
         )
 
@@ -299,7 +193,7 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(service_labels["coinjoin.run-id"], "wasabi-run-1")
 
     def test_run_does_not_create_empty_service_when_no_ports_are_exposed(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         created_pods: list[dict[str, object]] = []
 
         def create_pod(**kwargs: object) -> None:
@@ -333,7 +227,7 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(created_pods[0]["kind"], "Pod")
 
     def test_run_reports_cpu_quota_exhaustion_explicitly(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         quota_error = self._api_error(
             403,
             '{"message":"pods \\"wasabi-client-000\\" is forbidden: exceeded quota: '
@@ -357,7 +251,7 @@ class KubernetesDriverTest(TestCase):
         self.assertNotIn("wasabi-client-000", driver.managed_pod_names)
 
     def test_run_preserves_non_quota_api_error(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         forbidden = self._api_error(403, '{"message":"pods are forbidden by policy"}')
         kube_client = SimpleNamespace(create_namespaced_pod=Mock(side_effect=forbidden))
 
@@ -382,7 +276,7 @@ class KubernetesDriverTest(TestCase):
         return cls._api_error(404)
 
     def test_stop_deletes_service_with_container_dns_name(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         deleted_pods: list[str] = []
         deleted_services: list[str] = []
         kube_client = SimpleNamespace(
@@ -406,7 +300,7 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(deleted_services, ["btc-node"])
 
     def test_stop_waits_until_pod_and_service_are_deleted(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         terminating_pod = SimpleNamespace(status=SimpleNamespace(phase="Terminating"))
         read_pod = Mock(side_effect=[terminating_pod, self._not_found_error()])
         read_service = Mock(side_effect=self._not_found_error())
@@ -432,7 +326,7 @@ class KubernetesDriverTest(TestCase):
         read_service.assert_called_once()
 
     def test_stop_fails_when_pod_deletion_never_completes(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         stuck_pod = SimpleNamespace(status=SimpleNamespace(phase="Terminating"))
         kube_client = SimpleNamespace(
             delete_namespaced_pod=Mock(),
@@ -455,7 +349,7 @@ class KubernetesDriverTest(TestCase):
                 driver.stop("wasabi-coordinator")
 
     def test_stop_retries_transient_delete_api_error(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         delete_pod = Mock(side_effect=[self._api_error(500), None])
         kube_client = SimpleNamespace(
             delete_namespaced_pod=delete_pod,
@@ -479,7 +373,7 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(delete_pod.call_count, 2)
 
     def test_stop_raises_non_transient_delete_api_error_immediately(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         delete_service = Mock()
         read_pod = Mock()
         kube_client = SimpleNamespace(
@@ -505,7 +399,7 @@ class KubernetesDriverTest(TestCase):
         read_pod.assert_not_called()
 
     def test_stop_retries_transient_deletion_status_read_error(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         read_pod = Mock(side_effect=[self._api_error(500), self._not_found_error()])
         kube_client = SimpleNamespace(
             delete_namespaced_pod=Mock(),
@@ -529,7 +423,7 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(read_pod.call_count, 2)
 
     def test_stop_raises_non_transient_deletion_status_read_error_immediately(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         read_service = Mock()
         kube_client = SimpleNamespace(
             delete_namespaced_pod=Mock(),
@@ -555,7 +449,7 @@ class KubernetesDriverTest(TestCase):
         read_service.assert_not_called()
 
     def test_upload_reports_silent_remote_command_failure(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         response = Mock()
         response.is_open.side_effect = [True, False]
         response.peek_stdout.return_value = False
@@ -588,7 +482,7 @@ class KubernetesDriverTest(TestCase):
         response.close.assert_called_once_with()
 
     def test_upload_accepts_client_without_returncode_property(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
 
         def successful_response() -> Mock:
             response = Mock(
@@ -631,7 +525,7 @@ class KubernetesDriverTest(TestCase):
             response.close.assert_called_once_with()
 
     def test_diagnostics_reports_missing_running_oomkilled_and_evicted_pods(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
 
         def state(**kwargs: object) -> SimpleNamespace:
             values: dict[str, object] = {"terminated": None, "waiting": None, "running": None}
@@ -722,7 +616,7 @@ class KubernetesDriverTest(TestCase):
         self.assertIn("Warning wasabi-client-002: NotFound: pod was deleted", diagnostics)
 
     def test_cleanup_uses_fresh_client_and_deletes_managed_resources(self) -> None:
-        KubernetesDriver, PortForwardServer = _load_kubernetes_symbols()
+        KubernetesDriver, PortForwardServer = load_kubernetes_symbols()
         closed_forwards: list[str] = []
         deleted_pods: list[str] = []
         deleted_services: list[str] = []
@@ -778,7 +672,7 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(deleted_services, ["wallet-helper-service"])
 
     def test_cleanup_deletes_owned_namespace_without_listing_resources(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         deleted_namespaces: list[str] = []
 
         cleanup_client = SimpleNamespace(
@@ -804,7 +698,7 @@ class KubernetesDriverTest(TestCase):
         self.assertEqual(deleted_namespaces, ["coinjoin-test"])
 
     def test_wait_for_pod_ip_reports_scheduling_failure_when_pod_never_lands(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         pending_pod = SimpleNamespace(
             spec=SimpleNamespace(node_name=None),
             status=SimpleNamespace(pod_ip=None, phase="Pending", container_statuses=[]),
@@ -839,7 +733,7 @@ class KubernetesDriverTest(TestCase):
         self.assertIn("Insufficient cpu", message)
 
     def test_download_refuses_unscheduled_pod_instead_of_exec(self) -> None:
-        KubernetesDriver, _ = _load_kubernetes_symbols()
+        KubernetesDriver, _ = load_kubernetes_symbols()
         pending_pod = SimpleNamespace(
             spec=SimpleNamespace(node_name=None),
             status=SimpleNamespace(pod_ip=None, phase="Pending", container_statuses=[]),
@@ -862,3 +756,129 @@ class KubernetesDriverTest(TestCase):
                 driver.download("btc-node", "/home/bitcoin/data/", "/tmp/out")
 
         self.assertIn("never scheduled onto a node", str(caught.exception))
+
+    def test_download_refuses_pod_whose_container_already_exited(self) -> None:
+        KubernetesDriver, _ = load_kubernetes_symbols()
+        finished_pod = SimpleNamespace(
+            spec=SimpleNamespace(node_name="node-1"),
+            status=SimpleNamespace(pod_ip="10.42.2.5", phase="Succeeded", container_statuses=[]),
+        )
+        kube_client = SimpleNamespace(
+            read_namespaced_pod_status=lambda **_kwargs: finished_pod,
+            list_namespaced_event=lambda **_kwargs: SimpleNamespace(items=[]),
+        )
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch("manager.driver.kubernetes.client.CoreV1Api", return_value=kube_client),
+            patch(
+                "manager.driver.kubernetes.stream",
+                side_effect=AssertionError("download must not exec into a terminated container"),
+            ),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            with self.assertRaises(RuntimeError) as caught:
+                driver.download("wasabi-coordinator", "/home/wasabi/.walletwasabi/coordinator/", "/tmp/out")
+
+        self.assertIn("phase Succeeded", str(caught.exception))
+
+    @staticmethod
+    def _running_pod_client() -> SimpleNamespace:
+        running_pod = SimpleNamespace(
+            spec=SimpleNamespace(node_name="node-1"),
+            status=SimpleNamespace(pod_ip="10.42.0.10", phase="Running", container_statuses=[]),
+        )
+        return SimpleNamespace(
+            read_namespaced_pod_status=lambda **_kwargs: running_pod,
+            list_namespaced_event=lambda **_kwargs: SimpleNamespace(items=[]),
+            connect_get_namespaced_pod_exec=lambda *_args, **_kwargs: None,
+        )
+
+    @staticmethod
+    def _exec_response(encoded: str, stderr: str) -> SimpleNamespace:
+        state = {"open": True}
+        payload = {"stdout": encoded, "stderr": stderr}
+
+        def read(channel: str) -> str:
+            value = payload[channel]
+            payload[channel] = ""
+            return value
+
+        def update(**_kwargs: object) -> None:
+            state["open"] = False
+
+        return SimpleNamespace(
+            is_open=lambda: state["open"],
+            update=update,
+            peek_stdout=lambda: payload["stdout"],
+            peek_stderr=lambda: payload["stderr"],
+            read_stdout=lambda: read("stdout"),
+            read_stderr=lambda: read("stderr"),
+            close=lambda: state.update(open=False),
+        )
+
+    def _download_with_stderr(self, stderr: str, destination: str) -> None:
+        KubernetesDriver, _ = load_kubernetes_symbols()
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w") as archive:
+            entry = tarfile.TarInfo("joinmarket/logs/J538RQdrjQFBGwP1.log")
+            content = b"path: m/84'/1'/0'/0/3, address: bcrt1qexample\n"
+            entry.size = len(content)
+            archive.addfile(entry, io.BytesIO(content))
+        encoded = base64.b64encode(buffer.getvalue()).decode()
+
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                return_value=self._running_pod_client(),
+            ),
+            patch(
+                "manager.driver.kubernetes.stream",
+                return_value=self._exec_response(encoded, stderr),
+            ),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            driver.download("jcs-009", "/home/joinmarket", destination)
+
+    def test_download_keeps_archive_when_a_live_log_changes_while_it_is_read(self) -> None:
+        # A JoinMarket client keeps writing while its logs are archived; discarding
+        # the whole download for that warning left the run without the client's logs
+        # and made every coin of that wallet unattributable during analysis.
+        with TemporaryDirectory() as destination:
+            self._download_with_stderr(
+                "tar: joinmarket/.joinmarket/logs/J538RQdrjQFBGwP1.log: "
+                "file changed as we read it\n",
+                destination,
+            )
+            stored = Path(destination) / "joinmarket" / "logs" / "J538RQdrjQFBGwP1.log"
+            self.assertTrue(stored.is_file())
+            self.assertIn("address: bcrt1qexample", stored.read_text())
+
+    def test_download_still_fails_on_a_real_tar_error(self) -> None:
+        with TemporaryDirectory() as destination:
+            with self.assertRaises(RuntimeError) as caught:
+                self._download_with_stderr(
+                    "tar: /home/joinmarket: Cannot open: No such file or directory\n",
+                    destination,
+                )
+        self.assertIn("Cannot open", str(caught.exception))
+
+    def test_download_fails_when_the_archive_is_empty(self) -> None:
+        KubernetesDriver, _ = load_kubernetes_symbols()
+        with (
+            patch("manager.driver.kubernetes.config.load_kube_config"),
+            patch(
+                "manager.driver.kubernetes.client.CoreV1Api",
+                return_value=self._running_pod_client(),
+            ),
+            patch(
+                "manager.driver.kubernetes.stream",
+                return_value=self._exec_response("", "tar: a.log: file changed as we read it\n"),
+            ),
+        ):
+            driver = KubernetesDriver(namespace="coinjoin-test", reuse_namespace=True)
+            with self.assertRaises(RuntimeError) as caught:
+                driver.download("jcs-009", "/home/joinmarket", "/tmp/out")
+
+        self.assertIn("empty archive", str(caught.exception))

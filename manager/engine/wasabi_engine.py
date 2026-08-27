@@ -36,8 +36,21 @@ from .engine_base import (
 
 WASABI_CLIENT_START_TIMEOUT_SECONDS = 180
 WASABI_COORDINATOR_START_TIMEOUT_SECONDS = 120
-WASABI_COORDINATOR_START_ATTEMPTS = 2
+WASABI_COORDINATOR_START_ATTEMPTS = 3
 WASABI_COORDINATOR_SYNC_RACE_MESSAGE = "Bitcoin Node is not fully synchronized"
+WASABI_COORDINATOR_PORT_TAKEN_MESSAGE = "address already in use"
+# Startup failures that a fresh container recovers from, mapped to the wording
+# used when the restart is logged.
+WASABI_COORDINATOR_RETRYABLE_STARTUP_FAILURES = {
+    # The coordinator asserts blocks == headers exactly once at startup, which
+    # can race a block the btc-node miner is still connecting.
+    WASABI_COORDINATOR_SYNC_RACE_MESSAGE: "raced a freshly mined block",
+    # The coordinator queries the bitcoin RPC before Kestrel binds, so its own
+    # outbound connection can be assigned 37128 as source port (the port sits
+    # inside the ephemeral range). Drivers reserve the range where the cluster
+    # or runtime allows it; a new container gets a new draw either way.
+    WASABI_COORDINATOR_PORT_TAKEN_MESSAGE: "could not bind port 37128 (taken by an ephemeral connection)",
+}
 WASABI_COORDINATOR_NODE_QUIET_TIMEOUT_SECONDS = 30
 WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
 WASABI_CLIENT_DATA_PATH = "/home/wasabi/.walletwasabi/client/"
@@ -48,6 +61,14 @@ SUCCESSFUL_BROADCAST_RE = re.compile(
 )
 # Abort instead of spinning forever when round/block status stays unavailable.
 MAX_CONSECUTIVE_STATUS_FAILURES = 20
+
+
+def coordinator_retry_reason(coordinator_logs: str) -> str | None:
+    """Return why a coordinator startup failure is worth another container, or None."""
+    for marker, reason in WASABI_COORDINATOR_RETRYABLE_STARTUP_FAILURES.items():
+        if marker in coordinator_logs:
+            return reason
+    return None
 
 
 def version_at_least(version: str, reference: str) -> bool:
@@ -204,15 +225,10 @@ class WasabiEngine(EngineBase):
                     coordinator_logs = self.driver.logs("wasabi-coordinator").strip()
                 except Exception as log_error:  # pylint: disable=broad-exception-caught
                     coordinator_logs = f"<unable to read coordinator logs: {log_error}>"
-                # The coordinator asserts blocks == headers exactly once at
-                # startup, which can race a block the btc-node miner is still
-                # connecting; a restart gets a fresh attempt at the assert.
-                if (
-                    attempt < WASABI_COORDINATOR_START_ATTEMPTS
-                    and WASABI_COORDINATOR_SYNC_RACE_MESSAGE in coordinator_logs
-                ):
+                retry_reason = coordinator_retry_reason(coordinator_logs)
+                if attempt < WASABI_COORDINATOR_START_ATTEMPTS and retry_reason is not None:
                     log.warning(
-                        "- wasabi-coordinator raced a freshly mined block "
+                        f"- wasabi-coordinator {retry_reason} "
                         f"(attempt {attempt}/{WASABI_COORDINATOR_START_ATTEMPTS}), restarting it"
                     )
                     self.driver.stop("wasabi-coordinator")

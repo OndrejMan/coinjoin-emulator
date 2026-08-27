@@ -3,6 +3,18 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from multiprocessing.pool import ThreadPool
 
+# Wasabi pins its service ports (backend 37127, coordinator and client RPC 37128,
+# host-side mappings up to 37260) inside the default Linux ephemeral port range
+# (net.ipv4.ip_local_port_range is 32768-60999). Any outbound connection opened in
+# the same network namespace before the server binds can be handed one of those
+# ports as its source port, and the listener then dies with
+# "Failed to bind to address http://0.0.0.0:37128: address already in use" - the
+# coordinator hits this because it talks to the bitcoin RPC in its startup task
+# before Kestrel binds. Reserving the block keeps the kernel from assigning these
+# ports to outbound sockets; the servers can always bind them.
+RESERVED_PORT_RANGE = "37127-37260"
+RESERVED_PORTS_SYSCTL = "net.ipv4.ip_local_reserved_ports"
+
 
 def extract_tar(tar: tarfile.TarFile, dst_path: str) -> None:
     """Extract an archive received from a container, sanitizing member paths."""

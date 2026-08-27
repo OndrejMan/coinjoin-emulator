@@ -22,6 +22,17 @@ def test_run_removes_stale_container_and_keeps_crash_logs() -> None:
     assert commands.index(remove_command) < commands.index(run_command)
 
 
+def test_run_keeps_wasabi_ports_out_of_the_containers_ephemeral_pool() -> None:
+    with patch("manager.driver.podman.subprocess.run") as run:
+        run.return_value.returncode = 0
+        PodmanDriver(namespace="coinjoin-test").run("wasabi-coordinator", "wasabi-coordinator:2.6.0")
+
+    commands = [call.args[0] for call in run.call_args_list]
+    run_command = next(command for command in commands if command[:2] == ["podman", "run"])
+    sysctl_index = run_command.index("--sysctl")
+    assert run_command[sysctl_index + 1] == "net.ipv4.ip_local_reserved_ports=37127-37260"
+
+
 def test_stop_removes_container_after_stopping() -> None:
     with patch("manager.driver.podman.subprocess.run") as run:
         run.return_value.returncode = 0

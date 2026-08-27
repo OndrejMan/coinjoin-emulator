@@ -62,6 +62,111 @@ class JoinMarketWalletTest(unittest.TestCase):
         ):
             self.assertEqual(client.get_balance(), 125_000_000)
 
+    def test_list_keys_flattens_every_derived_address(self) -> None:
+        client = JoinMarketClientServer(host="dind")
+        display = {
+            "walletinfo": {
+                "accounts": [
+                    {
+                        "account": "0",
+                        "branches": [
+                            {
+                                "branch": "external addresses\tm/84'/1'/0'/0",
+                                "entries": [
+                                    {
+                                        "hd_path": "m/84'/1'/0'/0/000",
+                                        "address": "bcrt1qexternal",
+                                        "amount": "0.00000000",
+                                        "status": "used",
+                                    }
+                                ],
+                            },
+                            {
+                                "branch": "internal addresses\tm/84'/1'/0'/1",
+                                "entries": [
+                                    {
+                                        "hd_path": "m/84'/1'/0'/1/000",
+                                        "address": "bcrt1qchange",
+                                        "amount": "0.10000000",
+                                        "status": "cj-out",
+                                    }
+                                ],
+                            },
+                        ],
+                    },
+                    {
+                        "account": "1",
+                        "branches": [
+                            {
+                                "entries": [
+                                    {
+                                        "hd_path": "m/84'/1'/1'/0/000",
+                                        "address": "bcrt1qmixdepth1",
+                                        "amount": "0.00000000",
+                                        "status": "new",
+                                    }
+                                ]
+                            }
+                        ],
+                    },
+                ]
+            }
+        }
+
+        with patch.object(client, "display_wallet", return_value=display):
+            keys = client.list_keys()
+
+        self.assertEqual(
+            keys,
+            [
+                {
+                    "address": "bcrt1qexternal",
+                    "path": "m/84'/1'/0'/0/000",
+                    "account": "0",
+                    "status": "used",
+                    "amount": "0.00000000",
+                },
+                {
+                    "address": "bcrt1qchange",
+                    "path": "m/84'/1'/0'/1/000",
+                    "account": "0",
+                    "status": "cj-out",
+                    "amount": "0.10000000",
+                },
+                {
+                    "address": "bcrt1qmixdepth1",
+                    "path": "m/84'/1'/1'/0/000",
+                    "account": "1",
+                    "status": "new",
+                    "amount": "0.00000000",
+                },
+            ],
+        )
+
+    def test_list_keys_skips_entries_without_an_address(self) -> None:
+        client = JoinMarketClientServer(host="dind")
+        display = {
+            "walletinfo": {
+                "accounts": [
+                    {
+                        "account": "0",
+                        "branches": [
+                            {"entries": [{"hd_path": "m/84'/1'/0'/0/000", "address": ""}]}
+                        ],
+                    }
+                ]
+            }
+        }
+
+        with patch.object(client, "display_wallet", return_value=display):
+            self.assertEqual(client.list_keys(), [])
+
+    def test_list_keys_tolerates_a_wallet_display_without_accounts(self) -> None:
+        client = JoinMarketClientServer(host="dind")
+
+        with patch.object(client, "display_wallet", return_value={}):
+            self.assertEqual(client.list_keys(), [])
+
     def test_wait_wallet_does_not_recreate_wallet_after_successful_create(self) -> None:
         client = JoinMarketClientServer(host="dind")
 

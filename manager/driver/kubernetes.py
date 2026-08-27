@@ -1,11 +1,8 @@
 import base64
 import os
 import re
-import select
 import shlex
-import socket
 import tarfile
-import threading
 import uuid
 from functools import cached_property
 from io import BytesIO
@@ -17,12 +14,13 @@ from kubernetes.client.exceptions import ApiException
 from kubernetes.client.models.core_v1_event import CoreV1Event  # type: ignore[import-untyped]
 from kubernetes.client.models.v1_pod import V1Pod  # type: ignore[import-untyped]
 from kubernetes.config.config_exception import ConfigException
-from kubernetes.stream import portforward, stream
+from kubernetes.stream import stream
 
 from manager import log_output as log
 from manager.exceptions import CoinjoinEmulatorError, KubernetesResourceQuotaError, StartupError
 
-from . import Driver, extract_tar
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver, extract_tar
+from .kubernetes_port_forward import PortForwardServer
 
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
@@ -30,8 +28,6 @@ MANAGED_LABELS = {
     MANAGED_BY_LABEL: MANAGED_BY_VALUE,
     "app.kubernetes.io/component": "emulator",
 }
-PORT_FORWARD_ATTEMPTS = 3
-PORT_FORWARD_RETRY_DELAY_SECONDS = 0.25
 # Shared clusters routinely leave pods Pending for tens of minutes while CPU frees up,
 # so this budget covers scheduling queue time, not just container startup.
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
@@ -44,6 +40,27 @@ NAMESPACE_CREATE_RETRY_SECONDS = 60
 POD_IP_TRANSIENT_API_STATUSES = {408, 409, 429, 500, 502, 503, 504}
 RESOURCE_DELETE_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DELETE_TIMEOUT", "120"))
 RESOURCE_DELETE_TRANSIENT_API_STATUSES = {408, 409, 429, 500, 502, 503, 504}
+# ``tar`` keeps archiving after these diagnostics and still writes a complete
+# archive, only exiting 1 instead of 0. A live client rewrites its log files while
+# they are read, so treating every ``tar`` diagnostic as fatal threw away the whole
+# download and left the run without that client's logs.
+BENIGN_TAR_WARNING_RE = re.compile(
+    r"^tar: .*: (file changed as we read it|socket ignored)$"
+    r"|^tar: Removing leading [`'\"]?/[`'\"]? from (member names|hard link targets)$"
+)
+
+
+def _split_tar_diagnostics(stderr: str) -> tuple[list[str], list[str]]:
+    """Separate ``tar`` warnings that keep the archive usable from real errors."""
+    benign: list[str] = []
+    fatal: list[str] = []
+    for line in stderr.splitlines():
+        if not line.strip():
+            continue
+        (benign if BENIGN_TAR_WARNING_RE.match(line.strip()) else fatal).append(line.strip())
+    return benign, fatal
+
+
 CPU_QUOTA_RE = re.compile(
     r"exceeded quota:\s*(?P<quota>[^,]+),\s*"
     r"requested:\s*(?P<requested>.*?),\s*"
@@ -79,10 +96,41 @@ def _raise_explicit_quota_error(error: ApiException, *, pod_name: str, namespace
     ) from error
 
 
-class SocketLike(Protocol):
-    def recv(self, size: int) -> bytes: ...
-    def sendall(self, data: bytes) -> None: ...
-    def fileno(self) -> int: ...
+def _strip_reserved_ports_sysctl(pod_manifest: dict[str, object]) -> bool:
+    """Drop the reserved-port sysctl from a pod manifest; True when one was there."""
+    spec = cast(dict[str, object], pod_manifest.get("spec") or {})
+    pod_security_context = cast(dict[str, object], spec.get("securityContext") or {})
+    sysctls = cast(list[dict[str, str]], pod_security_context.get("sysctls") or [])
+    remaining = [sysctl for sysctl in sysctls if sysctl.get("name") != RESERVED_PORTS_SYSCTL]
+    if len(remaining) == len(sysctls):
+        return False
+    if remaining:
+        pod_security_context["sysctls"] = remaining
+    else:
+        pod_security_context.pop("sysctls")
+        if not pod_security_context:
+            spec.pop("securityContext")
+    return True
+
+
+def _is_sysctl_rejection(error: ApiException) -> bool:
+    """True when the API server refused the pod because of its sysctls."""
+    if getattr(error, "status", None) not in {400, 403, 422}:
+        return False
+    return "sysctl" in str(getattr(error, "body", "") or error).lower()
+
+
+class ExecStream(Protocol):
+    """The subset of the Kubernetes exec websocket client the driver uses."""
+
+    def is_open(self) -> bool: ...
+    def update(self, timeout: int) -> None: ...
+    def peek_stdout(self) -> bool: ...
+    def read_stdout(self) -> str: ...
+    def peek_stderr(self) -> bool: ...
+    def read_stderr(self) -> str: ...
+    def write_stdin(self, data: str) -> None: ...
+    def close(self) -> None: ...
 
 
 class PodListLike(Protocol):
@@ -120,99 +168,6 @@ class DiagnosticsClient(Protocol):
         namespace: str,
         field_selector: str | None = None,
     ) -> EventListLike: ...
-
-
-class PortForwardServer:
-    def __init__(self, kube_client: client.CoreV1Api, namespace: str, pod_name: str, remote_port: int) -> None:
-        self.kube_client = kube_client
-        self.namespace = namespace
-        self.pod_name = pod_name
-        self.remote_port = remote_port
-        self.closed = threading.Event()
-        self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.listener.bind(("127.0.0.1", 0))
-        self.listener.listen()
-        self.local_port = int(self.listener.getsockname()[1])
-        self.thread = threading.Thread(
-            name=f"kubernetes-port-forward-{pod_name}-{remote_port}",
-            target=self.serve,
-            daemon=True,
-        )
-
-    def start(self) -> None:
-        self.thread.start()
-
-    def close(self) -> None:
-        self.closed.set()
-        try:
-            self.listener.close()
-        except OSError:
-            pass
-
-    def serve(self) -> None:
-        while not self.closed.is_set():
-            try:
-                client_socket, _ = self.listener.accept()
-            except OSError:
-                return
-            threading.Thread(
-                name=f"kubernetes-port-forward-connection-{self.pod_name}-{self.remote_port}",
-                target=self.handle_connection,
-                args=(client_socket,),
-                daemon=True,
-            ).start()
-
-    def handle_connection(self, client_socket: socket.socket) -> None:
-        forward = None
-        try:
-            for attempt in range(PORT_FORWARD_ATTEMPTS):
-                try:
-                    forward = portforward(
-                        self.kube_client.connect_get_namespaced_pod_portforward,
-                        self.pod_name,
-                        self.namespace,
-                        ports=str(self.remote_port),
-                    )
-                    break
-                except Exception as error:  # pylint: disable=broad-exception-caught
-                    log.debug(
-                        f"- port-forward {self.pod_name}:{self.remote_port} failed "
-                        f"({attempt + 1}/{PORT_FORWARD_ATTEMPTS}): {error}"
-                    )
-                    if attempt + 1 >= PORT_FORWARD_ATTEMPTS:
-                        raise
-                    sleep(PORT_FORWARD_RETRY_DELAY_SECONDS)
-            if forward is None:
-                return
-            upstream_socket = forward.socket(self.remote_port)
-            self.bridge(client_socket, upstream_socket)
-        except Exception as error:  # pylint: disable=broad-exception-caught # pragma: no cover - defensive logging around background thread
-            log.debug(f"- port-forward {self.pod_name}:{self.remote_port} failed: {error}")
-        finally:
-            try:
-                client_socket.close()
-            except OSError:
-                pass
-            if forward is not None:
-                forward.close()
-
-    def bridge(self, client_socket: SocketLike, upstream_socket: SocketLike) -> None:
-        sockets = [client_socket, upstream_socket]
-        while not self.closed.is_set():
-            try:
-                readable, _, _ = select.select(sockets, [], [], 0.5)
-            except OSError:
-                return
-            for source in readable:
-                target = upstream_socket if source is client_socket else client_socket
-                try:
-                    data = source.recv(65536)
-                    if not data:
-                        return
-                    target.sendall(data)
-                except OSError:
-                    return
 
 
 class KubernetesDriver(Driver):
@@ -375,7 +330,7 @@ class KubernetesDriver(Driver):
         labels = {"app": name, **MANAGED_LABELS}
         if self.run_id:
             labels["coinjoin.run-id"] = self.run_id
-        pod_manifest = {
+        pod_manifest: dict[str, object] = {
             "apiVersion": "v1",
             "kind": "Pod",
             "metadata": {"name": name, "labels": labels},
@@ -383,19 +338,25 @@ class KubernetesDriver(Driver):
                 "restartPolicy": "Never",
                 "containers": [container_spec],
                 "volumes": pod_volumes,
+                # Keep the emulator's fixed service ports out of the pod's
+                # ephemeral port pool (see RESERVED_PORT_RANGE).
+                "securityContext": {
+                    "sysctls": [
+                        {
+                            "name": RESERVED_PORTS_SYSCTL,
+                            "value": RESERVED_PORT_RANGE,
+                        }
+                    ]
+                },
             },
         }
 
-        try:
-            resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
-        except ApiException as error:
-            _raise_explicit_quota_error(error, pod_name=name, namespace=self.namespace)
-            raise
+        self._create_pod(name, pod_manifest)
         self.managed_pod_names.add(name)
 
         pod_ip = ""
         if not skip_ip:
-            pod_ip = self._wait_for_pod_ip(name)
+            pod_ip = self._wait_for_pod_ip_with_sysctl_fallback(name, pod_manifest)
 
         if not ports:
             return pod_ip, {}
@@ -435,6 +396,42 @@ class KubernetesDriver(Driver):
         else:
             port_mapping = {}
         return pod_ip, port_mapping
+
+    def _create_pod(self, name: str, pod_manifest: dict[str, object]) -> None:
+        """Create the pod, retrying without the reserved-port sysctl if the cluster refuses it.
+
+        ``net.ipv4.ip_local_reserved_ports`` is a safe sysctl only from Kubernetes
+        1.27 on; older clusters (and restrictive admission policies) reject the pod
+        outright, which must not take the whole run down.
+        """
+        try:
+            self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+            return
+        except ApiException as error:
+            _raise_explicit_quota_error(error, pod_name=name, namespace=self.namespace)
+            if not _is_sysctl_rejection(error) or not _strip_reserved_ports_sysctl(pod_manifest):
+                raise
+            log.warning(
+                f"- cluster rejected the {RESERVED_PORTS_SYSCTL} sysctl for pod {name} ({error}); "
+                "starting it without the reserved port range"
+            )
+        self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+
+    def _wait_for_pod_ip_with_sysctl_fallback(self, name: str, pod_manifest: dict[str, object]) -> str:
+        """Wait for the pod IP, recreating the pod without sysctls if the kubelet forbade them."""
+        try:
+            return self._wait_for_pod_ip(name)
+        except StartupError as error:
+            if "SysctlForbidden" not in str(error) or not _strip_reserved_ports_sysctl(pod_manifest):
+                raise
+            log.warning(
+                f"- kubelet forbade the {RESERVED_PORTS_SYSCTL} sysctl for pod {name}; "
+                "recreating it without the reserved port range"
+            )
+        self.stop(name)
+        self._create_pod(name, pod_manifest)
+        self.managed_pod_names.add(name)
+        return self._wait_for_pod_ip(name)
 
     @staticmethod
     def _pod_status_detail(pod: V1Pod) -> str:
@@ -744,8 +741,35 @@ class KubernetesDriver(Driver):
                 f"pod {name} was never scheduled onto a node, so there is nothing to download from it: {reason}"
             )
         phase = getattr(getattr(pod, "status", None), "phase", None)
-        if phase not in {"Running", "Succeeded"}:
-            raise RuntimeError(f"pod {name} is in phase {phase}, not Running/Succeeded: {self._pod_status_detail(pod)}")
+        if phase != "Running":
+            # Kubernetes can only exec into a live container: once the container
+            # exits, the runtime reaps it and every exec answers "container not
+            # found". Saying so here keeps a dead pod from aborting the caller
+            # (log collection) with a raw websocket error.
+            raise RuntimeError(
+                f"pod {name} is in phase {phase}, so its container is gone and nothing can be read "
+                f"from it: {self._pod_status_detail(pod)}"
+            )
+
+    def _exec_stream(self, name: str, exec_command: list[str], action: str) -> ExecStream:
+        """Open an exec stream, reporting API failures as the RuntimeError callers expect."""
+        try:
+            return cast(
+                ExecStream,
+                stream(
+                    self._new_client().connect_get_namespaced_pod_exec,
+                    name,
+                    self.namespace,
+                    command=exec_command,
+                    stderr=True,
+                    stdin=True,
+                    stdout=True,
+                    tty=False,
+                    _preload_content=False,
+                ),
+            )
+        except ApiException as error:
+            raise RuntimeError(f"could not {action} on pod {name}: {error}") from error
 
     def download(self, name: str, src_path: str, dst_path: str) -> None:
         self._require_exec_ready(name)
@@ -757,17 +781,7 @@ class KubernetesDriver(Driver):
             "-c",
             f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64",
         ]
-        resp = stream(
-            self._new_client().connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
+        resp = self._exec_stream(name, exec_command, f"download {src_path}")
 
         encoded_chunks: list[str] = []
         stderr_chunks: list[str] = []
@@ -781,27 +795,26 @@ class KubernetesDriver(Driver):
                 encoded_chunks.append(resp.read_stdout())
             if resp.peek_stderr():
                 stderr_chunks.append(resp.read_stderr())
-        stderr = "".join(stderr_chunks)
-        if stderr.strip():
-            raise RuntimeError(f"download command wrote stderr: {stderr.strip()}")
-        fo = BytesIO(base64.b64decode("".join(encoded_chunks)))
+        benign_warnings, fatal_errors = _split_tar_diagnostics("".join(stderr_chunks))
+        if fatal_errors:
+            raise RuntimeError("download command wrote stderr: " + "\n".join(fatal_errors))
+        encoded = "".join(encoded_chunks)
+        if not encoded.strip():
+            detail = "; ".join(benign_warnings) or "no output"
+            raise RuntimeError(f"download of {name}:{src_path} produced an empty archive: {detail}")
+        if benign_warnings:
+            log.warning(
+                f"- {name}:{src_path} changed while it was archived, keeping the archive: "
+                + "; ".join(benign_warnings)
+            )
+        fo = BytesIO(base64.b64decode(encoded))
         with tarfile.open(fileobj=fo) as tar:
             extract_tar(tar, dst_path)
         resp.close()
 
     def peek(self, name: str, path: str, *, missing_ok: bool = False) -> str:
         exec_command = ["sh", "-c", 'if [ -f "$1" ]; then cat -- "$1"; fi', "sh", path] if missing_ok else ["cat", path]
-        resp = stream(
-            self._new_client().connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
+        resp = self._exec_stream(name, exec_command, f"read {path}")
 
         output_chunks: list[str] = []
         stderr_chunks: list[str] = []

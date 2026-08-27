@@ -50,6 +50,7 @@ class ContainerCollection:
         environment: dict[str, str],
         volumes: dict[str, dict[str, str]] | None,
         command: list[str] | None,
+        sysctls: dict[str, str] | None = None,
     ) -> object: ...
     def list(self, *, all: bool = ...) -> list[Container]: ...
 

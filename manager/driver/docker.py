@@ -9,7 +9,7 @@ import docker
 
 from manager import log_output as log
 
-from . import Driver, extract_tar
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver, extract_tar
 
 
 class DockerNetwork(Protocol):
@@ -88,6 +88,9 @@ class DockerDriver(Driver):
                     },
                     volumes=volumes,
                     command=command,
+                    # Keep the emulator's fixed service ports out of the
+                    # container's ephemeral port pool (see RESERVED_PORT_RANGE).
+                    sysctls={RESERVED_PORTS_SYSCTL: RESERVED_PORT_RANGE},
                 )
                 break
             except docker.errors.APIError as error:

@@ -119,3 +119,52 @@ def test_parse_bool_rejects_unknown_values() -> None:
 
     with pytest.raises(ValueError):
         entrypoint.parse_bool("sometimes")
+
+
+class WalletRpcModule:
+    """Stands in for ``jmclient.wallet_rpc``, whose only relevant name is this one."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        def wallet_display(*args: object, **kwargs: object) -> object:
+            self.calls.append((args, kwargs))
+            return {"walletinfo": {}}
+
+        self.wallet_display = wallet_display
+
+
+def test_display_all_addresses_forces_displayall_for_keyword_callers() -> None:
+    module = load_entrypoint()
+    wallet_rpc = WalletRpcModule()
+
+    assert module.install_display_all_addresses(wallet_rpc) is True
+
+    wallet_rpc.wallet_display(object(), False, jsonified=True)
+    (args, kwargs) = wallet_rpc.calls[0]
+    assert kwargs["displayall"] is True
+    assert kwargs["jsonified"] is True
+    assert len(args) == 2
+
+
+def test_display_all_addresses_overrides_a_positional_displayall() -> None:
+    module = load_entrypoint()
+    wallet_rpc = WalletRpcModule()
+    module.install_display_all_addresses(wallet_rpc)
+
+    wallet_rpc.wallet_display(object(), False, False, True)
+    (args, kwargs) = wallet_rpc.calls[0]
+    # The caller's ``displayall=False`` is replaced; ``serialized=True`` survives.
+    assert args[2] is True
+    assert args[3] is True
+    assert "displayall" not in kwargs
+
+
+def test_display_all_addresses_is_installed_only_once() -> None:
+    module = load_entrypoint()
+    wallet_rpc = WalletRpcModule()
+
+    assert module.install_display_all_addresses(wallet_rpc) is True
+    patched = wallet_rpc.wallet_display
+    assert module.install_display_all_addresses(wallet_rpc) is False
+    assert wallet_rpc.wallet_display is patched

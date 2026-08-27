@@ -4,7 +4,7 @@ from functools import cached_property
 from manager import log_output as log
 
 from ..exceptions import CoinjoinEmulatorError
-from . import Driver
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 
 
 class PodmanDriver(Driver):
@@ -86,6 +86,10 @@ class PodmanDriver(Driver):
             name,
             "--network",
             self.network,
+            # Keep the emulator's fixed service ports out of the container's
+            # ephemeral port pool (see RESERVED_PORT_RANGE).
+            "--sysctl",
+            f"{RESERVED_PORTS_SYSCTL}={RESERVED_PORT_RANGE}",
         ]
 
         for container_port, host_port in (ports or {}).items():

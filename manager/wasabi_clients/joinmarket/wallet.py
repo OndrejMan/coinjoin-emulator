@@ -160,6 +160,33 @@ class JoinMarketWalletMixin:
         """List all coins in the wallet."""
         return "This method is not available in joinmarket"
 
-    def list_keys(self) -> str:
-        """List all keys in the wallet."""
-        return "This method is not available in joinmarket"
+    def list_keys(self) -> object:
+        """List every address this wallet derived, as ``listkeys``-shaped records.
+
+        JoinMarket has no ``listkeys`` RPC, so the wallet's own display output
+        stands in for it: each entry names an address together with the
+        derivation path that proves the wallet owns it. The emulator's jmwalletd
+        entrypoint forces the display to include already-spent addresses, which
+        JoinMarket otherwise hides -- without them a CoinJoin input cannot be
+        traced back to the wallet that funded it.
+        """
+        walletinfo = cast(JsonDict, self.display_wallet().get("walletinfo") or {})
+        keys: list[JsonDict] = []
+        for account in cast(list[JsonDict], walletinfo.get("accounts") or []):
+            for branch in cast(list[JsonDict], account.get("branches") or []):
+                for entry in cast(list[JsonDict], branch.get("entries") or []):
+                    address = entry.get("address")
+                    if not address:
+                        continue
+                    keys.append(
+                        {
+                            "address": str(address),
+                            "path": str(entry.get("hd_path", "")),
+                            "account": str(account.get("account", "")),
+                            "status": str(entry.get("status", "")),
+                            "amount": str(entry.get("amount", "")),
+                        }
+                    )
+        if not keys:
+            log.warning(f"- {self.name} wallet display reported no addresses")
+        return keys

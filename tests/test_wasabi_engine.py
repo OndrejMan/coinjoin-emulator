@@ -11,6 +11,7 @@ from manager.engine.wasabi_engine import (
     WASABI_CLIENT_DATA_PATH,
     WASABI_CLIENT_START_TIMEOUT_SECONDS,
     WASABI_COORDINATOR_LOG_PATH,
+    WASABI_COORDINATOR_START_ATTEMPTS,
     WASABI_COORDINATOR_START_TIMEOUT_SECONDS,
     WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT,
     WasabiEngine,
@@ -208,7 +209,7 @@ def test_coordinator_restarts_once_after_node_sync_race() -> None:
     assert node.wait_synchronized_quiet.call_count == 2
 
 
-def test_coordinator_sync_race_fails_after_second_attempt() -> None:
+def test_coordinator_sync_race_fails_after_the_last_attempt() -> None:
     engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
     coordinator = Mock()
     coordinator.wait_ready.side_effect = TimeoutError("coordinator endpoint unavailable")
@@ -221,8 +222,30 @@ def test_coordinator_sync_race_fails_after_second_attempt() -> None:
         with pytest.raises(StartupError, match="Bitcoin Node is not fully synchronized"):
             engine.start_wasabi_coordinator()
 
-    assert driver.run.call_count == 2
+    assert driver.run.call_count == WASABI_COORDINATOR_START_ATTEMPTS
+    assert coordinator.wait_ready.call_count == WASABI_COORDINATOR_START_ATTEMPTS
+    assert driver.stop.call_count == WASABI_COORDINATOR_START_ATTEMPTS - 1
+
+
+def test_coordinator_restarts_when_an_ephemeral_connection_took_its_port() -> None:
+    engine, driver, _ = configured_engine(BackendArchitecture.SPLIT)
+    coordinator = Mock()
+    coordinator.wait_ready.side_effect = [TimeoutError("coordinator endpoint unavailable"), None]
+    driver.logs.return_value = (
+        "CRITICAL Program.Main (20) System.IO.IOException: Failed to bind to address "
+        "http://0.0.0.0:37128: address already in use."
+    )
+
+    with (
+        patch("manager.engine.wasabi_engine.sleep"),
+        patch("manager.engine.wasabi_engine.create_coordinator", return_value=coordinator),
+    ):
+        engine.start_wasabi_coordinator()
+
     assert coordinator.wait_ready.call_count == 2
+    assert engine.coordinator is coordinator
+    lifecycle_calls = [name for name, _, _ in driver.method_calls if name in {"run", "stop"}]
+    assert lifecycle_calls == ["run", "stop", "run"]
     driver.stop.assert_called_once_with("wasabi-coordinator")
 
 
