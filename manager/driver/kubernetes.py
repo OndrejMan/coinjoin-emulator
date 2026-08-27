@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 import shlex
 import tarfile
 import time
@@ -27,6 +28,21 @@ MANAGED_BY_VALUE = "coinjoin-emulator"
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
 UPLOAD_COMMAND_CHUNK_SIZE = 16 * 1024
 UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_UPLOAD_TIMEOUT", "120"))
+BENIGN_TAR_WARNING_RE = re.compile(
+    r"^tar: .*: (file changed as we read it|socket ignored)$"
+    r"|^tar: Removing leading [`'\"]?/[`'\"]? from (member names|hard link targets)$"
+)
+
+
+def _split_tar_diagnostics(stderr: str) -> tuple[list[str], list[str]]:
+    """Separate warnings that leave a complete archive from real tar errors."""
+    benign: list[str] = []
+    fatal: list[str] = []
+    for line in stderr.splitlines():
+        if not line.strip():
+            continue
+        (benign if BENIGN_TAR_WARNING_RE.match(line.strip()) else fatal).append(line.strip())
+    return benign, fatal
 
 
 class ExecStream(Protocol):
@@ -386,11 +402,20 @@ class KubernetesDriver(Driver):
                 if resp.peek_stderr():
                     stderr_chunks.append(resp.read_stderr())
             resp.close()
-        stderr = "".join(stderr_chunks)
-        if stderr.strip():
-            raise RuntimeError(f"download command wrote stderr: {stderr.strip()}")
+        benign_warnings, fatal_errors = _split_tar_diagnostics("".join(stderr_chunks))
+        if fatal_errors:
+            raise RuntimeError("download command wrote stderr: " + "\n".join(fatal_errors))
+        encoded = "".join(encoded_chunks)
+        if not encoded.strip():
+            detail = "; ".join(benign_warnings) or "no output"
+            raise RuntimeError(f"download of {name}:{src_path} produced an empty archive: {detail}")
+        if benign_warnings:
+            print(
+                f"[WARNING] {name}:{src_path} changed while it was archived; "
+                f"keeping the completed archive: {'; '.join(benign_warnings)}"
+            )
         try:
-            payload = base64.b64decode("".join(encoded_chunks), validate=True)
+            payload = base64.b64decode(encoded, validate=True)
         except ValueError as error:
             raise RuntimeError(f"download of {name}:{src_path} returned invalid base64") from error
         fo = BytesIO(payload)

@@ -111,8 +111,9 @@ class ClosedExecResponse:
 class DownloadExecResponse:
     returncode = 0
 
-    def __init__(self, stdout: str) -> None:
+    def __init__(self, stdout: str, stderr: str = "") -> None:
         self.stdout = stdout
+        self.stderr = stderr
         self.open = True
 
     def is_open(self) -> bool:
@@ -130,10 +131,11 @@ class DownloadExecResponse:
         return stdout
 
     def peek_stderr(self) -> bool:
-        return False
+        return bool(self.stderr)
 
     def read_stderr(self) -> str:
-        return ""
+        stderr, self.stderr = self.stderr, ""
+        return stderr
 
     def close(self) -> None:
         return None
@@ -201,6 +203,49 @@ def test_download_refuses_an_unscheduled_pod(tmp_path: Path) -> None:
     ):
         with pytest.raises(RuntimeError, match="never scheduled"):
             runtime.download("btc-node", "/home/bitcoin/data", str(tmp_path))
+
+
+def test_download_keeps_archive_when_a_live_log_changes(tmp_path: Path) -> None:
+    runtime = driver()
+    archive = BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as tar:
+        payload = b"wallet log"
+        member = tarfile.TarInfo("joinmarket/log.txt")
+        member.size = len(payload)
+        tar.addfile(member, BytesIO(payload))
+    response = DownloadExecResponse(
+        base64.b64encode(archive.getvalue()).decode("ascii"),
+        "tar: joinmarket/log.txt: file changed as we read it\n",
+    )
+
+    with patch("manager.driver.kubernetes.stream", return_value=response):
+        runtime.download("jcs-009", "/home/joinmarket", str(tmp_path))
+
+    assert (tmp_path / "joinmarket" / "log.txt").read_bytes() == b"wallet log"
+
+
+def test_download_still_fails_on_a_real_tar_error(tmp_path: Path) -> None:
+    runtime = driver()
+    response = DownloadExecResponse(
+        "ignored",
+        "tar: /home/joinmarket: Cannot open: No such file or directory\n",
+    )
+
+    with patch("manager.driver.kubernetes.stream", return_value=response):
+        with pytest.raises(RuntimeError, match="Cannot open"):
+            runtime.download("jcs-009", "/home/joinmarket", str(tmp_path))
+
+
+def test_download_rejects_an_empty_archive_even_with_a_benign_warning(tmp_path: Path) -> None:
+    runtime = driver()
+    response = DownloadExecResponse(
+        "",
+        "tar: joinmarket/log.txt: file changed as we read it\n",
+    )
+
+    with patch("manager.driver.kubernetes.stream", return_value=response):
+        with pytest.raises(RuntimeError, match="empty archive"):
+            runtime.download("jcs-009", "/home/joinmarket", str(tmp_path))
 
 
 def test_storage_identity_reaches_the_pod_security_context() -> None:
