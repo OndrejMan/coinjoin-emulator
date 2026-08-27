@@ -49,6 +49,7 @@ class EngineArgs(Protocol):
     download_path: str
     controller_done_marker: str
     controller_failed_marker: str
+    distributor_startup_timeout: int
     joinmarket_descriptor_regtest_fallback: bool
     disable_port_forward: bool
     btc_node_image: str

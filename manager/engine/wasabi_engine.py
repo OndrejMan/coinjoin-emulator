@@ -36,6 +36,11 @@ SUCCESSFUL_BROADCAST_RE = re.compile(
 )
 WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
 WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
+# The distributor is the first client to start, so it downloads a block filter
+# for the whole pre-mined chain before its wallet answers. The Docker path
+# starts from the ~1000 blocks baked into the btc-node image, which put the
+# previous hard-coded 360s within noise of a timeout on a loaded host.
+DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT = 900
 
 
 class WasabiEngine(EngineBase):
@@ -211,8 +216,15 @@ class WasabiEngine(EngineBase):
             stop=(0, 0),
         )
         self.distributor = cast(InvoiceDistributor, distributor)
-        if not distributor.wait_wallet(timeout=360):
-            print("- could not start distributor (application timeout)")
+        timeout = int(
+            getattr(
+                self.args,
+                "distributor_startup_timeout",
+                DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT,
+            )
+        )
+        if not distributor.wait_wallet(timeout=timeout):
+            print(f"- could not start distributor (application timeout {timeout} seconds)")
             raise StartupError("Could not start distributor")
         print("- started distributor")
 

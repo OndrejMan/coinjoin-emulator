@@ -21,11 +21,12 @@ from manager.driver.openshift import OpenshiftDriver
 from manager.driver.podman import PodmanDriver
 from manager.engine.engine_base import EngineBase
 from manager.engine.joinmarket_engine import JoinmarketEngine
-from manager.engine.wasabi_engine import WasabiEngine
+from manager.engine.wasabi_engine import DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT, WasabiEngine
 from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 
 DEFAULT_IMAGE_PREFIX = ""
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+DISTRIBUTOR_STARTUP_TIMEOUT_ENV = "COINJOIN_DISTRIBUTOR_STARTUP_TIMEOUT"
 
 ParsedArgs = argparse.Namespace | SimpleNamespace
 DriverFactory = Callable[[ParsedArgs], Driver]
@@ -33,6 +34,39 @@ EngineFactory = Callable[[ParsedArgs, Driver], EngineBase]
 EngineRunner = Callable[[ParsedArgs, Driver, EngineBase], int]
 GenscenHandler = Callable[[ParsedArgs], None]
 Dispatcher = Callable[[ParsedArgs], int]
+
+
+def positive_seconds(value: str) -> int:
+    """Parse a timeout in whole seconds, rejecting zero and negatives."""
+    try:
+        seconds = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"timeout must be an integer number of seconds: {value!r}") from error
+    if seconds <= 0:
+        raise argparse.ArgumentTypeError(f"timeout must be a positive number of seconds: {value!r}")
+    return seconds
+
+
+def default_distributor_startup_timeout() -> int:
+    """Read the distributor timeout default from the environment.
+
+    Drivers that cannot easily extend the manager command line - compose and
+    the Kubernetes controller both template a fixed one - set the environment
+    variable instead. An unusable value falls back to the built-in default
+    rather than failing a run over a malformed knob.
+    """
+    raw = os.environ.get(DISTRIBUTOR_STARTUP_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT
+    try:
+        seconds = int(raw)
+    except ValueError:
+        log.warning(f"Ignoring non-numeric {DISTRIBUTOR_STARTUP_TIMEOUT_ENV}={raw!r}")
+        return DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT
+    if seconds <= 0:
+        log.warning(f"Ignoring non-positive {DISTRIBUTOR_STARTUP_TIMEOUT_ENV}={raw!r}")
+        return DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT
+    return seconds
 
 
 def handle_genscen(args: ParsedArgs) -> None:
@@ -115,6 +149,16 @@ def _add_run_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPars
     parser.add_argument("--control-ip", default="localhost", help="control ip")
     parser.add_argument("--download-btc-data", default="")
     parser.add_argument("--download-path", default=DEFAULT_BTC_DOWNLOAD_PATH)
+    parser.add_argument(
+        "--distributor-startup-timeout",
+        type=positive_seconds,
+        default=default_distributor_startup_timeout(),
+        metavar="SECONDS",
+        help=(
+            "how long to wait for the distributor wallet to answer before failing the run "
+            f"(default {DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT}s, or ${DISTRIBUTOR_STARTUP_TIMEOUT_ENV})"
+        ),
+    )
     parser.add_argument(
         "--joinmarket-descriptor-regtest-fallback",
         action=argparse.BooleanOptionalAction,
