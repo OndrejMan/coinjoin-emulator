@@ -4,7 +4,7 @@ from typing import cast
 
 from manager.exceptions import CoinjoinEmulatorError
 
-from . import Driver
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 
 
 class PodmanDriver(Driver):
@@ -82,6 +82,8 @@ class PodmanDriver(Driver):
             name,
             "--network",
             self.network,
+            "--sysctl",
+            f"{RESERVED_PORTS_SYSCTL}={RESERVED_PORT_RANGE}",
         ]
 
         for container_port, host_port in (ports or {}).items():

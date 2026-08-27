@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import docker
 import pytest
 
+from manager.driver import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL
 from manager.driver.docker import DockerDriver
 
 
@@ -29,6 +30,9 @@ def test_run_uses_network_dns_name_instead_of_legacy_ip_field() -> None:
     assert ports == {37128: 37131}
     assert route is None
     assert client.containers.run.call_args.kwargs["auto_remove"] is False
+    assert client.containers.run.call_args.kwargs["sysctls"] == {
+        RESERVED_PORTS_SYSCTL: RESERVED_PORT_RANGE
+    }
 
 
 def test_stop_removes_container_after_preserving_it_for_diagnostics() -> None:

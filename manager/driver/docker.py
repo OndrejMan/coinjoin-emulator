@@ -7,7 +7,7 @@ from typing import Protocol, cast
 
 import docker
 
-from . import Driver
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 
 
 class DockerNetwork(Protocol):
@@ -75,6 +75,7 @@ class DockerDriver(Driver):
             environment=env or {},
             volumes=volumes,
             command=command,
+            sysctls={RESERVED_PORTS_SYSCTL: RESERVED_PORT_RANGE},
         )
 
         # Containers on the user-defined bridge network resolve each other by

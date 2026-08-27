@@ -2,6 +2,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from multiprocessing.pool import ThreadPool
 
+RESERVED_PORT_RANGE = "37127-37260"
+RESERVED_PORTS_SYSCTL = "net.ipv4.ip_local_reserved_ports"
+
 
 class Driver(ABC):
     @abstractmethod

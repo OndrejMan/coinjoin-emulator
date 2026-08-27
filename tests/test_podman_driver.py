@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
+from manager.driver import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL
 from manager.driver.podman import PodmanDriver
 from manager.exceptions import CoinjoinEmulatorError
 
@@ -56,6 +57,9 @@ def test_run_uses_podman_network_and_preserves_three_part_endpoint() -> None:
     commands = [call.args[0] for call in run.call_args_list]
     run_command = next(command for command in commands if command[:2] == ["podman", "run"])
     assert "--rm" not in run_command
+    assert ["--sysctl", f"{RESERVED_PORTS_SYSCTL}={RESERVED_PORT_RANGE}"] == run_command[
+        run_command.index("--sysctl") : run_command.index("--sysctl") + 2
+    ]
     assert ["-p", "28184:28183"] == run_command[run_command.index("-p") : run_command.index("-p") + 2]
     assert "/host/data:/container/data:rw" in run_command
     assert run_command[-2:] == ["client:latest", "--flag"]

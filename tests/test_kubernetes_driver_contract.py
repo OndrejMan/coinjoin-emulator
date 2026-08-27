@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 import pytest
 from kubernetes.client.exceptions import ApiException
 
+from manager.driver import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL
 from manager.driver.kubernetes import MANAGED_BY_LABEL, MANAGED_BY_VALUE, KubernetesDriver
 from manager.exceptions import KubernetesResourceQuotaError, StartupError
 
@@ -56,6 +57,27 @@ def test_manifest_labels_resources_and_mounts_for_one_run() -> None:
     assert container["command"] == ["./run.sh", "-blocksxor=0"]
     assert container["volumeMounts"][0]["mountPath"] == "/home/bitcoin/data"
     assert spec["volumes"][0]["hostPath"]["path"] == "/data/run"
+    assert spec["securityContext"] == {
+        "sysctls": [{"name": RESERVED_PORTS_SYSCTL, "value": RESERVED_PORT_RANGE}]
+    }
+
+
+def test_sysctl_api_rejection_retries_without_the_reserved_range() -> None:
+    runtime = driver()
+    api = cast(Mock, runtime.client)
+    rejection = ApiException()
+    rejection.status = 422
+    rejection.body = "forbidden sysctl"
+    api.create_namespaced_pod.side_effect = [rejection, None]
+    api.read_namespaced_pod_status.return_value = SimpleNamespace(
+        status=SimpleNamespace(pod_ip="10.42.0.10", phase="Running")
+    )
+
+    runtime.run("btc-node", "example/btc", ports={})
+
+    assert api.create_namespaced_pod.call_count == 2
+    retried_manifest = api.create_namespaced_pod.call_args.kwargs["body"]
+    assert "securityContext" not in retried_manifest["spec"]
 
 
 def test_terminal_pod_phase_fails_instead_of_waiting_forever() -> None:

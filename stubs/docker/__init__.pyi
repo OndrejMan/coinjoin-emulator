@@ -48,6 +48,7 @@ class ContainerCollection:
         network: str,
         ports: dict[str, int] | dict[int, int],
         environment: dict[str, str],
+        sysctls: dict[str, str] | None = ...,
         volumes: dict[str, dict[str, str]] | None = ...,
         command: list[str] | None = ...,
     ) -> Container: ...

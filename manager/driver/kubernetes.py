@@ -19,7 +19,7 @@ from kubernetes.stream import stream
 
 from manager.exceptions import CoinjoinEmulatorError, KubernetesResourceQuotaError, StartupError
 
-from . import Driver
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 
 DEFAULT_CPU = 0.1
 DEFAULT_MEMORY = 768
@@ -43,6 +43,29 @@ def _split_tar_diagnostics(stderr: str) -> tuple[list[str], list[str]]:
             continue
         (benign if BENIGN_TAR_WARNING_RE.match(line.strip()) else fatal).append(line.strip())
     return benign, fatal
+
+
+def _strip_reserved_ports_sysctl(pod_manifest: dict[str, object]) -> bool:
+    """Remove the reserved-port sysctl when a cluster does not allow it."""
+    spec = cast(dict[str, object], pod_manifest.get("spec") or {})
+    pod_security_context = cast(dict[str, object], spec.get("securityContext") or {})
+    sysctls = cast(list[dict[str, str]], pod_security_context.get("sysctls") or [])
+    remaining = [sysctl for sysctl in sysctls if sysctl.get("name") != RESERVED_PORTS_SYSCTL]
+    if len(remaining) == len(sysctls):
+        return False
+    if remaining:
+        pod_security_context["sysctls"] = remaining
+    else:
+        pod_security_context.pop("sysctls")
+        if not pod_security_context:
+            spec.pop("securityContext")
+    return True
+
+
+def _is_sysctl_rejection(error: ApiException) -> bool:
+    if getattr(error, "status", None) not in {400, 403, 422}:
+        return False
+    return "sysctl" in str(getattr(error, "body", "") or error).lower()
 
 
 class ExecStream(Protocol):
@@ -236,6 +259,14 @@ class KubernetesDriver(Driver):
                 "restartPolicy": "Never",
                 "containers": [container],
                 "volumes": pod_volumes,
+                "securityContext": {
+                    "sysctls": [
+                        {
+                            "name": RESERVED_PORTS_SYSCTL,
+                            "value": RESERVED_PORT_RANGE,
+                        }
+                    ]
+                },
                 # Add imagePullSecrets if pull_secret_path is set
                 **({"imagePullSecrets": [{"name": "regcred"}]} if self.pull_secret_path else {}),
             },
@@ -260,34 +291,20 @@ class KubernetesDriver(Driver):
             name, image, env, ports, cpu, memory, run_as_user, volumes, command,
             group_id=run_as_group,
         )
-        try:
-            resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
-        except ApiException as error:
-            details = str(getattr(error, "body", "") or error)
-            if error.status == 403 and "exceeded quota" in details.lower():
-                raise KubernetesResourceQuotaError(
-                    f"Kubernetes quota rejected pod {name} in namespace {self.namespace}: {details}"
-                ) from error
-            raise
+        self._create_pod(name, pod_manifest)
 
-        pod_ip = None
-        deadline = time.monotonic() + POD_IP_WAIT_TIMEOUT_SECONDS
         try:
-            while pod_ip is None:
-                pod_status = self.client.read_namespaced_pod_status(
-                    name=name, namespace=self.namespace
-                ).status
-                pod_ip = pod_status.pod_ip
-                if pod_status.phase in {"Failed", "Succeeded"} and pod_ip is None:
-                    raise StartupError(
-                        f"Pod {name} entered terminal phase {pod_status.phase} before receiving an IP"
-                    )
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"Pod {name} did not receive an IP within {POD_IP_WAIT_TIMEOUT_SECONDS}s "
-                        f"(last phase: {pod_status.phase})"
-                    )
-                sleep(1)
+            pod_ip = self._wait_for_pod_ip(name)
+        except StartupError as error:
+            if "SysctlForbidden" not in str(error) or not _strip_reserved_ports_sysctl(pod_manifest):
+                raise
+            print(
+                f"[WARNING] kubelet forbade {RESERVED_PORTS_SYSCTL} for pod {name}; "
+                "recreating it without the reserved port range"
+            )
+            self.stop(name)
+            self._create_pod(name, pod_manifest)
+            pod_ip = self._wait_for_pod_ip(name)
         except Exception as e:
             print(f"Failed to get pod IP: {e}")
             raise
@@ -330,6 +347,53 @@ class KubernetesDriver(Driver):
             map(lambda x: (x.target_port, x.node_port), resp.spec.ports)
         )
         return pod_ip or "", port_mapping, None
+
+    def _create_pod(self, name: str, pod_manifest: dict[str, object]) -> None:
+        try:
+            self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+            return
+        except ApiException as error:
+            details = str(getattr(error, "body", "") or error)
+            if error.status == 403 and "exceeded quota" in details.lower():
+                raise KubernetesResourceQuotaError(
+                    f"Kubernetes quota rejected pod {name} in namespace {self.namespace}: {details}"
+                ) from error
+            if not _is_sysctl_rejection(error) or not _strip_reserved_ports_sysctl(pod_manifest):
+                raise
+            print(
+                f"[WARNING] cluster rejected {RESERVED_PORTS_SYSCTL} for pod {name}; "
+                "starting it without the reserved port range"
+            )
+        self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+
+    def _wait_for_pod_ip(self, name: str) -> str:
+        pod_ip = None
+        deadline = time.monotonic() + POD_IP_WAIT_TIMEOUT_SECONDS
+        while pod_ip is None:
+            pod_status = self.client.read_namespaced_pod_status(
+                name=name, namespace=self.namespace
+            ).status
+            pod_ip = pod_status.pod_ip
+            if pod_status.phase in {"Failed", "Succeeded"} and pod_ip is None:
+                detail = " ".join(
+                    str(value)
+                    for value in (
+                        getattr(pod_status, "reason", None),
+                        getattr(pod_status, "message", None),
+                    )
+                    if value
+                )
+                suffix = f": {detail}" if detail else ""
+                raise StartupError(
+                    f"Pod {name} entered terminal phase {pod_status.phase} before receiving an IP{suffix}"
+                )
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Pod {name} did not receive an IP within {POD_IP_WAIT_TIMEOUT_SECONDS}s "
+                    f"(last phase: {pod_status.phase})"
+                )
+            sleep(1)
+        return str(pod_ip)
 
     def stop(self, name: str) -> None:
         try:
