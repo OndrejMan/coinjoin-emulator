@@ -47,6 +47,15 @@ def test_stop_removes_container_after_preserving_it_for_diagnostics() -> None:
     container.remove.assert_called_once_with(force=True, v=True)
 
 
+def test_logs_decode_container_output() -> None:
+    driver = object.__new__(DockerDriver)
+    client = Mock()
+    client.containers.get.return_value.logs.return_value = b"address already in use\n"
+    driver.client = cast(docker.DockerClient, client)
+
+    assert driver.logs("wasabi-coordinator") == "address already in use\n"
+
+
 def test_download_surfaces_missing_container() -> None:
     driver = object.__new__(DockerDriver)
     client = Mock()

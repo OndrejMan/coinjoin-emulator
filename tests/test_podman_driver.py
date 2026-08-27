@@ -79,6 +79,16 @@ def test_download_and_upload_use_podman_cp() -> None:
     ]
 
 
+def test_logs_use_podman_logs() -> None:
+    with patch(
+        "manager.driver.podman.subprocess.run",
+        return_value=SimpleNamespace(returncode=0, stdout="coordinator log\n"),
+    ) as run:
+        assert PodmanDriver().logs("wasabi-coordinator") == "coordinator log\n"
+
+    assert run.call_args.args[0] == ["podman", "logs", "wasabi-coordinator"]
+
+
 def test_download_reports_podman_cp_failure() -> None:
     failure = subprocess.CalledProcessError(
         returncode=125,

@@ -120,6 +120,17 @@ def test_cleanup_selects_only_managed_resources() -> None:
     )
 
 
+def test_logs_use_the_pod_log_api() -> None:
+    runtime = driver()
+    api = cast(Mock, runtime.client)
+    api.read_namespaced_pod_log.return_value = "coordinator log\n"
+
+    assert runtime.logs("wasabi-coordinator") == "coordinator log\n"
+    api.read_namespaced_pod_log.assert_called_once_with(
+        name="wasabi-coordinator", namespace="coinjoin"
+    )
+
+
 class ClosedExecResponse:
     returncode = 0
 

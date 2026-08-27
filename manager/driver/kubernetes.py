@@ -502,6 +502,9 @@ class KubernetesDriver(Driver):
             resp.close()
         return output
 
+    def logs(self, name: str) -> str:
+        return str(self.client.read_namespaced_pod_log(name=name, namespace=self.namespace))
+
     def get_pod_resource_usage(self, name: str) -> dict[str, float] | None:
         """
         Get memory usage of a pod by reading /proc/self/status.

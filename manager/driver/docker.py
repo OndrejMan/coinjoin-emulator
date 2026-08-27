@@ -136,6 +136,9 @@ class DockerDriver(Driver):
                 raise FileNotFoundError(path)
             return extracted.read().decode()
 
+    def logs(self, name: str) -> str:
+        return self.client.containers.get(name).logs(stdout=True, stderr=True).decode(errors="replace")
+
     def upload(self, name: str, src_path: str, dst_path: str) -> None:
         fo = BytesIO()
         with tarfile.open(fileobj=fo, mode="w") as tar:

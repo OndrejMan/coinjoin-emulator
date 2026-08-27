@@ -164,6 +164,9 @@ class PodmanDriver(Driver):
         result = self._run(["exec", name, "cat", path], capture_output=True, text=True)
         return result.stdout
 
+    def logs(self, name: str) -> str:
+        return self._run(["logs", name], capture_output=True, text=True).stdout
+
     def upload(self, name: str, src_path: str, dst_path: str) -> None:
         self._run(["cp", src_path, f"{name}:{dst_path}"])
 
