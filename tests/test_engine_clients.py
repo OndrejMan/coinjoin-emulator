@@ -10,24 +10,32 @@ from manager.engine.configuration import JoinMarketConfig, ScenarioConfig, Walle
 
 
 class StartedClient:
-    def __init__(self, idx: int) -> None:
+    def __init__(self, idx: int, healthy: bool = True) -> None:
         self.name = f"client-{idx}"
         self.idx = idx
+        self.healthy = healthy
 
     def wait_wallet(self, timeout: int | None = None) -> bool:
         return True
 
     def get_balance(self) -> int:
+        if not self.healthy:
+            raise OSError("wallet RPC unavailable")
         return 0
 
 
 class ClientsHarness(EngineClientsMixin):
-    def __init__(self, failing: set[int] | None = None) -> None:
+    def __init__(
+        self,
+        failing: set[int] | None = None,
+        unhealthy_after_start: set[int] | None = None,
+    ) -> None:
         self.clients: list[EmulatorClient] = []
         self.scenario = ScenarioConfig(
             name="test", rounds=0, blocks=0, default_version="joinmarket", wallets=[]
         )
         self.failing = failing or set()
+        self.unhealthy_after_start = unhealthy_after_start or set()
         self.permanently_failing: set[int] = set()
         self.started: list[int] = []
         self.stopped: list[int] = []
@@ -36,12 +44,13 @@ class ClientsHarness(EngineClientsMixin):
         self.started.append(idx)
         if idx in self.failing:
             return None
-        return cast(EmulatorClient, StartedClient(idx))
+        return cast(EmulatorClient, StartedClient(idx, healthy=idx not in self.unhealthy_after_start))
 
     def stop_client(self, idx: int) -> None:
         self.stopped.append(idx)
         if idx not in self.permanently_failing:
             self.failing.discard(idx)
+            self.unhealthy_after_start.discard(idx)
 
 
 def wallet() -> WalletConfig:
@@ -77,6 +86,16 @@ class TestStartClients:
         assert harness.stopped == [1]
         assert harness.started == [0, 1, 1]
         assert len(harness.clients) == 2
+
+    def test_client_that_dies_after_start_is_restarted_before_funding(self) -> None:
+        harness = ClientsHarness(unhealthy_after_start={1})
+
+        with patch("manager.engine.base.clients.sleep"):
+            harness.start_clients([wallet(), wallet()])
+
+        assert harness.stopped == [1]
+        assert harness.started == [0, 1, 1]
+        assert [cast(StartedClient, client).idx for client in harness.clients] == [0, 1]
 
     def test_client_that_never_starts_aborts_the_experiment(self) -> None:
         harness = ClientsHarness(failing={0})

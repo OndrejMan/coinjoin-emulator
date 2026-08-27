@@ -27,6 +27,22 @@ class EngineClientsMixin:
         def start_client(self, idx: int, wallet: WalletConfig | None = None) -> EmulatorClient | None: ...
         def stop_client(self, idx: int) -> None: ...
 
+    @staticmethod
+    def _client_health_error(client: EmulatorClient) -> str | None:
+        """Probe the already-created wallet without mutating its state."""
+        try:
+            # Calling wait_wallet() here is unsafe for JoinMarket: it creates a
+            # wallet again. A balance read verifies the RPC endpoint while
+            # leaving an existing wallet untouched.
+            client.get_balance()
+        except (CoinjoinEmulatorError, OSError, TypeError, ValueError) as error:
+            return str(error)
+        return None
+
+    @classmethod
+    def _client_is_healthy(cls, client: EmulatorClient) -> bool:
+        return cls._client_health_error(client) is None
+
     def _start_classified_wallets(
         self,
         pool: multiprocessing.pool.ThreadPool,
@@ -105,7 +121,7 @@ class EngineClientsMixin:
             for _ in range(3):
                 failed_indices = [
                     idx for idx, client in enumerate(new_clients, start=len(self.clients))
-                    if client is None
+                    if client is None or not self._client_is_healthy(client)
                 ]
 
                 if not failed_indices:
@@ -140,15 +156,8 @@ class EngineClientsMixin:
             raise RuntimeError(f"Expected {expected} clients, but only {actual} started")
 
         def healthcheck(client: EmulatorClient) -> tuple[str, bool, str | None]:
-            try:
-                # Startup already waited for and, for JoinMarket, created the
-                # wallet.  Calling wait_wallet() again is not a read-only
-                # health check there: it calls /wallet/create again and can
-                # loop on "Wallet already unlocked" until the timeout.
-                client.get_balance()
-            except (CoinjoinEmulatorError, OSError, TypeError, ValueError) as error:
-                return client.name, False, str(error)
-            return client.name, True, None
+            detail = self._client_health_error(client)
+            return client.name, detail is None, detail
 
         with multiprocessing.pool.ThreadPool() as pool:
             results = pool.map(healthcheck, self.clients)
