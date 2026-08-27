@@ -1,5 +1,3 @@
-from typing import cast
-
 from manager.wasabi_clients.joinmarket_clients.coins import JoinMarketCoinsMixin
 from manager.wasabi_clients.joinmarket_clients.types import JsonDict
 
@@ -34,6 +32,11 @@ class CoinsHarness(JoinMarketCoinsMixin):
         self.error: Exception | None = None
 
     def list_utxos(self) -> JsonDict:
+        if self.error is not None:
+            raise self.error
+        return self.responses.pop(0) if self.responses else {}
+
+    def display_wallet(self) -> JsonDict:
         if self.error is not None:
             raise self.error
         return self.responses.pop(0) if self.responses else {}
@@ -123,37 +126,60 @@ class TestCoinHistory:
 
 
 class TestListKeys:
-    def test_live_coins_are_refreshed_before_keys_are_exported(self) -> None:
-        final_coinjoin_output = utxo(path="m/84'/1'/0'/1/6")
-        harness = CoinsHarness({"utxos": [final_coinjoin_output]})
+    def test_every_derived_address_is_flattened_from_the_wallet_display(self) -> None:
+        harness = CoinsHarness(
+            {
+                "walletinfo": {
+                    "accounts": [
+                        {
+                            "account": "0",
+                            "branches": [
+                                {
+                                    "entries": [
+                                        {
+                                            "hd_path": "m/84'/1'/0'/0/000",
+                                            "address": "bcrt1qspent",
+                                            "amount": "0.00000000",
+                                            "status": "used",
+                                        },
+                                        {
+                                            "hd_path": "m/84'/1'/0'/1/000",
+                                            "address": "bcrt1qchange",
+                                            "amount": "0.10000000",
+                                            "status": "cj-out",
+                                        },
+                                    ]
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        )
 
-        keys = cast(list[JsonDict], harness.list_keys())
+        assert harness.list_keys() == [
+            {
+                "address": "bcrt1qspent",
+                "path": "m/84'/1'/0'/0/000",
+                "account": "0",
+                "status": "used",
+                "amount": "0.00000000",
+            },
+            {
+                "address": "bcrt1qchange",
+                "path": "m/84'/1'/0'/1/000",
+                "account": "0",
+                "status": "cj-out",
+                "amount": "0.10000000",
+            },
+        ]
 
-        assert [key["address"] for key in keys] == [final_coinjoin_output["address"]]
-        assert keys[0]["full_key_path"] == "84'/1'/0'/1/6"
-
-    def test_key_is_derived_for_every_coin_path(self) -> None:
-        harness = CoinsHarness({"utxos": [utxo()]})
-        harness.update_coin_history()
-
-        keys = cast(list[JsonDict], harness.list_keys())
-
-        assert len(keys) == 1
-        assert keys[0]["full_key_path"] == "84'/1'/0'/0/0"
-        assert keys[0]["internal"] is False
-        assert keys[0]["address"] == "bcrt1q0ldnp64tctudcfjuy89radpzecplauy7dvdf78"
-        assert isinstance(keys[0]["pubKey"], str)
-
-    def test_change_addresses_are_marked_internal(self) -> None:
-        harness = CoinsHarness({"utxos": [utxo(path="m/84'/1'/0'/1/0")]})
-        harness.update_coin_history()
-
-        keys = cast(list[JsonDict], harness.list_keys())
-
-        assert keys[0]["internal"] is True
-
-    def test_fidelity_bond_paths_are_skipped(self) -> None:
-        harness = CoinsHarness({"utxos": [utxo(path="79:1785542400")]})
-        harness.update_coin_history()
+    def test_entries_without_addresses_are_skipped(self) -> None:
+        harness = CoinsHarness(
+            {"walletinfo": {"accounts": [{"account": "0", "branches": [{"entries": [{"address": ""}]}]}]}}
+        )
 
         assert harness.list_keys() == []
+
+    def test_missing_accounts_produce_an_empty_key_list(self) -> None:
+        assert CoinsHarness({}).list_keys() == []

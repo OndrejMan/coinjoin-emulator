@@ -6,8 +6,6 @@
 
 from typing import TYPE_CHECKING, cast
 
-from bip_utils import Bip32Slip10Secp256k1, Bip39SeedGenerator
-
 from .types import JsonDict
 
 
@@ -18,6 +16,7 @@ class JoinMarketCoinsMixin:
     coin_history: dict[str, JsonDict]
 
     if TYPE_CHECKING:
+        def display_wallet(self) -> JsonDict: ...
         def list_utxos(self) -> JsonDict: ...
         async def list_utxos_async(self) -> JsonDict: ...
 
@@ -57,41 +56,24 @@ class JoinMarketCoinsMixin:
             list(self.coin_history.values()))
 
     def list_keys(self) -> object:
-        """List keys for every coin observed up to the time of export.
-
-        A final CoinJoin can create wallet outputs after the engine's last
-        status poll.  Refresh the history here so those live outputs are not
-        missing from ``keys.json`` and subsequently attributed to a fictitious
-        coordinator by the analysis pipeline.
-        """
-        self.update_coin_history()
-        seed_bytes = Bip39SeedGenerator(self.seedphrase).Generate()
-        coins = self.list_coins()
+        """List every address the wallet derived from its complete display."""
+        walletinfo = cast(JsonDict, self.display_wallet().get("walletinfo") or {})
         keys: list[JsonDict] = []
-        for coin in coins:
-            key_path = str(coin.get("keyPath", ""))
-
-            # Skip fidelity bond coins that have colons in their paths (e.g., "79:1785542400")
-            # These are not valid BIP32 paths and are handled differently in JoinMarket
-            if ":" in key_path:
-                print(f"Skipping fidelity bond coin with path: {key_path}")
-                continue
-
-            # Skip empty paths
-            if not key_path:
-                continue
-
-            key: JsonDict = {"full_key_path": key_path}
-            try:
-                bip32_ctx = Bip32Slip10Secp256k1.FromSeedAndPath(seed_bytes, str(key_path))
-                key["pubKey"] = bip32_ctx.PublicKey().RawUncompressed().ToHex()
-                key["internal"] = str(key_path).split("/")[-2] == "1"
-                key["address"] = coin.get("address", "")
-                keys.append(key)
-            except Exception as e:
-                print(f"Error processing key path '{key_path}': {e}")
-                continue
-
+        for account in cast(list[JsonDict], walletinfo.get("accounts") or []):
+            for branch in cast(list[JsonDict], account.get("branches") or []):
+                for entry in cast(list[JsonDict], branch.get("entries") or []):
+                    address = entry.get("address")
+                    if not address:
+                        continue
+                    keys.append(
+                        {
+                            "address": str(address),
+                            "path": str(entry.get("hd_path", "")),
+                            "account": str(account.get("account", "")),
+                            "status": str(entry.get("status", "")),
+                            "amount": str(entry.get("amount", "")),
+                        }
+                    )
         return keys
 
     def update_coin_history(self) -> None:

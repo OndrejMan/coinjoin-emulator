@@ -33,6 +33,22 @@ class BlockchainInterface(Protocol):
     RegtestBitcoinCoreInterface: RegtestBitcoinCoreInterfaceType
 
 
+class WalletDisplay(Protocol):
+    _display_all_addresses: bool
+
+    def __call__(
+        self,
+        wallet_service: object,
+        showprivkey: bool,
+        *args: object,
+        **kwargs: object,
+    ) -> object: ...
+
+
+class WalletRpcModule(Protocol):
+    wallet_display: WalletDisplay
+
+
 class PatchedRpcMethod(Protocol):
     _descriptor_regtest_fallback: bool
 
@@ -92,10 +108,42 @@ def install_descriptor_regtest_fallback(
     return True
 
 
+def install_display_all_addresses(
+    wallet_rpc: WalletRpcModule | None = None,
+) -> bool:
+    """Make the wallet display include every derived address, including spent ones."""
+    if wallet_rpc is None:
+        from jmclient import wallet_rpc as imported_wallet_rpc  # pylint: disable=import-error,import-outside-toplevel
+
+        wallet_rpc = cast(WalletRpcModule, imported_wallet_rpc)
+
+    original_display = wallet_rpc.wallet_display
+    if getattr(original_display, "_display_all_addresses", False):
+        return False
+
+    def wallet_display_all(
+        wallet_service: object,
+        showprivkey: bool,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        if args:
+            args = (True, *args[1:])
+        else:
+            kwargs["displayall"] = True
+        return original_display(wallet_service, showprivkey, *args, **kwargs)
+
+    patched_display = cast(WalletDisplay, wallet_display_all)
+    patched_display._display_all_addresses = True  # pylint: disable=protected-access
+    wallet_rpc.wallet_display = patched_display
+    return True
+
+
 def main() -> int:
     enabled = os.getenv("JM_DESCRIPTOR_REGTEST_FALLBACK", "0").strip().lower() in TRUE_VALUES
     if enabled:
         install_descriptor_regtest_fallback()
+    install_display_all_addresses()
     sys.argv = [JMWALLETD_PATH, *sys.argv[1:]]
     runpy.run_path(JMWALLETD_PATH, run_name="__main__")
     return 0
