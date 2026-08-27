@@ -1,0 +1,90 @@
+# pylint: disable=assignment-from-no-return,unused-argument
+
+from typing import TYPE_CHECKING
+
+import requests
+
+from manager import log_output as log
+
+from ...exceptions import RpcError
+from .types import (
+    STOP_SERVICE_NOT_RUNNING_MESSAGE,
+    JoinmarketConflictException,
+    JsonDict,
+    is_stop_service_not_running_error,
+)
+
+
+class JoinMarketMakerMixin:
+    walletname: str
+    maker_running: bool
+
+    if TYPE_CHECKING:
+        def _rpc(
+            self,
+            method: str,
+            endpoint: str,
+            json_data: JsonDict | None = None,
+            timeout: int = 5,
+            repeat: int = 4,
+            auth_required: bool = True,
+        ) -> JsonDict: ...
+
+    def get_yieldgen_report(self) -> JsonDict:
+        """Get the latest report on yield-generating activity."""
+        method = "GET"
+        endpoint = "/wallet/yieldgen/report"
+        response = self._rpc(method, endpoint)
+        return response
+
+    def start_maker(
+        self,
+        txfee: int | str,
+        cjfee_a: int | str,
+        cjfee_r: float | str,
+        ordertype: str,
+        minsize: int | str,
+    ) -> JsonDict | requests.Response:
+        """
+        Start the yield generator service with the specified configuration.
+        - txfee: str or int, e.g., "0" (absolute fee in satoshis)
+        - cjfee_a: str or int, e.g., "5000" (absolute coinjoin fee in satoshis)
+        - cjfee_r: str or float, e.g., "0.00004" (relative coinjoin fee as a fraction)
+        - ordertype: str, e.g., "reloffer" or "absoffer"
+        - minsize: str or int, minimum coinjoin size in satoshis. Should be higher then 27300sats
+        """
+        method = "POST"
+        endpoint = f"/wallet/{self.walletname}/maker/start"
+        json_data: JsonDict = {
+            "txfee": str(txfee),
+            "cjfee_a": str(cjfee_a),
+            "cjfee_r": str(cjfee_r),
+            "ordertype": ordertype,
+            "minsize": str(minsize),
+        }
+
+        try:
+            return self._rpc(method, endpoint, json_data=json_data)
+        except JoinmarketConflictException as e:
+            detail = getattr(e.response, "text", "") or str(e)
+            log.warning(f"Could not start maker: {detail}")
+            return e.response
+
+    def stop_maker(self) -> JsonDict | bool:
+        """Stop the yield generator service."""
+        method = "GET"
+        endpoint = f"/wallet/{self.walletname}/maker/stop"
+        try:
+            return self._rpc(method, endpoint)
+        except RpcError as e:
+            if is_stop_service_not_running_error(e):
+                log.info(STOP_SERVICE_NOT_RUNNING_MESSAGE)
+                return True
+            raise
+
+    def list_transactions_maker(self) -> JsonDict:
+        """List all transactions in the wallet."""
+        method = "GET"
+        endpoint = "/wallet/yieldgen/report"
+        response = self._rpc(method, endpoint)
+        return response

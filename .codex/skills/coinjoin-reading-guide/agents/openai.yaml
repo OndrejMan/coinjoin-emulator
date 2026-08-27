@@ -1,0 +1,4 @@
+interface:
+  display_name: "CoinJoin Reading Guide"
+  short_description: "Guide code reading through coinjoin-emulator."
+  default_prompt: "Use $coinjoin-reading-guide to suggest what I should read next in this repository."

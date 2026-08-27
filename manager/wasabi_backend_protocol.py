@@ -1,6 +1,6 @@
 """Protocol definition for Wasabi backend implementations."""
 
-from typing import Protocol, Any
+from typing import Protocol
 
 
 class WasabiBackendProtocol(Protocol):
@@ -11,7 +11,7 @@ class WasabiBackendProtocol(Protocol):
     internal_ip: str
     proxy: str
     
-    def _rpc(self, request: dict[str, Any]) -> Any:
+    def _rpc(self, request: dict[str, object]) -> object:
         """Execute an RPC call to the backend.
         
         Args:
@@ -20,16 +20,16 @@ class WasabiBackendProtocol(Protocol):
         Returns:
             The result of the RPC call, or "timeout" on timeout
         """
-        ...
+        raise NotImplementedError
     
-    def _get_status(self) -> dict[str, Any]:
+    def _get_status(self) -> dict[str, object]:
         """Get the backend status.
         
         Returns:
             Status information as a dictionary
         """
-        ...
+        raise NotImplementedError
     
     def wait_ready(self) -> None:
         """Wait until the backend is ready to accept requests."""
-        ...
+        raise NotImplementedError

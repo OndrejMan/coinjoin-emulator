@@ -1,0 +1,192 @@
+# pylint: disable=assignment-from-no-return,unused-argument
+
+from time import sleep, time
+from typing import TYPE_CHECKING, cast
+
+import requests
+
+from manager import log_output as log
+
+from ...exceptions import RpcError
+from .types import BTC, PASSWORD, WALLET_NAME, WALLET_TYPE, JsonDict
+
+WALLET_CREATE_TIMEOUT_SECONDS = 60
+
+
+class JoinMarketWalletMixin:
+    name: str
+    walletname: str
+    maker_running: bool
+    coinjoin_in_process: bool
+
+    if TYPE_CHECKING:
+        def _rpc(
+            self,
+            method: str,
+            endpoint: str,
+            json_data: JsonDict | None = None,
+            timeout: int = 5,
+            repeat: int = 4,
+            auth_required: bool = True,
+        ) -> JsonDict: ...
+
+        def _store_tokens(self, response: JsonDict) -> None: ...
+
+    def get_status(self) -> JsonDict:
+        method = "GET"
+        endpoint = "/session"
+        response = self._rpc(method, endpoint, auth_required=False)
+        self.maker_running = bool(response.get("maker_running", False))
+        self.coinjoin_in_process = bool(response.get("coinjoin_in_process", False))
+        return response
+
+    def _create_wallet(self, walletname: str | None = None) -> JsonDict:
+        """Create a new wallet and store its name."""
+        method = "POST"
+        endpoint = "/wallet/create"
+        self.walletname = walletname or self.walletname or WALLET_NAME
+        data: JsonDict = {
+            "walletname": self.walletname,
+            "password": PASSWORD,
+            "wallettype": WALLET_TYPE,
+        }
+        response = self._rpc(
+            method,
+            endpoint,
+            json_data=data,
+            timeout=WALLET_CREATE_TIMEOUT_SECONDS,
+            repeat=1,
+            auth_required=False,
+        )
+        self._store_tokens(response)
+        return response
+
+    def unlock_wallet(self, password: str | None = None) -> JsonDict:
+        """Unlock an existing wallet using the stored walletname."""
+        method = "POST"
+        endpoint = f"/wallet/{self.walletname}/unlock"
+        json_data: JsonDict = {"password": password or PASSWORD}
+        response = self._rpc(method, endpoint, json_data=json_data, auth_required=False)
+        self._store_tokens(response)
+        return response
+
+    def wait_wallet(self, timeout: int | None = None) -> bool:
+        start = time()
+        last_create_err = None
+        last_readiness_err = None
+        create_attempted = False
+        while timeout is None or time() - start < timeout:
+            if not create_attempted:
+                try:
+                    self._create_wallet()
+                except (
+                    requests.exceptions.RequestException,
+                    RpcError,
+                    TimeoutError,
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                ) as e:
+                    last_create_err = e
+                    if self._is_wallet_already_unlocked_error(e):
+                        create_attempted = True
+                else:
+                    create_attempted = True
+
+            try:
+                self.get_new_address()
+                return True
+            except (requests.exceptions.RequestException, RpcError, TimeoutError, KeyError, TypeError, ValueError) as e:
+                last_readiness_err = e
+
+            sleep(0.1)
+        log.warning(f"- {self.name} wait_wallet timed out after {timeout}s.")
+        log.warning(f"  Last create error: {last_create_err}")
+        log.warning(f"  Last readiness error: {last_readiness_err}")
+        return False
+
+    def _is_wallet_already_unlocked_error(self, error: Exception) -> bool:
+        return "Wallet already unlocked" in str(error)
+
+    def display_wallet(self) -> JsonDict:
+        """Get detailed breakdown of wallet contents by account."""
+        method = "GET"
+        endpoint = f"/wallet/{self.walletname}/display"
+        response = self._rpc(method, endpoint)
+        return response
+
+    def get_balance(self) -> int:
+        """Retrieve the available balance of the wallet.
+        Returns: str: The available balance as a string in BTC (e.g., '0.00000000').
+        Raises: Exception: If the balance information cannot be retrieved.
+        """
+        response = self.display_wallet()
+        try:
+            walletinfo = cast(JsonDict, response["walletinfo"])
+            available_balance = walletinfo["available_balance"]
+            return int(float(str(available_balance)) * BTC)
+        except KeyError as e:
+            raise RpcError(f"Could not retrieve available balance: {e}") from e
+
+    def get_new_address(self, mixdepth: int = 0) -> str:
+        """Get a fresh address in the given account for depositing funds."""
+        method = "GET"
+        endpoint = f"/wallet/{self.walletname}/address/new/{mixdepth}"
+        response = self._rpc(method, endpoint)
+        return str(response["address"])
+
+    def get_new_timelock_address(self, lockdate: str) -> JsonDict:
+        """Get a fresh timelock address for depositing funds to create a fidelity bond."""
+        method = "GET"
+        endpoint = f"/wallet/{self.walletname}/address/timelock/new/{lockdate}"
+        response = self._rpc(method, endpoint)
+        return response
+
+    def list_utxos(self) -> JsonDict:
+        """List details of all UTXOs currently in the wallet."""
+        method = "GET"
+        endpoint = f"/wallet/{self.walletname}/utxos"
+        response = self._rpc(method, endpoint)
+        return response
+
+    def list_unspent_coins(self) -> JsonDict:
+        """List all unspent coins in the wallet."""
+        method = "GET"
+        endpoint = f"/wallet/{self.walletname}/utxos"
+        response = self._rpc(method, endpoint)
+        return response
+
+    def list_coins(self) -> str:
+        """List all coins in the wallet."""
+        return "This method is not available in joinmarket"
+
+    def list_keys(self) -> object:
+        """List every address this wallet derived, as ``listkeys``-shaped records.
+
+        JoinMarket has no ``listkeys`` RPC, so the wallet's own display output
+        stands in for it: each entry names an address together with the
+        derivation path that proves the wallet owns it. The emulator's jmwalletd
+        entrypoint forces the display to include already-spent addresses, which
+        JoinMarket otherwise hides -- without them a CoinJoin input cannot be
+        traced back to the wallet that funded it.
+        """
+        walletinfo = cast(JsonDict, self.display_wallet().get("walletinfo") or {})
+        keys: list[JsonDict] = []
+        for account in cast(list[JsonDict], walletinfo.get("accounts") or []):
+            for branch in cast(list[JsonDict], account.get("branches") or []):
+                for entry in cast(list[JsonDict], branch.get("entries") or []):
+                    address = entry.get("address")
+                    if not address:
+                        continue
+                    keys.append(
+                        {
+                            "address": str(address),
+                            "path": str(entry.get("hd_path", "")),
+                            "account": str(account.get("account", "")),
+                            "status": str(entry.get("status", "")),
+                            "amount": str(entry.get("amount", "")),
+                        }
+                    )
+        if not keys:
+            log.warning(f"- {self.name} wallet display reported no addresses")
+        return keys

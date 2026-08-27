@@ -5,12 +5,12 @@ class WasabiClientV204(WasabiClientBase):
 
     def __init__(
         self,
-        host="localhost",
-        port=37128,
-        name="wasabi-client",
-        proxy="",
-        version="2.0.4",
-        delay=(0, 0),
-        stop=(0, 0),
-    ):
+        host: str = "localhost",
+        port: int = 37128,
+        name: str = "wasabi-client",
+        proxy: str = "",
+        version: str = "2.0.4",
+        delay: tuple[int, int] = (0, 0),
+        stop: tuple[int, int] = (0, 0),
+    ) -> None:
         super().__init__(host, port, name, proxy, version, delay, stop)

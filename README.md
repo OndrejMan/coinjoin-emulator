@@ -4,10 +4,10 @@ A container-based setup for the emulation of CoinJoin transactions on RegTest ne
 
 ## Usage
 
-1. Install [Docker](https://docker.com/) and [Python](http://python.org/).
+1. Install [Docker](https://docker.com/) or [Podman](https://podman.io/), [Python](http://python.org/), and [uv](https://docs.astral.sh/uv/).
 2. Clone the repository `git clone --recurse-submodules https://github.com/crocs-muni/coinjoin-emulator`.
-3. Install dependencies: `pip install -r requirements.txt`.
-4. Run the default scenario with the default driver: `python manager.py run`.
+3. Install dependencies: `uv sync`.
+4. Run the default scenario with the default driver: `uv run python manager.py run`.
    - [Scenario](#scenarios) definition file can be specified using the `--scenario` option.
 
 For more complex setups see section [Advanced usage](#advanced-usage).
@@ -46,6 +46,10 @@ Scenario definition files can be passed to the simulation script using the `--sc
 The fields are as follows:
 - `name` field is the name of the scenario used for output logs.
 - `rounds` field is the number of coinjoin rounds after which the simulation terminates. If set to 0, the simulation will run indefinitely.
+  A round is *counted* differently per engine: the Wasabi engine counts a round when the coordinator logs a successful broadcast
+  (split architecture) or when its id appears in the backend's `CoinJoinIdStore.txt` (legacy architecture); the JoinMarket engine
+  counts a round when a taker's coinjoin transaction is confirmed on chain. The run loop exits as soon as the count reaches `rounds`,
+  then mines a few settlement blocks so the final round's transaction can still confirm before logs are stored.
 - `blocks` field is the number of mined blocks after which the simulation terminates. If set to 0, the simulation will run indefinitely.
 - `default_version` field is the string representing of the version of wallet wasabi used for clients without the version specification.
 - `distributor_version` field is the string representing of the version of wallet wasabi used for the distributor client.
@@ -65,9 +69,85 @@ The fields are as follows:
   - `anon_score_target` is the target anon score of the wallet.
   - `redcoin_isolation` is a boolean value indicating whether the wallet should use redcoin isolation.
 
+### Nested engine-specific wallet fields
+
+Besides the flat legacy fields above, each wallet accepts nested engine-specific
+objects (`manager/engine/configuration.py` supports both spellings):
+
+- `wasabi` — object with `anon_score_target`, `redcoin_isolation`, and
+  `skip_rounds` (list of round numbers the wallet skips). The nested values take
+  precedence over the flat legacy fields.
+- `joinmarket` — object with `role`, either `"maker"` or `"taker"`. The legacy
+  flat spelling is `"type": "maker" | "taker"`. Specify a role explicitly for
+  every JoinMarket wallet; JoinMarket scenarios with a missing role are
+  rejected before containers start. Takers initiate coinjoins (one active
+  round at a time), makers provide liquidity. A round only starts once at least
+  `JOINMARKET_COUNTERPARTIES` (see `manager/engine/joinmarket/constants.py`)
+  makers are running and funded.
+
+### Validation boundaries
+
+Scenario parsing validates the required non-empty strings and wallet list,
+strict JSON booleans, non-negative `rounds`, `blocks`, delay, stop, and skipped
+round values, and positive fund amounts. Each wallet needs at least one fund.
+When `--engine joinmarket` is selected, every wallet additionally requires an
+explicit maker/taker role. This is keyed to the selected engine, not to the
+text of `default_version`, so custom JoinMarket image tags are validated too.
+Invalid input raises `ValueError` before any runtime resources are created.
+
+JoinMarket scenario example:
+
+```json
+{
+    "name": "default-joinmarket",
+    "rounds": 3,
+    "blocks": 0,
+    "default_version": "joinmarket",
+    "wallets": [
+        {"funds": [200000, 100000], "joinmarket": {"role": "taker"}},
+        {"funds": [1000000, 500000], "delay_blocks": 1, "joinmarket": {"role": "maker"}}
+    ]
+}
+```
+
 ## Engine
 You can run the simulation with different CoinJoin protocols. Currently, Wasabi and Joinmarket are supported. 
 The default protocol is Wasabi. To run the simulation with Joinmarket, use the `--engine joinmarket` option.  
+
+The JoinMarket engine writes `data/joinmarket_round_events.json`. Its schema and
+the distinction between lifecycle status and a late block match are documented
+in [JoinMarket round events](docs/joinmarket-round-events.md).
+
+Every stored run also contains `data/coinjoin_label_manifest.json`. It records
+the selected engine, whether producer-label capture completed, the positive
+label rule, and the exact size and SHA-256 digest of every label source. The
+manifest is written atomically after service logs are collected and is included
+in `emulation_logs.zip`. Consumers must treat a missing, incomplete, or
+hash-mismatched manifest as unavailable labels; a verified zero-byte/logically
+empty source is a complete capture with zero positives. The full schema and
+per-engine source rules are documented in
+[Producer label manifest](docs/producer-label-manifest.md).
+
+## Run directory naming
+
+Each `run` invocation stores its artifacts under `./logs/<run-id>/`:
+
+- By default the run id is `<timestamp>_<scenario-name>`, with the timestamp
+  rendered in the timezone given by `--run-timezone` (default `Europe/Prague`)
+  at minute resolution.
+- `--run-id <id>` pins a deterministic directory name instead. The pipeline
+  launcher (`coinjoin-pipeline` / `runIt.sh`) uses this to pre-compute the run
+  directory and passes it through the `PIPELINE_RUN_ID` environment variable;
+  the id must match `[A-Za-z0-9][A-Za-z0-9._-]*`, be at most 63 characters,
+  and contain no `..`.
+- A pre-existing run directory only counts as a conflict when it already
+  contains `coinjoin_emulator_data/` — the launcher may pre-create the empty
+  directory to store its host manifest.
+
+`--controller-done-marker` / `--controller-failed-marker` write a marker file
+after logs and requested Bitcoin data are stored (or on failure). The
+Kubernetes S3 uploader sidecar polls these markers to decide when to sync
+artifacts.
 
 
 ## Advanced usage
@@ -76,6 +156,27 @@ The simulation script enables advanced configuration for running on different co
 
 ### Backend driver
 
+All drivers share the artifact-transfer contract from `manager/driver/__init__.py`:
+`download`, `peek`, and `upload` **raise on failure** instead of silently
+returning partial results, so an incomplete run cannot look successful. Callers
+decide whether a missing artifact is fatal (log capture warns and continues;
+config upload aborts startup). Current failure types differ per driver —
+Podman raises `CoinjoinEmulatorError`, Docker and Kubernetes raise
+`RuntimeError` (Kubernetes also `TimeoutError` on its download/peek/upload
+deadlines, tunable via `COINJOIN_K8S_DOWNLOAD_TIMEOUT`,
+`COINJOIN_K8S_PEEK_TIMEOUT`, and `COINJOIN_K8S_UPLOAD_TIMEOUT`). On Kubernetes,
+`peek` and `upload` also fail when the in-pod command writes to stderr or exits
+non-zero. Archives received from containers are extracted with the sanitizing
+`data` tar filter where the Python runtime supports it.
+
+Pod startup waits up to `COINJOIN_K8S_POD_IP_TIMEOUT` seconds (default 1800).
+That budget covers scheduler queue time as well as container startup, because on
+a busy shared cluster a pod can sit `Pending` for a long time before any node has
+room for it. While a pod is still pending the driver logs the newest
+`FailedScheduling` message once a minute, and if the pod never lands on a node the
+resulting error names the capacity problem rather than a downstream symptom.
+`download` likewise refuses to exec into a pod that was never scheduled, instead
+of failing with an opaque websocket `400 Bad Request`.
 
 #### Docker
 
@@ -83,11 +184,9 @@ The default driver is `docker`. Running `docker` requires [Docker](https://www.d
 
 #### Podman
 
-*Podman support will be likely **removed** in the future versions.*
+To run the simulation using `podman`, specify it as driver using `--driver podman`, for example `uv run python manager.py --driver podman run`.
 
-To run the simulation using `podman`, specify it as driver using `--driver podman` option.
-
-The driver requires [Podman](https://podman.io/) being installed and you may also need to override default IP addresses to communicate via localhost using `--control-ip` and `--wasabi-backend-ip` options. 
+The driver requires the [Podman](https://podman.io/) CLI. You may also need to override default IP addresses to communicate via localhost using `--control-ip` and `--wasabi-backend-ip` options.
 
 
 #### Kubernetes
@@ -96,7 +195,7 @@ To run the simulation on a [Kubernetes](https://kubernetes.io/) cluster, use the
 
 The `kubernetes` driver relies on used images being accessible publicly from [DockerHub](https://hub.docker.com/). For that, build the images in `containers` directory manually and upload them to the registry. Afterwards, specify the image prefix using `--image-prefix` option when starting the simulation.
 
-In case *NodePorts* are not supported by your cluster, you may also need to run a proxy to access the services, e.g., [Shadowsocks](https://shadowsocks.org/). Use the `--proxy` option to specify the address of the proxy.
+The manager reaches pod ports through the Kubernetes port-forward API. Services use `ClusterIP` for stable in-cluster DNS, so Kubernetes mode does not require host `NodePort` mappings.
 
 If you need to specify custom namespace, use the `--namespace` option. If you also need to reuse existing namespace, use the `--reuse-namespace` option.
 
@@ -104,5 +203,15 @@ If you need to specify custom namespace, use the `--namespace` option. If you al
 
 Running the simulation on a remote cluster using pre-existing namespace and a proxy reachable on localhost port 8123:
 ```bash
-python manager.py run --driver kubernetes --namespace custom-coinjoin-ns --reuse-namespace --image-prefix "crocsmuni/" --proxy "socks5://127.0.0.1:8123" --scenario "scenarios/uniform-dynamic-500-30utxo.json"
+uv run python manager.py run --driver kubernetes --namespace custom-coinjoin-ns --reuse-namespace --image-prefix "crocsmuni/" --proxy "socks5://127.0.0.1:8123" --scenario "scenarios/uniform-dynamic-500-30utxo.json"
+```
+
+### Exporting raw Bitcoin node data
+
+The emulator normally stores scenario, block, client, and wallet data in the log archive. If you need the raw Bitcoin Core data directory for external analysis tools, use `--download-btc-data` to choose a local destination path. The data is copied before containers or pods are cleaned up.
+
+By default, the source is `btc-node:/home/bitcoin/data/`. To export a different container or pod path, pass `--download-path` in `name:/path` format:
+
+```bash
+uv run python manager.py run --download-btc-data ./btc-data --download-path btc-node:/home/bitcoin/data/
 ```

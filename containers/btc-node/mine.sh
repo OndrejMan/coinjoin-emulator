@@ -1,5 +1,16 @@
 #!/bin/sh
 
+bitcoin_cli() {
+    bitcoin-cli \
+        -regtest \
+        -rpcconnect=127.0.0.1 \
+        -rpcport=18443 \
+        -rpcuser=user \
+        -rpcpassword=password \
+        -rpcwallet=wallet \
+        "$@"
+}
+
 sleep 1 # TODO make more robust by waiting for bitcoind to be ready
 curl -s -u user:password --data-binary '{"jsonrpc": "1.0", "method": "createwallet", "params": ["wallet"]}' -H 'content-type: text/plain;' http://localhost:18443 > /dev/null
 
@@ -9,7 +20,7 @@ curl -s -u user:password --data-binary "{\"jsonrpc\": \"1.0\", \"method\": \"gen
 
 # taken from https://bitcoin.stackexchange.com/a/107319
 cont=true
-smartfee=$(bitcoin-cli estimatesmartfee 6)
+smartfee=$(bitcoin_cli estimatesmartfee 6)
 if [[ "$smartfee" == *"\"feerate\":"* ]]; then
     cont=false
 fi
@@ -21,21 +32,21 @@ do
     do
         power=$(( $RANDOM % 29 ))
         randfee=`echo "scale=8; 0.00001 * (1.1892 ^ $power)" | bc`
-        newaddress=$(bitcoin-cli getnewaddress)
-        rawtx=$(bitcoin-cli createrawtransaction "[]" "[{\"$newaddress\":0.005}]")
-        fundedtx=$(bitcoin-cli fundrawtransaction "$rawtx" "{\"feeRate\": \"0$randfee\"}" | jq -r ".hex")
-        signedtx=$(bitcoin-cli signrawtransactionwithwallet "$fundedtx" | jq -r ".hex")
-        senttx=$(bitcoin-cli sendrawtransaction "$signedtx")
+        newaddress=$(bitcoin_cli getnewaddress)
+        rawtx=$(bitcoin_cli createrawtransaction "[]" "[{\"$newaddress\":0.005}]")
+        fundedtx=$(bitcoin_cli fundrawtransaction "$rawtx" "{\"feeRate\": \"0$randfee\"}" | jq -r ".hex")
+        signedtx=$(bitcoin_cli signrawtransactionwithwallet "$fundedtx" | jq -r ".hex")
+        senttx=$(bitcoin_cli sendrawtransaction "$signedtx")
         counterb=$((counterb + 1))
         echo "Created $counterb transactions this block"
     done
-    bitcoin-cli generatetoaddress 1 $ADDR
-    smartfee=$(bitcoin-cli estimatesmartfee 6)
+    bitcoin_cli generatetoaddress 1 $ADDR
+    smartfee=$(bitcoin_cli estimatesmartfee 6)
     if [[ "$smartfee" == *"\"feerate\":"* ]]; then
         cont=false
     fi
 done
-bitcoin-cli generatetoaddress 6 $ADDR
+bitcoin_cli generatetoaddress 6 $ADDR
 
 # Mine new block periodically
 while true

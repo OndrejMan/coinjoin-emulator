@@ -1,0 +1,4 @@
+interface:
+  display_name: "Repo Python Tests"
+  short_description: "Write tests using this repo's pytest style."
+  default_prompt: "Use the repo Python test style skill when adding or refactoring tests in this repository."

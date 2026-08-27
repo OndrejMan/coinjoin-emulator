@@ -1,41 +1,208 @@
-from manager.btc_node import BtcNode
-from manager import utils
-from manager.engine.configuration import ScenarioConfig, WalletConfig, FundConfig
-from time import sleep
-import random
-import os
+import datetime
+import hashlib
 import json
+import math
 import multiprocessing
 import multiprocessing.pool
-import math
+import os
+import random
 import shutil
-import datetime
+from time import monotonic, sleep
+from typing import Protocol, cast
+from zoneinfo import ZoneInfo
+
+from manager import log_output as log
+
+from ..btc_node import BtcNode
+from ..exceptions import CoinjoinEmulatorError, RpcError, StartupError
+from ..utils import batched
+from .configuration import FundConfig, ScenarioConfig, WalletConfig
 
 DISTRIBUTOR_UTXOS = 10
 BATCH_SIZE = 20
 BTC = 100_000_000
+DISTRIBUTOR_BALANCE_RPC_TIMEOUT = 5
+DISTRIBUTOR_FUNDING_TIMEOUT = 360
+DISTRIBUTOR_FUNDING_PROGRESS_INTERVAL = 15
+CLIENT_HEALTHCHECK_TIMEOUT = 15
+PRODUCER_LABEL_MANIFEST = "coinjoin_label_manifest.json"
+PRODUCER_LABEL_MANIFEST_SCHEMA_VERSION = "1.0"
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_producer_label_manifest(data_path: str, evidence: dict[str, object] | None) -> None:
+    """Atomically record whether producer-owned CoinJoin labels were captured completely."""
+    evidence = evidence or {
+        "engine": "unknown",
+        "complete": False,
+        "reason": "engine did not provide producer-label evidence",
+        "sources": [],
+    }
+    raw_sources = evidence.get("sources")
+    source_names = raw_sources if isinstance(raw_sources, list) else []
+    data_root = os.path.realpath(data_path)
+    source_records: list[dict[str, object]] = []
+    complete = evidence.get("complete") is True
+    reason = evidence.get("reason")
+
+    for source_name in source_names:
+        if not isinstance(source_name, str) or not source_name:
+            complete = False
+            reason = reason or "producer-label source path is invalid"
+            continue
+        source_path = os.path.realpath(os.path.join(data_root, source_name))
+        if os.path.commonpath((data_root, source_path)) != data_root or not os.path.isfile(source_path):
+            complete = False
+            reason = reason or f"producer-label source is missing: {source_name}"
+            continue
+        source_records.append({
+            "path": os.path.relpath(source_path, data_root).replace(os.sep, "/"),
+            "size_bytes": os.path.getsize(source_path),
+            "sha256": _sha256_file(source_path),
+        })
+
+    if complete and not source_records:
+        complete = False
+        reason = reason or "producer-label capture produced no source files"
+
+    manifest = {
+        "schema_version": PRODUCER_LABEL_MANIFEST_SCHEMA_VERSION,
+        "engine": evidence.get("engine"),
+        "complete": complete,
+        "reason": None if complete else str(reason or "producer-label capture was incomplete"),
+        "positive_rule": evidence.get("positive_rule"),
+        "positive_count": evidence.get("positive_count"),
+        "sources": source_records,
+    }
+    manifest_path = os.path.join(data_path, PRODUCER_LABEL_MANIFEST)
+    temporary_path = f"{manifest_path}.tmp"
+    with open(temporary_path, "w", encoding="utf-8") as stream:
+        json.dump(manifest, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    os.replace(temporary_path, manifest_path)
+
+
+class EngineArgs(Protocol):
+    command: str
+    scenario: str | None
+    image_prefix: str
+    btc_node_image: str
+    joinmarket_client_server_image: str
+    irc_server_image: str
+    coinjoin_infrastructure_local_build: bool
+    force_rebuild: bool
+    btcFolder: str | None
+    proxy: str
+    control_ip: str
+    btc_node_ip: str
+    wasabi_backend_ip: str
+    btc_node_arg: list[str] | None
+    run_timezone: str
+
+
+class DriverProtocol(Protocol):
+    def has_image(self, name: str) -> bool: ...
+    def build(self, name: str, path: str) -> object: ...
+    def pull(self, name: str) -> object: ...
+    def run(
+        self,
+        name: str,
+        image: str,
+        env: dict[str, str | None] | None = None,
+        ports: dict[int, int] | None = None,
+        skip_ip: bool = False,
+        cpu: float = 0.1,
+        memory: int = 768,
+        cpu_request: float | None = None,
+        memory_request: int | None = None,
+        volumes: dict[str, dict[str, str]] | None = None,
+        command: list[str] | None = None,
+    ) -> tuple[str, dict[int, int]]: ...
+    def stop(self, name: str) -> object: ...
+    def download(self, name: str, src_path: str, dst_path: str) -> object: ...
+    def peek(self, name: str, path: str, *, missing_ok: bool = False) -> str: ...
+    def logs(self, name: str) -> str: ...
+    def upload(self, name: str, src_path: str, dst_path: str) -> object: ...
+    def cleanup(self, image_prefix: str = "") -> object: ...
+
+
+class EmulatorClient(Protocol):
+    name: str
+    type: str
+    maker_running: bool
+    coinjoin_in_process: bool
+    coinjoin_start: int
+    delay: tuple[int, int]
+    stop: tuple[int, int]
+
+    def get_new_address(self) -> str: ...
+    def get_status(self) -> object: ...
+    def get_balance(self) -> int: ...
+    def start_maker(
+        self,
+        txfee: int,
+        cjfee_a: int,
+        cjfee_r: float,
+        ordertype: str,
+        minsize: int,
+    ) -> object: ...
+    def start_coinjoin(
+        self,
+        mixdepth: int,
+        amount_sats: int,
+        counterparties: int,
+        destination: str,
+    ) -> object: ...
+    def list_coins(self) -> object: ...
+    def list_unspent_coins(self) -> object: ...
+    def list_keys(self) -> object: ...
+    def stop_coinjoin(self) -> object: ...
+    def stop_maker(self) -> object: ...
+    def wait_wallet(self, timeout: int | None) -> bool: ...
+
+
+class InvoiceDistributor(Protocol):
+    def get_new_address(self) -> str: ...
+    def get_balance(self) -> int: ...
+    def wait_wallet(self, timeout: int | None = None) -> bool: ...
+    def send(self, invoices: list[tuple[str, int]]) -> object: ...
+
+
+class BoundedBalanceDistributor(Protocol):
+    def get_balance(self, timeout: int | None = None) -> int: ...
 
 
 class EngineBase:
-    def __init__(self, args, driver, log_src_path):
+    engine_name = "unknown"
+
+    def __init__(self, args: EngineArgs, driver: DriverProtocol, log_src_path: str) -> None:
         self.args = args
         self.driver = driver
         self.log_src_path = log_src_path
         self.scenario: ScenarioConfig = self.default_scenario()
-        self.versions = set()
+        self.versions: set[str] = set()
         self.node: BtcNode | None = None
-        self.distributor = None
-        self.clients = []
-        self.invoices = {}
+        self.distributor: InvoiceDistributor | None = None
+        self.clients: list[EmulatorClient] = []
+        self.invoices: dict[tuple[int, int], list[tuple[str, int]]] = {}
         self.current_block = 0
         self.current_round = 0
 
     def default_scenario(self) -> ScenarioConfig:
         raise NotImplementedError
 
-    def load_scenario(self):
+    def load_scenario(self) -> None:
         if self.args.command == "run" and self.args.scenario:
             self.scenario = ScenarioConfig.from_json_config(self.args.scenario)
+
+        self.scenario.validate_for_engine(self.engine_name)
 
         self.versions.add(self.scenario.default_version)
         if self.scenario.distributor_version is not None:
@@ -44,69 +211,134 @@ class EngineBase:
             if wallet.version is not None:
                 self.versions.add(wallet.version)
 
-    def prepare_images(self):
+    def prepare_images(self) -> None:
         raise NotImplementedError
 
-    def prepare_image(self, name: str, path=None):
-        prefixed_name = self.args.image_prefix + name
-        if self.driver.has_image(prefixed_name):
+    def image_ref(self, name: str) -> str:
+        override = getattr(self.args, f"{name.replace('-', '_')}_image", "")
+        return override or f"{self.args.image_prefix}{name}"
+
+    def control_host(self) -> str:
+        return str(getattr(self.driver, "control_host", self.args.control_ip))
+
+    def direct_endpoints(self) -> bool:
+        """True when services are reached at their container/pod address directly.
+
+        This holds when a proxy routes to container IPs, or when the driver
+        reports direct network access (Kubernetes with port-forwarding
+        disabled, i.e. the manager runs inside the cluster).
+        """
+        # The strict `is True` keeps mock drivers with auto-created attributes
+        # on the port-mapped path.
+        return bool(self.args.proxy) or getattr(self.driver, "direct_network", False) is True
+
+    def service_endpoint(self, ip: str, container_port: int, ports: dict[int, int]) -> tuple[str, int]:
+        """Resolve the (host, port) the manager should use to reach a service."""
+        if self.direct_endpoints():
+            return ip, container_port
+        return self.control_host(), ports[container_port]
+
+    def local_build_requested(self, name: str) -> bool:
+        return name in {"btc-node", "joinmarket-client-server", "irc-server"} and bool(
+            getattr(self.args, "coinjoin_infrastructure_local_build", False)
+        )
+
+    def prepare_image(self, name: str, path: str | None = None, local_build: bool | None = None) -> None:
+        image_name = self.image_ref(name)
+        has_override = bool(getattr(self.args, f"{name.replace('-', '_')}_image", ""))
+        if local_build is None:
+            local_build = self.local_build_requested(name)
+        if local_build:
+            self.driver.build(image_name, f"./containers/{name}" if path is None else path)
+            log.info(f"- image built {image_name}")
+        elif self.driver.has_image(image_name):
             if self.args.force_rebuild:
-                if self.args.image_prefix:
-                    self.driver.pull(prefixed_name)
-                    print(f"- image pulled {prefixed_name}")
+                if self.args.image_prefix or has_override:
+                    self.driver.pull(image_name)
+                    log.info(f"- image pulled {image_name}")
                 else:
                     self.driver.build(name, f"./containers/{name}" if path is None else path)
-                    print(f"- image rebuilt {prefixed_name}")
+                    log.info(f"- image rebuilt {image_name}")
             else:
-                print(f"- image reused {prefixed_name}")
-        elif self.args.image_prefix:
-            self.driver.pull(prefixed_name)
-            print(f"- image pulled {prefixed_name}")
+                log.info(f"- image reused {image_name}")
+        elif self.args.image_prefix or has_override:
+            self.driver.pull(image_name)
+            log.info(f"- image pulled {image_name}")
         else:
             self.driver.build(name, f"./containers/{name}" if path is None else path)
-            print(f"- image built {prefixed_name}")
+            log.info(f"- image built {image_name}")
 
-    def start_infrastructure(self):
-        print("Starting infrastructure")
+    def start_infrastructure(self) -> None:
+        log.info("Starting infrastructure")
         self.start_btc_node()
         self.start_engine_infrastructure()
         self.start_distributor()
 
-    def start_btc_node(self):
+    def start_btc_node(self) -> None:
+        node_volumes = None
+        if self.args.btcFolder:
+            absolute_host_path = os.path.abspath(self.args.btcFolder)
+            log.info(f"- mounting external btc-data from: {absolute_host_path}")
+            storage_uid = os.environ.get("KUBERNETES_STORAGE_UID")
+            storage_gid = os.environ.get("KUBERNETES_STORAGE_GID")
+            mount = {
+                "bind": "/home/bitcoin/data",
+                "mode": "rw",
+            }
+            if storage_uid:
+                mount["uid"] = storage_uid
+            if storage_gid:
+                mount["gid"] = storage_gid
+            node_volumes = {
+                absolute_host_path: mount
+            }
+        else:
+            log.info("- no btcFolder provided; using internal container storage")
+
+        log.info("- starting btc-node")
+        btc_node_command = None
+        if self.args.btc_node_arg:
+            btc_node_command = ["./run.sh", *self.args.btc_node_arg]
         btc_node_ip, btc_node_ports = self.driver.run(
             "btc-node",
-            f"{self.args.image_prefix}btc-node",
+            self.image_ref("btc-node"),
             ports={18443: 18443, 18444: 18444},
             cpu=4.0,
             memory=8192,
+            volumes=node_volumes,
+            command=btc_node_command,
         )
 
-        self.node = BtcNode(
-            host=btc_node_ip if self.args.proxy else self.args.control_ip,
-            port=18443 if self.args.proxy else btc_node_ports[18443],
+        log.debug("- middle btc-node")
+        node_host, node_port = self.service_endpoint(btc_node_ip, 18443, btc_node_ports)
+        node = BtcNode(
+            host=node_host,
+            port=node_port,
             internal_ip=btc_node_ip,
             proxy=self.args.proxy,
         )
-        self.node.wait_ready()
-        print("- started btc-node")
+        log.info("- waiting btc-node")
+        node.wait_ready()
+        self.node = node
+        log.info("- started btc-node")
 
-    def start_engine_infrastructure(self):
+    def start_engine_infrastructure(self) -> None:
         raise NotImplementedError
 
-    def start_distributor(self):
+    def start_distributor(self) -> None:
         raise NotImplementedError
 
-    def init_client(self):
+    def init_client(self) -> object:
         raise NotImplementedError
 
-    def start_client(self, idx: int, wallet=None):
+    def start_client(self, idx: int, wallet: WalletConfig | None = None) -> EmulatorClient | None:
         raise NotImplementedError
 
-    def stop_client(self, idx: int):
+    def stop_client(self, idx: int) -> None:
         raise NotImplementedError
 
-    def start_clients(self, wallets):
-        print("Starting clients")
+    def start_clients(self, wallets: list[WalletConfig]) -> None:
+        log.info("Starting clients")
         with multiprocessing.pool.ThreadPool() as pool:
             new_clients = pool.starmap(self.start_client, enumerate(wallets, start=len(self.clients)))
 
@@ -123,7 +355,7 @@ class EngineBase:
 
                 if not restart_idx:
                     break
-                print(f"- failed to start {len(restart_idx)} clients; retrying ...")
+                log.warning(f"- failed to start {len(restart_idx)} clients; retrying ...")
                 for idx in restart_idx:
                     self.stop_client(idx)
                 sleep(60)
@@ -131,162 +363,279 @@ class EngineBase:
                     self.start_client,
                     ((idx, wallets[idx - len(self.clients)]) for idx in restart_idx),
                 )
-                for idx, client in enumerate(restarted_clients):
+                for idx, client in zip(restart_idx, restarted_clients, strict=True):
                     if client is not None:
-                        new_clients[restart_idx[idx]] = client
-            else:
-                new_clients = list(filter(lambda x: x is not None, new_clients))
-                print(f"- failed to start {len(wallets) - len(new_clients)} clients; continuing ...")
-        self.clients.extend(new_clients)
+                        new_clients[idx - len(self.clients)] = client
 
-    def fund_distributor(self, btc_amount):
-        print("Funding distributor")
+            failed_count = sum(client is None for client in new_clients)
+            if failed_count:
+                raise RuntimeError(
+                    f"Failed to start {failed_count} clients after retries; aborting experiment"
+                )
+        self.clients.extend(client for client in new_clients if client is not None)
+
+    def validate_clients(self) -> None:
+        expected = len(self.scenario.wallets)
+        actual = len(self.clients)
+        if actual != expected:
+            raise RuntimeError(
+                f"Expected {expected} clients, but only {actual} started"
+            )
+
+        def healthcheck(client: EmulatorClient) -> tuple[str, bool, str | None]:
+            try:
+                healthy = client.wait_wallet(timeout=CLIENT_HEALTHCHECK_TIMEOUT)
+            except (CoinjoinEmulatorError, OSError, TypeError, ValueError) as error:
+                return client.name, False, str(error)
+            return client.name, healthy, None
+
+        with multiprocessing.pool.ThreadPool() as pool:
+            results = pool.map(healthcheck, self.clients)
+        failed = [
+            f"{name} ({detail or 'RPC health-check timed out'})"
+            for name, healthy, detail in results
+            if not healthy
+        ]
+        if failed:
+            raise RuntimeError(
+                "Client RPC health-check failed before funding: " + ", ".join(failed)
+            )
+
+    def fund_distributor(self, btc_amount: int | float) -> None:
+        log.info("Funding distributor")
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         if self.distributor is None:
             raise RuntimeError("Distributor is not initialized")
 
+        # Round each UTXO up to a whole satoshi so the total meets the target
+        # even when the amount does not divide evenly.
+        per_utxo_sats = math.ceil(btc_amount * BTC / DISTRIBUTOR_UTXOS)
         for _ in range(DISTRIBUTOR_UTXOS):
             self.node.fund_address(
                 self.distributor.get_new_address(),
-                math.ceil(btc_amount * BTC / DISTRIBUTOR_UTXOS) // BTC,
+                per_utxo_sats / BTC,
             )
 
-        while (balance := self.distributor.get_balance()) < btc_amount * BTC:
-            sleep(1)
-        print(f"- funded (current balance {balance / BTC:.8f} BTC)")
+        target_balance = int(btc_amount * BTC)
+        started = monotonic()
+        deadline = started + DISTRIBUTOR_FUNDING_TIMEOUT
+        next_progress = started + DISTRIBUTOR_FUNDING_PROGRESS_INTERVAL
+        balance: int | None = None
+        last_error: Exception | None = None
+        bounded_distributor = cast(BoundedBalanceDistributor, self.distributor)
 
-    def store_client_logs(self, client, data_path):
+        while monotonic() < deadline:
+            try:
+                balance = bounded_distributor.get_balance(timeout=DISTRIBUTOR_BALANCE_RPC_TIMEOUT)
+                last_error = None
+                if balance >= target_balance:
+                    break
+            except (CoinjoinEmulatorError, OSError, KeyError, TypeError, ValueError) as error:
+                last_error = error
+
+            now = monotonic()
+            if now >= next_progress:
+                current = "unavailable" if balance is None else f"{balance / BTC:.8f} BTC"
+                message = (
+                    f"- still funding distributor after {now - started:.0f}s "
+                    f"(current {current}, target {target_balance / BTC:.8f} BTC)"
+                )
+                if last_error is not None:
+                    message += f"; last balance error: {last_error}"
+                log.info(message)
+                next_progress = now + DISTRIBUTOR_FUNDING_PROGRESS_INTERVAL
+            sleep(min(1, max(0, deadline - now)))
+        else:
+            endpoint = (
+                f"{getattr(self.distributor, 'name', 'distributor')}@"
+                f"{getattr(self.distributor, 'host', 'unknown')}:"
+                f"{getattr(self.distributor, 'port', 'unknown')}"
+            )
+            current = "unavailable" if balance is None else f"{balance / BTC:.8f} BTC"
+            detail = (
+                f"Distributor funding timed out after {DISTRIBUTOR_FUNDING_TIMEOUT}s: "
+                f"endpoint={endpoint}, current={current}, target={target_balance / BTC:.8f} BTC"
+            )
+            if last_error is not None:
+                detail += f", last balance error={last_error}"
+            raise StartupError(detail)
+        log.info(f"- funded (current balance {balance / BTC:.8f} BTC)")
+
+    def store_client_logs(self, client: EmulatorClient, data_path: str) -> None:
         sleep(random.random() * 3)
         client_path = os.path.join(data_path, client.name)
         os.mkdir(client_path)
-        with open(os.path.join(client_path, "coins.json"), "w") as f:
+        with open(os.path.join(client_path, "coins.json"), "w", encoding="utf-8") as f:
             json.dump(client.list_coins(), f, indent=2)
-            print(f"- stored {client.name} coins")
-        with open(os.path.join(client_path, "unspent_coins.json"), "w") as f:
+            log.info(f"- stored {client.name} coins")
+        with open(
+            os.path.join(client_path, "unspent_coins.json"), "w", encoding="utf-8"
+        ) as f:
             json.dump(client.list_unspent_coins(), f, indent=2)
-            print(f"- stored {client.name} unspent coins")
-        with open(os.path.join(client_path, "keys.json"), "w") as f:
+            log.info(f"- stored {client.name} unspent coins")
+        with open(os.path.join(client_path, "keys.json"), "w", encoding="utf-8") as f:
             json.dump(client.list_keys(), f, indent=2)
-            print(f"- stored {client.name} keys")
+            log.info(f"- stored {client.name} keys")
         try:
             self.driver.download(client.name, self.log_src_path, client_path)
 
-            print(f"- stored {client.name} logs")
-        except:
-            print(f"- could not store {client.name} logs")
+            log.info(f"- stored {client.name} logs")
+        except (CoinjoinEmulatorError, OSError):
+            log.warning(f"- could not store {client.name} logs")
 
-    def store_logs(self):
-        print("Storing logs")
-        time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
-        experiment_path = f"./logs/{time}_{self.scenario.name}"
+    def store_logs(self) -> None:
+        log.info("Storing logs")
+        run_path = self.log_run_path()
+        experiment_path = os.path.join(run_path, "coinjoin_emulator_data")
         data_path = os.path.join(experiment_path, "data")
         os.makedirs(data_path)
 
-        with open(os.path.join(experiment_path, "scenario.json"), "w") as f:
+        with open(
+            os.path.join(experiment_path, "scenario.json"), "w", encoding="utf-8"
+        ) as f:
             json.dump(self.scenario.to_dict(), f, indent=2)
-            print("- stored scenario")
+            log.info("- stored scenario")
 
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        tip_height = self.node.get_block_count()
         stored_blocks = 0
         node_path = os.path.join(data_path, "btc-node")
         os.mkdir(node_path)
-        if self.node is None:
-            raise RuntimeError("Bitcoin node is not initialized")
-        while stored_blocks < self.node.get_block_count():  # type: ignore
+        while stored_blocks <= tip_height:
             block_hash = self.node.get_block_hash(stored_blocks)
             block = self.node.get_block_info(block_hash)
-            with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
+            with open(
+                os.path.join(node_path, f"block_{stored_blocks}.json"),
+                "w",
+                encoding="utf-8",
+            ) as f:
                 json.dump(block, f, indent=2)
             stored_blocks += 1
-        print(f"- stored {stored_blocks} blocks")
+        log.info(f"- stored {stored_blocks} blocks")
 
-        self.store_engine_logs(data_path)
+        producer_label_evidence = self.store_engine_logs(data_path)
+        write_producer_label_manifest(data_path, producer_label_evidence)
+        log.info("- stored producer-label manifest")
 
         # TODO parallelize (driver cannot be simply passed to new threads)
         for client in self.clients:
-            self.store_client_logs(client, data_path)
+            try:
+                self.store_client_logs(client, data_path)
+            except (CoinjoinEmulatorError, RuntimeError, OSError, ValueError, TypeError) as error:
+                log.warning(f"- could not store {client.name} artifacts: {error}")
 
-        shutil.make_archive(experiment_path, "zip", *os.path.split(experiment_path))
-        print("- zip archive created")
+        archive_base = os.path.join(run_path, ".emulation_logs")
+        archive_path = shutil.make_archive(archive_base, "zip", run_path, "coinjoin_emulator_data")
+        os.replace(archive_path, os.path.join(experiment_path, "emulation_logs.zip"))
+        log.info("- zip archive created")
 
-    def store_engine_logs(self, data_path):
+    def store_engine_logs(self, data_path: str) -> dict[str, object] | None:
         raise NotImplementedError
 
-    def stop_coinjoins(self):
-        print("Stopping coinjoins")
+    def stop_coinjoins(self) -> None:
+        log.info("Stopping coinjoins")
         for client in self.clients:
-            client.stop_coinjoin()
-            print(f"- stopped mixing {client.name}")
+            try:
+                client.stop_coinjoin()
+            except (CoinjoinEmulatorError, OSError, TypeError, ValueError) as error:
+                # A failed run can leave a client pod unavailable. Cleanup is
+                # best-effort and must not hide the failure that initiated it.
+                log.warning(f"- could not stop mixing {client.name}: {error}")
+            else:
+                log.info(f"- stopped mixing {client.name}")
 
-    def update_invoice_payments(self):
+    def update_invoice_payments(self) -> None:
         due = list(filter(lambda x: x[0] <= self.current_block and x[1] <= self.current_round, self.invoices.keys()))
         for i in due:
-            self.pay_invoices(self.invoices.pop(i, []))
+            self.pay_invoices(self.invoices.get(i, []))
+            self.invoices.pop(i, None)
+            log.info(f"- paid invoices for block {i[0]} and round {i[1]}")
+        log.info(f"- {len(self.invoices)} invoices still pending")
 
-    def prepare_invoices(self, wallets: list[WalletConfig]):
-        print("Preparing invoices")
+    def prepare_invoices(self, wallets: list[WalletConfig]) -> None:
+        log.info("Preparing invoices")
         client_invoices = [(client, wallet.funds) for client, wallet in zip(self.clients, wallets)]
 
         for client, funds in client_invoices:
             for fund in funds:
                 block = 0
-                round = 0
+                round_number = 0
                 if isinstance(fund, int):
                     value = fund
                 elif isinstance(fund, FundConfig):
                     value = fund.value
                     block = fund.delay_blocks or 0
-                    round = fund.delay_rounds or 0
-                addressed_invoice = (client.get_new_address(), value)
-                if (block, round) not in self.invoices:
-                    self.invoices[(block, round)] = [addressed_invoice]
+                    round_number = fund.delay_rounds or 0
                 else:
-                    self.invoices[(block, round)].append(addressed_invoice)
+                    raise TypeError(f"Unexpected fund config: {fund!r}")
+                addressed_invoice = (client.get_new_address(), value)
+                if (block, round_number) not in self.invoices:
+                    self.invoices[(block, round_number)] = [addressed_invoice]
+                else:
+                    self.invoices[(block, round_number)].append(addressed_invoice)
 
         for addressed_invoices in self.invoices.values():
             random.shuffle(addressed_invoices)
 
-        print(f"- prepared {sum(map(len, self.invoices.values()))} invoices")
+        log.info(f"- prepared {sum(map(len, self.invoices.values()))} invoices")
 
-    def pay_invoices(self, addressed_invoices):
-        print(
-            f"- paying {len(addressed_invoices)} invoices (batch size {BATCH_SIZE}, block {self.current_block}, round {self.current_round})"
+    def pay_invoices(self, addressed_invoices: list[tuple[str, int]]) -> None:
+        log.info(
+            f"- paying {len(addressed_invoices)} invoices "
+            f"(batch size {BATCH_SIZE}, block {self.current_block}, round {self.current_round})"
         )
-        try:
-            for batch in utils.batched(addressed_invoices, BATCH_SIZE):
-                for _ in range(3):
-                    try:
-                        if self.distributor is None:
-                            raise RuntimeError("Distributor is not initialized")
-                        result = self.distributor.send(batch)
-                        if str(result) == "timeout":
-                            print("- transaction timeout")
-                            continue
-                        break
-                    except Exception as e:
-                        # https://github.com/zkSNACKs/WalletWasabi/issues/12764
-                        if "Bad Request" in str(e):
-                            print("- transaction error (bad request)")
-                        else:
-                            print(f"- transaction error ({e})")
-                else:
-                    print("- invoice payment failed")
-                    raise Exception("Invoice payment failed")
+        for batch in batched(addressed_invoices, BATCH_SIZE):
+            for _ in range(3):
+                try:
+                    if self.distributor is None:
+                        raise RuntimeError("Distributor is not initialized")
+                    result = self.distributor.send(list(batch))
+                    if str(result) == "timeout" or result is False or result is None:
+                        log.warning("- transaction timeout")
+                        continue
+                    log.info(f"- transaction sent with txid {result}")
+                    break
+                except (CoinjoinEmulatorError, RuntimeError, OSError) as e:
+                    # https://github.com/zkSNACKs/WalletWasabi/issues/12764
+                    if "Bad Request" in str(e):
+                        log.warning("- transaction error (bad request)")
+                    else:
+                        log.error(f"- transaction error ({e})")
+            else:
+                log.error("- invoice payment failed")
+                raise RpcError("Invoice payment failed")
+            log.info(f"- paid batch of {len(batch)} invoices")
 
-        except Exception as e:
-            print("- invoice payment failed")
-            pass
-            sleep(360)
-
-    def run(self):
-        print(f"=== Scenario {self.scenario.name} ===")
+    def run(self) -> None:
+        log.info(f"=== Scenario {self.scenario.name} ===")
+        if not getattr(self.args, "no_logs", False):
+            self.ensure_log_run_path_available()
         self.prepare_images()
         self.start_infrastructure()
         self.fund_distributor(500)
         self.start_clients(self.scenario.wallets)
+        self.validate_clients()
         self.prepare_invoices(self.scenario.wallets)
-        print("Running simulation")
+        log.info("Running simulation")
         self.run_engine()
 
-    def run_engine(self):
+    def run_engine(self) -> None:
         raise NotImplementedError
+
+    def log_run_path(self) -> str:
+        requested_run_id = getattr(self.args, "run_id", "")
+        if requested_run_id:
+            return f"./logs/{requested_run_id}"
+        run_timezone = getattr(self.args, "run_timezone", "Europe/Prague")
+        time = datetime.datetime.now(ZoneInfo(run_timezone)).strftime("%Y-%m-%d_%H-%M")
+        return f"./logs/{time}_{self.scenario.name}"
+
+    def ensure_log_run_path_available(self) -> None:
+        # The pipeline launcher may pre-create the run directory to place its
+        # host manifest there; only a directory that already holds emulator
+        # artifacts marks a genuine earlier run.
+        run_path = self.log_run_path()
+        if os.path.exists(os.path.join(run_path, "coinjoin_emulator_data")):
+            raise RuntimeError(f"Run log directory already exists: {run_path}")
