@@ -16,6 +16,7 @@ from manager.driver import Driver
 from manager.engine.base.protocols import EngineArgs
 from manager.engine.wasabi_engine import DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT, WasabiEngine
 from manager.exceptions import StartupError
+from manager.wasabi_backend_factory import BackendArchitecture
 
 
 def engine_args(**overrides: object) -> SimpleNamespace:
@@ -74,6 +75,22 @@ def test_timed_out_distributor_still_fails_the_run() -> None:
     with patch.object(WasabiEngine, "init_wasabi_client", return_value=distributor):
         with pytest.raises(StartupError, match="Could not start distributor"):
             engine.start_distributor()
+
+
+def test_split_distributor_uses_the_started_coordinator_address() -> None:
+    engine, distributor = distributor_engine(engine_args(), wallet_ready=True)
+    engine.backend_architecture = BackendArchitecture.SPLIT
+    engine.coordinator = Mock(internal_ip="10.0.0.7")
+
+    with patch.object(WasabiEngine, "init_wasabi_client", return_value=distributor):
+        engine.start_distributor()
+
+    driver = cast(Mock, engine.driver)
+    assert driver.run.call_args.kwargs["env"] == {
+        "ADDR_BTC_NODE": "btc-node",
+        "ADDR_WASABI_BACKEND": "wasabi-backend",
+        "ADDR_WASABI_COORDINATOR": "10.0.0.7",
+    }
 
 
 def parsed_run_args(argv: list[str]) -> SimpleNamespace:
