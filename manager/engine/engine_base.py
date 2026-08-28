@@ -130,6 +130,10 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
             storage_gid = int_env("KUBERNETES_STORAGE_GID") if storage_uid else None
 
         command = ["./run.sh", *self.args.btc_node_arg] if self.args.btc_node_arg else None
+        btc_node_env: dict[str, str] = {}
+        initial_block_count = os.environ.get("COINJOIN_BTC_NODE_INITIAL_BLOCK_COUNT")
+        if initial_block_count:
+            btc_node_env["COINJOIN_INITIAL_BLOCK_COUNT"] = initial_block_count
         btc_node_ip, btc_node_ports, route = self.driver.run(
             "btc-node",
             self.image_ref("btc-node"),
@@ -141,6 +145,7 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
             command=command,
             run_as_user=storage_uid,
             run_as_group=storage_gid,
+            env=btc_node_env or None,
         )
 
         print(btc_node_ip, btc_node_ports)

@@ -146,6 +146,20 @@ def test_btc_folder_and_node_arguments_reach_driver(node_class: Mock, tmp_path: 
 
 
 @patch("manager.engine.engine_base.BtcNode")
+def test_btc_node_receives_requested_initial_block_count(
+    node_class: Mock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("COINJOIN_BTC_NODE_INITIAL_BLOCK_COUNT", "201")
+    driver = Mock()
+    driver.run.return_value = ("node-ip", {18443: 18443, 18444: 18444}, None)
+
+    engine(args(), driver).start_btc_node()
+
+    assert driver.run.call_args.kwargs["env"] == {"COINJOIN_INITIAL_BLOCK_COUNT": "201"}
+    node_class.return_value.wait_ready.assert_called_once_with()
+
+
+@patch("manager.engine.engine_base.BtcNode")
 def test_shared_btc_folder_runs_node_as_storage_identity(
     node_class: Mock, tmp_path: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
