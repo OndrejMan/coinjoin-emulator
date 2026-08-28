@@ -113,13 +113,25 @@ def test_joinmarket_entrypoint_is_owned_by_the_non_root_build_user() -> None:
     )
 
 
-def test_in_cluster_driver_uses_service_dns_and_container_port() -> None:
+def test_in_cluster_driver_uses_service_dns_and_exposed_service_port() -> None:
     driver = Mock(in_cluster=True)
     runtime = engine(args(in_cluster=False), driver)
 
-    assert runtime.service_endpoint("btc-node.coinjoin.svc", 18443, {18443: 31234}) == (
-        "btc-node.coinjoin.svc",
-        18443,
+    assert runtime.service_endpoint(
+        "wasabi-client-distributor.coinjoin.svc", 37128, {37128: 37131}
+    ) == (
+        "wasabi-client-distributor.coinjoin.svc",
+        37131,
+    )
+
+
+def test_proxied_driver_still_uses_the_container_port() -> None:
+    driver = Mock(in_cluster=True)
+    runtime = engine(args(proxy="http://proxy.example"), driver)
+
+    assert runtime.service_endpoint("10.0.0.5", 37128, {37128: 37131}) == (
+        "10.0.0.5",
+        37128,
     )
 
 

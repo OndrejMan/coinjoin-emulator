@@ -76,11 +76,14 @@ class EngineBase(EngineClientsMixin, EngineFundingMixin, EngineLogsMixin):
         route: object = None,
     ) -> tuple[str, int]:
         """Resolve a driver endpoint for local, proxied, in-cluster, and routed runs."""
-        direct = bool(self.args.proxy) or bool(
-            self.args.in_cluster or getattr(self.driver, "in_cluster", False)
-        )
-        if direct:
+        if self.args.proxy:
             return ip, container_port
+        if self.args.in_cluster or getattr(self.driver, "in_cluster", False):
+            # The Kubernetes driver returns a Service DNS name.  Reach it on
+            # the Service port, which may intentionally differ from the
+            # container's target port (for example 37131 -> 37128 for the
+            # Wasabi distributor).
+            return ip, ports.get(container_port, container_port)
         if route:
             return str(route), 443
         return self.args.control_ip, ports[container_port]

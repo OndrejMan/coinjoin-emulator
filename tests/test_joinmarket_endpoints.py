@@ -65,11 +65,13 @@ def test_local_client_keeps_the_requested_port_rotation() -> None:
     assert call["port"] == 28185
 
 
-def test_in_cluster_client_is_reached_on_the_container_port() -> None:
+def test_in_cluster_client_is_reached_on_the_service_port() -> None:
+    # The in-cluster Kubernetes driver returns a target-port-to-Service-port
+    # mapping. The Service forwards 28185 to container port 28183.
     call = start_client({28183: 28185}, in_cluster=True)
 
     assert call["host"] == "10.42.0.7"
-    assert call["port"] == 28183
+    assert call["port"] == 28185
 
 
 def test_missing_driver_mapping_falls_back_to_the_requested_port() -> None:
