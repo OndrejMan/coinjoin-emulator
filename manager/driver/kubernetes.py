@@ -237,7 +237,10 @@ class KubernetesDriver(Driver):
             labels["coinjoin.run-id"] = self.run_id
         container: dict[str, object] = {
             "image": image,
-            "imagePullPolicy": "Always",
+            # CI normally pulls immutable registry images.  Local k3d tests
+            # import explicitly named images and opt into IfNotPresent so
+            # Kubernetes does not replace that image with the registry tag.
+            "imagePullPolicy": os.environ.get("KUBERNETES_IMAGE_PULL_POLICY", "Always"),
             "name": name,
             "ports": [{"containerPort": container_port} for container_port in ports.keys()],
             "env": [{"name": k, "value": v} for k, v in env.items()],

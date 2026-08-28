@@ -62,6 +62,23 @@ def test_manifest_labels_resources_and_mounts_for_one_run() -> None:
     }
 
 
+def test_manifest_uses_requested_image_pull_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = driver()
+    monkeypatch.setenv("KUBERNETES_IMAGE_PULL_POLICY", "IfNotPresent")
+
+    manifest = runtime.build_pod_manifest(
+        "btc-node", "btc-node:test", {}, {18443: 18443}, 2.0, 2048
+    )
+
+    spec = manifest["spec"]
+    assert isinstance(spec, dict)
+    containers = spec["containers"]
+    assert isinstance(containers, list)
+    container = containers[0]
+    assert isinstance(container, dict)
+    assert container["imagePullPolicy"] == "IfNotPresent"
+
+
 def test_sysctl_api_rejection_retries_without_the_reserved_range() -> None:
     runtime = driver()
     api = cast(Mock, runtime.client)
