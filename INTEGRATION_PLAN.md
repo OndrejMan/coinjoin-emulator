@@ -8,10 +8,12 @@ upstream repository does not want to retain it.
 ## Immutable baseline and safety references
 
 - Immutable baseline: `dd87648` (`chore: Update scenario generation scripts for injected takers experiment`)
-- Rewritten code tip: `5e45a8b`
+- Original rewritten-equivalence tip: `mr-09-e2e-hardening` (`5e45a8b`)
+- Current integration tip: `mr-11-kubernetes-wasabi-hardening`
 - Original pre-rewrite tip: `e36e32e`
 - Original-history backup: `backup/rajnoha-on-crocs-pre-rewrite-20260812`
 - First rewrite backup: `backup/rajnoha-on-crocs-87-commits`
+- Pre-cleanup WIP backup: `backup/rebased-rajnoha-on-crocs-pre-cleanup-20260829`
 - The tree at `5e45a8b` is identical to the tree at the original `e36e32e`.
 - Every commit after `dd87648` is authored by `Ondrej Man <ondrejman1@gmail.com>`.
 - None of the rewritten commits contains a Claude/Codex or `Co-authored-by` trailer.
@@ -21,8 +23,9 @@ commits and are deliberately left unchanged.
 
 ## Proposed merge requests
 
-The ranges below are disjoint and together contain all 155 rewritten commits.
-`Base` is excluded and `Tip` is included, matching `git log Base..Tip`.
+The ranges below are disjoint and together contain all 173 Ondrej-owned
+commits after the immutable baseline. `Base` is excluded and `Tip` is included,
+matching `git log Base..Tip`.
 
 | MR | Suggested title | Base | Tip | Boundary tag | Commits | Suggested labels | Depends on |
 | --- | --- | --- | --- | --- | ---: | --- | --- |
@@ -36,12 +39,13 @@ The ranges below are disjoint and together contain all 155 rewritten commits.
 | MR 8 | Harden remote orchestration and image integration | `73beeaf` | `5210290` | `mr-08-remote-image-integration` | 9 | `bugfix`, `remote`, `kubernetes`, `ci`, `images` | MR 5 and MR 7 |
 | MR 9 | Apply end-to-end runtime hardening | `5210290` | `5e45a8b` | `mr-09-e2e-hardening` | 38 | `bugfix`, `e2e`, `docker`, `podman`, `kubernetes`, `joinmarket`, `bitcoin` | MR 1–8 |
 | MR 10 | Restore parity with the current `main` runtime | `5e45a8b` | `mr-10-main-parity-hardening` | `mr-10-main-parity-hardening` | 13 | `bugfix`, `parity`, `docker`, `podman`, `kubernetes`, `joinmarket`, `wasabi` | MR 9 |
+| MR 11 | Harden Kubernetes Wasabi integration | `mr-10-main-parity-hardening` | `mr-11-kubernetes-wasabi-hardening` | `mr-11-kubernetes-wasabi-hardening` | 5 | `bugfix`, `kubernetes`, `wasabi`, `bitcoin`, `integration` | MR 10 |
 
 The annotated `mr-*` tags are the canonical visible separators. Display them
 directly in the history with:
 
 ```bash
-git log --decorate --oneline dd87648..mr-09-e2e-hardening
+git log --decorate --oneline dd87648..mr-11-kubernetes-wasabi-hardening
 ```
 
 ### MR 1 – Stabilize inherited emulator runtime contracts
@@ -151,7 +155,7 @@ git diff 73beeaf..5210290
 
 ### MR 9 – Apply end-to-end runtime hardening
 
-This final MR contains failures discovered during end-to-end and MetaCentrum
+This MR contains failures discovered during end-to-end and MetaCentrum
 validation. The commits remain deliberately small because they cover distinct
 failure modes across CLI configuration, Docker, Podman, Kubernetes, Bitcoin,
 JoinMarket, artifact collection, cleanup, and image execution.
@@ -189,6 +193,31 @@ git log --oneline mr-09-e2e-hardening..mr-10-main-parity-hardening
 git diff mr-09-e2e-hardening..mr-10-main-parity-hardening
 ```
 
+### MR 11 – Harden Kubernetes Wasabi integration
+
+This block contains four atomic runtime changes discovered while exercising
+the local Kubernetes-to-S3 Wasabi path:
+
+- allow constrained integration runs to request a shorter initial regtest
+  chain while preserving the production default of 1001 blocks;
+- allow locally imported k3d images to use `IfNotPresent` without changing the
+  production `Always` pull-policy default;
+- use the exposed Kubernetes Service port for in-cluster controller endpoints
+  while preserving proxy and external NodePort behavior; and
+- pass the initialized split Wasabi coordinator address to the distributor.
+
+The runtime code tip is the commit immediately before the documentation-only
+tip. The fifth commit only updates this integration plan, so reviewers can drop
+it if the upstream repository does not want to retain review-process
+documentation.
+
+Review with:
+
+```bash
+git log --oneline mr-10-main-parity-hardening..mr-11-kubernetes-wasabi-hardening
+git diff mr-10-main-parity-hardening..mr-11-kubernetes-wasabi-hardening
+```
+
 ## Recommended integration workflow
 
 ### Option A: stacked merge requests
@@ -205,6 +234,8 @@ git branch review/mr-06-contract-tests mr-06-contract-tests
 git branch review/mr-07-lint-and-fixes mr-07-lint-post-refactor
 git branch review/mr-08-remote-integration mr-08-remote-image-integration
 git branch review/mr-09-e2e-hardening mr-09-e2e-hardening
+git branch review/mr-10-main-parity mr-10-main-parity-hardening
+git branch review/mr-11-kubernetes-wasabi mr-11-kubernetes-wasabi-hardening
 ```
 
 Open MR 1 against the branch containing `dd87648`. Open every following MR
@@ -224,24 +255,34 @@ to merge before opening the next one.
 
 ## Verification before publishing
 
-The rewrite itself was verified with an identical tree comparison against the
-original tip and with focused unit tests:
+The original rewrite through MR 9 was verified with an identical tree
+comparison against the original tip and with focused unit tests:
 
 ```text
 26 passed
 ```
 
+The MR 11 runtime suffix was checked before and after the WIP-history cleanup:
+
+```text
+45 passed
+Ruff: all checks passed
+```
+
 Before publishing the final stack, verify the branch boundaries and trailers:
 
 ```bash
-git diff --exit-code backup/rajnoha-on-crocs-pre-rewrite-20260812..5e45a8b
-git log --format='%H%n%B%n---' dd87648..5e45a8b \
+git diff --exit-code backup/rajnoha-on-crocs-pre-rewrite-20260812..mr-09-e2e-hardening
+git log --format='%H%n%B%n---' dd87648..mr-11-kubernetes-wasabi-hardening \
   | rg -i 'co-authored-by|claude|codex'
+git rev-list --count dd87648..mr-11-kubernetes-wasabi-hardening
+git rev-list --count mr-10-main-parity-hardening..mr-11-kubernetes-wasabi-hardening
 ```
 
 The first command must produce no output. The second command must also produce
 no output because it intentionally searches only the rewritten Ondrej-owned
-suffix.
+suffix. The two counts must be `173` and `5`, respectively.
 
-Do not delete either backup branch until all merge requests have been reviewed
-and the final integrated tree has been compared with `5e45a8b`.
+Do not delete the backup branches until all merge requests have been reviewed,
+the MR 9 equivalence check has passed, and the cleaned MR 11 branch has been
+published and reviewed.
