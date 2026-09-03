@@ -49,3 +49,12 @@ def test_create_wallet_loads_a_wallet_left_behind_by_an_earlier_run() -> None:
 
     assert post.call_count == 1
     assert [call.args[0]["method"] for call in rpc.call_args_list] == ["loadwallet", "getwalletinfo"]
+
+
+def test_wait_ready_delegates_to_the_readiness_policy() -> None:
+    node = BtcNode()
+
+    with patch("manager.btc_node.wait_for_node_ready") as wait_for_node_ready:
+        node.wait_ready(timeout=10)
+
+    wait_for_node_ready.assert_called_once_with(node, 10)
