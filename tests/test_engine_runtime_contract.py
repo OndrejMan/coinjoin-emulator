@@ -4,6 +4,8 @@ import types
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
 from manager.engine.configuration import ScenarioConfig, WalletConfig
 from manager.engine.engine_base import EngineBase
 
@@ -102,3 +104,49 @@ def test_btc_folder_and_node_arguments_reach_the_driver(node_class: Mock, tmp_pa
     assert call.kwargs["volumes"] == {str(tmp_path): {"bind": "/home/bitcoin/data", "mode": "rw"}}
     assert call.kwargs["command"] == ["./run.sh", "-blocksxor=0", "-prune=0"]
     node_class.return_value.wait_ready.assert_called_once_with()
+
+
+def test_in_cluster_flag_uses_the_service_dns_name_and_service_port() -> None:
+    driver = Mock(in_cluster=True)
+    runtime = engine(args(in_cluster=True), driver)
+
+    assert runtime.service_endpoint("btc-node.ns.svc", 37128, {37128: 37131}) == (
+        "btc-node.ns.svc",
+        37131,
+    )
+
+
+@pytest.mark.parametrize("driver_in_cluster", [False, True])
+def test_a_local_run_reaches_the_control_host_on_the_published_port(driver_in_cluster) -> None:
+    runtime = engine(args(), Mock(in_cluster=driver_in_cluster))
+
+    assert runtime.service_endpoint("172.17.0.2", 28183, {28183: 28185}) == ("localhost", 28185)
+
+
+def test_a_tls_service_can_use_a_route() -> None:
+    runtime = engine(args(), Mock(in_cluster=False))
+
+    assert runtime.service_endpoint("172.17.0.2", 28183, {}, "app.example.org", tls=True) == (
+        "app.example.org",
+        443,
+    )
+
+
+def test_a_proxied_run_reaches_the_container_port_directly() -> None:
+    runtime = engine(args(proxy="socks5://localhost:9050"), Mock(in_cluster=False))
+
+    assert runtime.service_endpoint("172.17.0.2", 28183, {28183: 28185}) == ("172.17.0.2", 28183)
+
+
+@pytest.mark.parametrize("container_port,service_port", [(37128, 37131), (37128, 37133), (28183, 28185)])
+@pytest.mark.parametrize("driver_in_cluster", [False, True])
+def test_a_proxy_does_not_change_the_port_of_an_in_cluster_service(
+    container_port, service_port, driver_in_cluster
+) -> None:
+    runtime = engine(
+        args(proxy="socks5://localhost:9050", in_cluster=True), Mock(in_cluster=driver_in_cluster)
+    )
+
+    assert runtime.service_endpoint("client.ns.svc", container_port, {container_port: service_port}) == (
+        "client.ns.svc", service_port
+    )

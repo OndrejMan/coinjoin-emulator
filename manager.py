@@ -190,7 +190,7 @@ def build_parser():
         "--in-cluster",
         action="store_true",
         default=False,
-        help="Running inside Kubernetes cluster (uses service account)"
+        help="Run inside Kubernetes using its service account and Service DNS (explicit opt-in)"
     )
 
     build_subparser = subparsers.add_parser("build", help="build images")

@@ -96,6 +96,12 @@ The driver requires [Podman](https://podman.io/) being installed and you may als
 
 To run the simulation on a [Kubernetes](https://kubernetes.io/) cluster, use the `kubernetes` driver. The driver requires a running Kubernetes cluster and `kubectl` configured to access the cluster. 
 
+When the manager itself runs inside the cluster, explicitly pass `--in-cluster`
+before `run` (for example, `python manager.py --driver kubernetes --in-cluster run ...`).
+This selects service-account credentials and Service DNS endpoints. The manager
+does not enable this mode from `KUBERNETES_SERVICE_HOST`. A manager running outside
+the cluster with a kubeconfig should omit the flag.
+
 The `kubernetes` driver relies on used images being accessible publicly from [DockerHub](https://hub.docker.com/). For that, build the images in `containers` directory manually and upload them to the registry. Afterwards, specify the image prefix using `--image-prefix` option when starting the simulation.
 
 In case *NodePorts* are not supported by your cluster, you may also need to run a proxy to access the services, e.g., [Shadowsocks](https://shadowsocks.org/). Use the `--proxy` option to specify the address of the proxy.
