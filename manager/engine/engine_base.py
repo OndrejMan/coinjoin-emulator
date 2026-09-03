@@ -359,8 +359,11 @@ class EngineBase:
 
     def update_invoice_payments(self):
         due = list(filter(lambda x: x[0] <= self.current_block and x[1] <= self.current_round, self.invoices.keys()))
-        for i in due:
-            self.pay_invoices(self.invoices.pop(i, []))
+        for schedule in due:
+            # Keep the invoices scheduled until payment succeeds. A transient
+            # RPC failure must not silently erase wallet funding.
+            self.pay_invoices(self.invoices[schedule])
+            del self.invoices[schedule]
 
     def prepare_invoices(self, wallets: list[WalletConfig]):
         print("Preparing invoices")
