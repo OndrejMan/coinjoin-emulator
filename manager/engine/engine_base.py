@@ -98,6 +98,18 @@ class EngineBase:
             self.driver.build(name, f"./containers/{name}" if path is None else path)
             print(f"- image built {image_name}")
 
+    def service_endpoint(self, ip, container_port, ports, route=None):
+        """Resolve a driver endpoint for local, proxied, in-cluster and routed runs."""
+        if self.args.proxy:
+            return ip, container_port
+        if self.args.in_cluster or getattr(self.driver, "in_cluster", False):
+            # The Kubernetes driver returns a Service DNS name, which is reached
+            # on the Service port; that may differ from the container port.
+            return ip, ports.get(container_port, container_port)
+        if route:
+            return str(route), 443
+        return self.args.control_ip, ports[container_port]
+
     def start_infrastructure(self):
         print("Starting infrastructure")
         self.start_btc_node()
@@ -110,7 +122,7 @@ class EngineBase:
             node_volumes = {os.path.abspath(self.args.btcFolder): {"bind": "/home/bitcoin/data", "mode": "rw"}}
         command = ["./run.sh", *self.args.btc_node_arg] if self.args.btc_node_arg else None
 
-        btc_node_ip, btc_node_ports, _ = self.driver.run(
+        btc_node_ip, btc_node_ports, route = self.driver.run(
             "btc-node",
             self.image_ref("btc-node"),
             ports={18443: 18443, 18444: 18444},
@@ -122,9 +134,10 @@ class EngineBase:
         )
 
         print(btc_node_ip, btc_node_ports)
+        node_host, node_port = self.service_endpoint(btc_node_ip, 18443, btc_node_ports, route)
         self.node = BtcNode(
-            host=btc_node_ip if self.args.proxy or self.args.in_cluster else self.args.control_ip,
-            port=18443 if self.args.proxy else btc_node_ports[18443],
+            host=node_host,
+            port=node_port,
             internal_ip=btc_node_ip,
             proxy=self.args.proxy,
         )

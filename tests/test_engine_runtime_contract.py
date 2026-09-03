@@ -74,3 +74,34 @@ def test_btc_folder_and_node_arguments_reach_the_driver(node_class: Mock, tmp_pa
     assert call.kwargs["volumes"] == {str(tmp_path): {"bind": "/home/bitcoin/data", "mode": "rw"}}
     assert call.kwargs["command"] == ["./run.sh", "-blocksxor=0", "-prune=0"]
     node_class.return_value.wait_ready.assert_called_once_with()
+
+
+def test_in_cluster_driver_uses_the_service_dns_name_and_service_port() -> None:
+    driver = Mock(in_cluster=True)
+    runtime = engine(args(in_cluster=False), driver)
+
+    assert runtime.service_endpoint("btc-node.ns.svc", 37128, {37128: 37131}) == (
+        "btc-node.ns.svc",
+        37131,
+    )
+
+
+def test_a_local_run_reaches_the_control_host_on_the_published_port() -> None:
+    runtime = engine(args(), Mock(in_cluster=False))
+
+    assert runtime.service_endpoint("172.17.0.2", 28183, {28183: 28185}) == ("localhost", 28185)
+
+
+def test_a_route_is_reached_over_https() -> None:
+    runtime = engine(args(), Mock(in_cluster=False))
+
+    assert runtime.service_endpoint("172.17.0.2", 28183, {}, "app.example.org") == (
+        "app.example.org",
+        443,
+    )
+
+
+def test_a_proxied_run_reaches_the_container_port_directly() -> None:
+    runtime = engine(args(proxy="socks5://localhost:9050"), Mock(in_cluster=False))
+
+    assert runtime.service_endpoint("172.17.0.2", 28183, {28183: 28185}) == ("172.17.0.2", 28183)

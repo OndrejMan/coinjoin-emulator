@@ -204,8 +204,7 @@ class JoinmarketEngine(EngineBase):
             print(f"- could not start {name} ({e})")
             raise Exception("Could not start distributor")
 
-        actual_port = port if self.args.proxy else (443 if route else distributor_node_ports[port])
-        actual_ip = ip if self.args.proxy or self.args.in_cluster else (route if route else self.args.control_ip)
+        actual_ip, actual_port = self.service_endpoint(ip, port, distributor_node_ports, route)
 
         print(f"- started {name} at {actual_ip}:{actual_port}")
         self.distributor = self.init_joinmarket_clientserver(
@@ -310,8 +309,7 @@ class JoinmarketEngine(EngineBase):
             raise Exception("Could not start orderbook watcher")
 
         # Determine how to reach the service from the controller
-        actual_port = 62601 if self.args.proxy else (443 if route else obwatch_ports[port])
-        actual_ip = ip if self.args.proxy or self.args.in_cluster else (route if route else self.args.control_ip)
+        actual_ip, actual_port = self.service_endpoint(ip, 62601, obwatch_ports, route)
 
         print(f"- started {name} at {actual_ip}:{actual_port}")
 
@@ -431,8 +429,7 @@ class JoinmarketEngine(EngineBase):
 
         # In kubernetes, the pod is addressed using the ip unique for that service and all pods have the port
         # 28183 in use. The port rotation is needed for the local docker run, where the ports are mapped to the local
-        actual_port = 28183 if self.args.proxy else (443 if route else port)
-        actual_ip = ip if self.args.proxy or self.args.in_cluster else (route if route else self.args.control_ip)
+        actual_ip, actual_port = self.service_endpoint(ip, 28183, client_node_ports or {28183: port}, route)
 
         print(f"- started {name} at {actual_ip}:{actual_port}")
 
