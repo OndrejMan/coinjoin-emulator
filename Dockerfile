@@ -1,3 +1,6 @@
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.1
+FROM ${UV_IMAGE} AS uv
+
 FROM python:3.11
 
 ARG TARGETARCH=amd64
@@ -14,7 +17,7 @@ RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/s
 
 WORKDIR /app
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=uv /uv /uvx /bin/
 
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
