@@ -20,6 +20,7 @@ from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 DISTRIBUTOR_UTXOS = 200
 BATCH_SIZE = 5  # smaller batches avoid UTXO race conditions
 BTC = 100_000_000
+INFRASTRUCTURE_IMAGES = ("btc-node", "joinmarket-client-server", "irc-server")
 
 
 def _has_fidelity_bond(wallet):
@@ -61,24 +62,41 @@ class EngineBase:
     def prepare_images(self):
         raise NotImplementedError
 
+    def image_override(self, name: str) -> str:
+        return getattr(self.args, f"{name.replace('-', '_')}_image", "")
+
+    def image_ref(self, name: str) -> str:
+        """Resolve an exact infrastructure image override before the prefix default."""
+        override = self.image_override(name)
+        return override or f"{self.args.image_prefix}{name}"
+
+    def local_build_requested(self, name: str) -> bool:
+        return name in INFRASTRUCTURE_IMAGES and bool(
+            getattr(self.args, "coinjoin_infrastructure_local_build", False)
+        )
+
     def prepare_image(self, name: str, path=None):
-        prefixed_name = self.args.image_prefix + name
-        if self.driver.has_image(prefixed_name):
+        image_name = self.image_ref(name)
+        has_override = bool(self.image_override(name))
+        if self.local_build_requested(name):
+            self.driver.build(image_name, f"./containers/{name}" if path is None else path)
+            print(f"- image built {image_name}")
+        elif self.driver.has_image(image_name):
             if self.args.force_rebuild:
-                if self.args.image_prefix:
-                    self.driver.pull(prefixed_name)
-                    print(f"- image pulled {prefixed_name}")
+                if self.args.image_prefix or has_override:
+                    self.driver.pull(image_name)
+                    print(f"- image pulled {image_name}")
                 else:
                     self.driver.build(name, f"./containers/{name}" if path is None else path)
-                    print(f"- image rebuilt {prefixed_name}")
+                    print(f"- image rebuilt {image_name}")
             else:
-                print(f"- image reused {prefixed_name}")
-        elif self.args.image_prefix:
-            self.driver.pull(prefixed_name)
-            print(f"- image pulled {prefixed_name}")
+                print(f"- image reused {image_name}")
+        elif self.args.image_prefix or has_override:
+            self.driver.pull(image_name)
+            print(f"- image pulled {image_name}")
         else:
             self.driver.build(name, f"./containers/{name}" if path is None else path)
-            print(f"- image built {prefixed_name}")
+            print(f"- image built {image_name}")
 
     def start_infrastructure(self):
         print("Starting infrastructure")
@@ -87,13 +105,20 @@ class EngineBase:
         self.start_distributor()
 
     def start_btc_node(self):
+        node_volumes = None
+        if self.args.btcFolder:
+            node_volumes = {os.path.abspath(self.args.btcFolder): {"bind": "/home/bitcoin/data", "mode": "rw"}}
+        command = ["./run.sh", *self.args.btc_node_arg] if self.args.btc_node_arg else None
+
         btc_node_ip, btc_node_ports, _ = self.driver.run(
             "btc-node",
-            f"{self.args.image_prefix}btc-node",
+            self.image_ref("btc-node"),
             ports={18443: 18443, 18444: 18444},
             cpu=2.0,
             memory=2048,
             service_account="btc-node",
+            volumes=node_volumes,
+            command=command,
         )
 
         print(btc_node_ip, btc_node_ports)

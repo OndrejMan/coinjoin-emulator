@@ -178,6 +178,15 @@ if __name__ == "__main__":
     build_subparser.add_argument(
         "--image-prefix", type=str, default="", help="image prefix"
     )
+    build_subparser.add_argument("--btc-node-image", type=str, default="", help="exact btc-node image")
+    build_subparser.add_argument(
+        "--joinmarket-client-server-image", type=str, default="", help="exact joinmarket-client-server image"
+    )
+    build_subparser.add_argument("--irc-server-image", type=str, default="", help="exact irc-server image")
+    build_subparser.add_argument(
+        "--coinjoin-infrastructure-local-build", action="store_true", default=False,
+        help="build btc-node, joinmarket-client-server and irc-server from ./containers",
+    )
 
     run_subparser = subparsers.add_parser("run", help="run simulation")
     run_subparser.add_argument(
@@ -186,8 +195,23 @@ if __name__ == "__main__":
     run_subparser.add_argument(
         "--image-prefix", type=str, default="", help="image prefix"
     )
+    run_subparser.add_argument("--btc-node-image", type=str, default="", help="exact btc-node image")
+    run_subparser.add_argument(
+        "--joinmarket-client-server-image", type=str, default="", help="exact joinmarket-client-server image"
+    )
+    run_subparser.add_argument("--irc-server-image", type=str, default="", help="exact irc-server image")
+    run_subparser.add_argument(
+        "--coinjoin-infrastructure-local-build", action="store_true", default=False,
+        help="build btc-node, joinmarket-client-server and irc-server from ./containers",
+    )
     run_subparser.add_argument(
         "--scenario", type=str, help="scenario specification file"
+    )
+    run_subparser.add_argument(
+        "--btcFolder", type=str, default="", help="host folder with existing btc-node data"
+    )
+    run_subparser.add_argument(
+        "--btc-node-arg", action="append", default=[], help="extra bitcoind argument (repeatable)"
     )
     run_subparser.add_argument(
         "--btc-node-ip", type=str, help="override btc-node ip", default=""
