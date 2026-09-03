@@ -94,7 +94,7 @@ class WasabiEngine(EngineBase):
 
         version = get_backend_version(self.backend_architecture)
 
-        wasabi_backend_ip, wasabi_backend_ports, _ = self.driver.run(
+        wasabi_backend_ip, wasabi_backend_ports, route = self.driver.run(
             "wasabi-backend",
             f"{self.args.image_prefix}wasabi-backend:{version}",
             ports={37127: 37127},
@@ -126,10 +126,13 @@ class WasabiEngine(EngineBase):
             print_exception(e)
             raise
 
+        backend_host, backend_port = self.service_endpoint(
+            wasabi_backend_ip, 37127, wasabi_backend_ports, route
+        )
         self.backend = create_backend(
             self.backend_architecture,
-            host=wasabi_backend_ip if self.args.proxy else self.args.control_ip,
-            port=37127 if self.args.proxy else wasabi_backend_ports[37127],
+            host=backend_host,
+            port=backend_port,
             internal_ip=wasabi_backend_ip,
             proxy=self.args.proxy,
         )
@@ -143,7 +146,7 @@ class WasabiEngine(EngineBase):
         if self.backend_architecture is None:
             self.backend_architecture = self.determine_backend_architecture()
         version = get_backend_version(self.backend_architecture)
-        wasabi_coordinator_ip, wasabi_coordinator_ports, _ = self.driver.run(
+        wasabi_coordinator_ip, wasabi_coordinator_ports, route = self.driver.run(
             "wasabi-coordinator",
             f"{self.args.image_prefix}wasabi-coordinator:{version}",
             ports={37128: 37128},
@@ -156,9 +159,12 @@ class WasabiEngine(EngineBase):
         )
         sleep(1)
 
+        coordinator_host, coordinator_port = self.service_endpoint(
+            wasabi_coordinator_ip, 37128, wasabi_coordinator_ports, route
+        )
         self.coordinator = create_coordinator(
-            host=wasabi_coordinator_ip if self.args.proxy else self.args.control_ip,
-            port=37128 if self.args.proxy else wasabi_coordinator_ports[37128],
+            host=coordinator_host,
+            port=coordinator_port,
             internal_ip=wasabi_coordinator_ip,
             proxy=self.args.proxy,
         )
@@ -174,7 +180,7 @@ class WasabiEngine(EngineBase):
         backend_address = self.backend.internal_ip
 
         distributor_version = self.scenario.distributor_version or self.scenario.default_version
-        wasabi_client_distributor_ip, wasabi_client_distributor_ports, _ = self.driver.run(
+        wasabi_client_distributor_ip, wasabi_client_distributor_ports, route = self.driver.run(
             "wasabi-client-distributor",
             f"{self.args.image_prefix}wasabi-client:{distributor_version}",
             env={
@@ -186,10 +192,13 @@ class WasabiEngine(EngineBase):
             memory=2048,
         )
 
+        distributor_host, distributor_port = self.service_endpoint(
+            wasabi_client_distributor_ip, 37128, wasabi_client_distributor_ports, route
+        )
         self.distributor = self.init_wasabi_client(
             distributor_version,
-            wasabi_client_distributor_ip if self.args.proxy else self.args.control_ip,
-            port=37128 if self.args.proxy else wasabi_client_distributor_ports[37128],
+            distributor_host,
+            port=distributor_port,
             name="wasabi-client-distributor",
             delay=(0, 0),
             stop=(0, 0),
@@ -259,7 +268,7 @@ class WasabiEngine(EngineBase):
         client_env = {key: value for key, value in optional_env.items() if value is not None}
 
         try:
-            ip, manager_ports, _ = self.driver.run(
+            ip, manager_ports, route = self.driver.run(
                 name,
                 f"{self.args.image_prefix}wasabi-client:{version}",
                 env=client_env,
@@ -273,10 +282,11 @@ class WasabiEngine(EngineBase):
 
         delay = (wallet.delay_blocks or 0, wallet.delay_rounds or 0)
         stop = (wallet.stop_blocks or 0, wallet.stop_rounds or 0)
+        client_host, client_port = self.service_endpoint(ip, 37128, manager_ports, route)
         client = self.init_wasabi_client(
             version,
-            ip if self.args.proxy else self.args.control_ip,
-            37128 if self.args.proxy else manager_ports[37128],
+            client_host,
+            client_port,
             f"wasabi-client-{idx:03}",
             delay,
             stop,
