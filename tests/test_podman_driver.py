@@ -147,6 +147,7 @@ def test_run_publishes_the_requested_ports_on_its_own_network(driver_and_client,
         ports={str(container_port): 28184},
         environment={"MODE": "walletd"},
         volumes={"/host/data": {"bind": "/container/data", "mode": "rw"}},
+        sysctls={"net.ipv4.ip_local_reserved_ports": "37127-37260"},
     )
 
 
