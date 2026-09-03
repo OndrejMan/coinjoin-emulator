@@ -88,3 +88,11 @@ def test_the_environment_does_not_override_the_distributor_startup_timeout(monke
 def test_an_unusable_distributor_startup_timeout_is_rejected(value) -> None:
     with pytest.raises(SystemExit):
         parse("run", "--distributor-startup-timeout", value)
+
+
+def test_the_joinmarket_generator_help_can_be_rendered() -> None:
+    # An unescaped % in a help string makes argparse fail while formatting it.
+    with pytest.raises(SystemExit) as exit_info:
+        parse("genscen-joinmarket", "--help")
+
+    assert exit_info.value.code == 0

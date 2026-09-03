@@ -459,20 +459,20 @@ def setup_parser(parser: argparse.ArgumentParser):
     parser.add_argument("--bond-min-locktime-months", type=int, default=3, help="minimum bond locktime (months)")
     parser.add_argument("--bond-max-locktime-months", type=int, default=12, help="maximum bond locktime (months)")
     parser.add_argument("--bond-maker-extra-utxos", action="store_true", help="give fidelity bond makers more UTXOs scaled by taker count to handle concurrent coinjoins")
-    parser.add_argument("--bond-maker-utxo-multiplier", type=float, default=1.0, help="multiplier for bond maker UTXOs (e.g., 1.5 = 50% more UTXOs than taker count)")
+    parser.add_argument("--bond-maker-utxo-multiplier", type=float, default=1.0, help="multiplier for bond maker UTXOs (e.g., 1.5 = 50%% more UTXOs than taker count)")
 
     # Quantile-based distribution options
     parser.add_argument("--use-quantiles", action="store_true", help="use quantile-based distributions instead of min/max ranges")
     parser.add_argument("--fee-absolute-quantiles", type=str, default="1000,2000,3000,4000,5000,6000",
-                       help="absolute fee quantiles (0%,20%,40%,60%,80%,100%) in satoshis")
+                       help="absolute fee quantiles (0%%,20%%,40%%,60%%,80%%,100%%) in satoshis")
     parser.add_argument("--fee-relative-quantiles", type=str, default="0.0001,0.001,0.002,0.003,0.004,0.005",
-                       help="relative fee quantiles (0%,20%,40%,60%,80%,100%) as fractions")
+                       help="relative fee quantiles (0%%,20%%,40%%,60%%,80%%,100%%) as fractions")
     parser.add_argument("--wallet-btc-quantiles", type=str, default="1.0,2.5,4.0,6.0,8.5,10.0",
-                       help="wallet BTC amount quantiles (0%,20%,40%,60%,80%,100%) for makers")
+                       help="wallet BTC amount quantiles (0%%,20%%,40%%,60%%,80%%,100%%) for makers")
     parser.add_argument("--taker-btc-quantiles", type=str, default="",
-                       help="taker BTC amount quantiles (0%,20%,40%,60%,80%,100%). If not specified, uses wallet-btc-quantiles divided by 3")
+                       help="taker BTC amount quantiles (0%%,20%%,40%%,60%%,80%%,100%%). If not specified, uses wallet-btc-quantiles divided by 3")
     parser.add_argument("--bond-amount-quantiles", type=str, default="10000,25000,50000,75000,100000,150000",
-                       help="fidelity bond amount quantiles (0%,20%,40%,60%,80%,100%) in satoshis")
+                       help="fidelity bond amount quantiles (0%%,20%%,40%%,60%%,80%%,100%%) in satoshis")
 
 
 def handler(args):
