@@ -23,7 +23,8 @@ class ScenarioRunner:
                  shadowsocks_config: str = "/home/drajnoha/Code/PycharmProjects/coinjoin-simulator/shadowsocks/config_local.yaml",
                  cleanup_wait: int = 150,
                  in_cluster: bool = False,
-                 engine: str = "joinmarket"):
+                 engine: str = "joinmarket",
+                 distributor_startup_timeout: int | None = None):
 
         self.scenario_dir = scenario_dir
         self.namespace = namespace
@@ -32,6 +33,7 @@ class ScenarioRunner:
         self.shadowsocks_config = shadowsocks_config
         self.cleanup_wait = cleanup_wait
         self.engine = engine
+        self.distributor_startup_timeout = distributor_startup_timeout
         self.sslocal_process = None
         self.results = []
         self.in_cluster = in_cluster
@@ -151,6 +153,9 @@ class ScenarioRunner:
 
         if not self.in_cluster and self.proxy:
             cmd.extend(["--proxy", self.proxy])
+
+        if self.distributor_startup_timeout is not None:
+            cmd.extend(["--distributor-startup-timeout", str(self.distributor_startup_timeout)])
 
         start_time = time.time()
 
@@ -335,6 +340,11 @@ def main():
                         help="Shadowsocks config file")
     parser.add_argument("--cleanup-wait", type=int, default=90,
                         help="Seconds to wait after cleanup")
+    parser.add_argument(
+        "--distributor-startup-timeout",
+        type=int,
+        help="Seconds passed to manager.py while waiting for the distributor wallet",
+    )
     parser.add_argument("--start-from", help="Start from scenario containing this string")
 
     args = parser.parse_args()
@@ -347,7 +357,8 @@ def main():
         shadowsocks_config=args.shadowsocks_config,
         cleanup_wait=args.cleanup_wait,
         in_cluster=args.in_cluster,
-        engine=args.engine
+        engine=args.engine,
+        distributor_startup_timeout=args.distributor_startup_timeout,
     )
 
     runner.run_all(start_from=args.start_from)

@@ -11,7 +11,7 @@ import manager.commands.genscen_joinmarket
 from manager.driver import Driver
 from manager.engine.engine_base import EngineBase
 from manager.engine.joinmarket_engine import JoinmarketEngine
-from manager.engine.wasabi_engine import WasabiEngine
+from manager.engine.wasabi_engine import DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT, WasabiEngine
 from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 
 args: argparse.Namespace | None = None
@@ -160,6 +160,18 @@ def cleanup(engine, driver, args):
     print("[manager.py] Cleanup complete", flush=True)
     return failed
 
+
+def positive_seconds(value):
+    """Parse a timeout in whole seconds, rejecting zero and negatives."""
+    try:
+        seconds = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"timeout must be an integer number of seconds: {value!r}") from error
+    if seconds <= 0:
+        raise argparse.ArgumentTypeError(f"timeout must be a positive number of seconds: {value!r}")
+    return seconds
+
+
 def build_parser():
     """Build the manager command line; kept out of __main__ so it can be tested."""
     parser = argparse.ArgumentParser(description="Run coinjoin simulation setup")
@@ -271,6 +283,16 @@ def build_parser():
         "--controller-failed-marker",
         default="",
         help="Write this marker when the emulation or artifact collection fails.",
+    )
+    run_subparser.add_argument(
+        "--distributor-startup-timeout",
+        type=positive_seconds,
+        default=DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT,
+        metavar="SECONDS",
+        help=(
+            "how long to wait for the distributor wallet to answer before failing the run "
+            f"(default {DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT}s)"
+        ),
     )
     run_subparser.add_argument(
         "--disable-port-forward", action="store_true", default=False,
