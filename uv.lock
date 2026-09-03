@@ -504,7 +504,6 @@ dependencies = [
     { name = "httpx", extra = ["http2"] },
     { name = "kubernetes" },
     { name = "numpy" },
-    { name = "podman" },
     { name = "pysocks" },
     { name = "requests" },
     { name = "tzdata" },
@@ -529,7 +528,6 @@ requires-dist = [
     { name = "httpx", extras = ["http2"], specifier = ">=0.27,<0.28" },
     { name = "kubernetes", specifier = "==28.1.0" },
     { name = "numpy", specifier = "==1.26.4" },
-    { name = "podman", specifier = "==4.7" },
     { name = "pysocks", specifier = "==1.7.1" },
     { name = "requests", specifier = "==2.31" },
     { name = "tzdata" },
@@ -873,20 +871,6 @@ wheels = [
 ]
 
 [[package]]
-name = "podman"
-version = "4.7.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyxdg" },
-    { name = "requests" },
-    { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/84/ec/ae01ba446ab3f74ac7af875063694d0462344806f85c4e9e2894ed1c6bfc/podman-4.7.0.tar.gz", hash = "sha256:01e3385445b3a5f30bad035439de651a8ea62810d94df853bed6f8f150cd4b7f", size = 76518, upload-time = "2023-09-27T13:52:45.592Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/0d/5023a43c9c402615c506794dd79f7f4116cb588c59da4d37c4e830b2dc26/podman-4.7.0-py3-none-any.whl", hash = "sha256:3fb03cc0f8b00fb91c273db1b9f86595cde7a5343a74e66cf19916fa34e096ae", size = 92329, upload-time = "2023-09-27T13:52:43.567Z" },
-]
-
-[[package]]
 name = "py-sr25519-bindings"
 version = "0.2.4"
 source = { registry = "https://pypi.org/simple" }
@@ -1147,15 +1131,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/2d/41/12fbfd7f36ed2146d8bc9de96c2741296bf0d490b98508496cff322e274c/pywin32-312-cp313-cp313-win32.whl", hash = "sha256:7a27df850933d16a8eabfbaeb73d52b273e2da667f80d70b01a89d1f6828d02c", size = 6370184, upload-time = "2026-06-04T07:49:36.253Z" },
     { url = "https://files.pythonhosted.org/packages/ba/db/36a78e3403099d31d9746d13fdcde5accc43c1155f375a34d15983a479a7/pywin32-312-cp313-cp313-win_amd64.whl", hash = "sha256:c53e878d15a1c44788082bfe712a905433473aa38f86375b7cf8b45e3acbaaf9", size = 6914298, upload-time = "2026-06-04T07:49:38.876Z" },
     { url = "https://files.pythonhosted.org/packages/84/37/c1697194092b76de9ed47ca124323f02c57ffc8a45c06f88a3d5acaf01eb/pywin32-312-cp313-cp313-win_arm64.whl", hash = "sha256:59aba5d5940842075343a5ddc6b11f1cdf0d1567fe745290359dfbcc7c2eb831", size = 6727640, upload-time = "2026-06-04T07:49:41.083Z" },
-]
-
-[[package]]
-name = "pyxdg"
-version = "0.28"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b0/25/7998cd2dec731acbd438fbf91bc619603fc5188de0a9a17699a781840452/pyxdg-0.28.tar.gz", hash = "sha256:3267bb3074e934df202af2ee0868575484108581e6f3cb006af1da35395e88b4", size = 77776, upload-time = "2022-06-05T11:35:01Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/8d/cf41b66a8110670e3ad03dab9b759704eeed07fa96e90fdc0357b2ba70e2/pyxdg-0.28-py2.py3-none-any.whl", hash = "sha256:bdaf595999a0178ecea4052b7f4195569c1ff4d344567bccdc12dfdf02d545ab", size = 49520, upload-time = "2022-06-05T11:34:58.832Z" },
 ]
 
 [[package]]
