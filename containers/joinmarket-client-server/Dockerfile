@@ -1,4 +1,5 @@
-FROM joinmarket-latest:taker-logs
+ARG JOINMARKET_BASE_IMAGE=ghcr.io/ondrejman/joinmarket-base:latest
+FROM ${JOINMARKET_BASE_IMAGE}
 
 
 # Copy the config file to the right place
