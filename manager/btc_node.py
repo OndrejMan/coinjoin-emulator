@@ -20,21 +20,17 @@ class BtcNode:
     def _rpc(self, request, wallet=None):
         request["jsonrpc"] = "1.0"
         request["id"] = "1"
-        try:
-            response = requests.post(
-                f"http://{self.host}:{self.port}" + (f"/wallet/{wallet}" if wallet else ""),
-                data=json.dumps(request),
-                auth=("user", "password"),
-                proxies=dict(http=self.proxy),
-                timeout=5,
-            )
-        except requests.exceptions.Timeout as e:
-            print("Request timeout")
-            print(e)
-            return "timeout"
-        if response.json()["error"] is not None:
-            raise Exception(response.json()["error"])
-        return response.json()["result"]
+        response = requests.post(
+            f"http://{self.host}:{self.port}" + (f"/wallet/{wallet}" if wallet else ""),
+            data=json.dumps(request),
+            auth=("user", "password"),
+            proxies=dict(http=self.proxy),
+            timeout=5,
+        )
+        body = response.json()
+        if body["error"] is not None:
+            raise RpcError(body["error"])
+        return body["result"]
 
     def get_block_count(self):
         request = {
@@ -43,8 +39,6 @@ class BtcNode:
         }
         result = self._rpc(request)
         if not isinstance(result, int):
-            # _rpc answers "timeout" instead of a result when the node does not
-            # respond; callers should see that as a failure, not as a height.
             raise RpcError(f"btc-node returned no block count: {result!r}")
         return result
 
