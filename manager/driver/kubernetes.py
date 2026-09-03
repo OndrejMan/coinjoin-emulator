@@ -1,10 +1,13 @@
 import base64
 import os
+import re
+import shlex
 import tarfile
 import time
 import traceback
 from functools import cached_property
 from io import BytesIO
+from threading import RLock
 from time import sleep
 
 import backoff
@@ -17,8 +20,22 @@ from manager.exceptions import KubernetesResourceQuotaError, StartupError
 from . import Driver
 
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
+DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
+BENIGN_TAR_WARNING_RE = re.compile(
+    r"^tar: .*: (file changed as we read it|socket ignored)$"
+    r"|^tar: Removing leading [`'\"]?/[`'\"]? from (member names|hard link targets)$"
+)
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
+
+
+def _split_tar_diagnostics(stderr):
+    """Separate warnings that leave a complete archive from real tar errors."""
+    benign, fatal = [], []
+    for line in stderr.splitlines():
+        if line.strip():
+            (benign if BENIGN_TAR_WARNING_RE.match(line.strip()) else fatal).append(line.strip())
+    return benign, fatal
 
 
 class KubernetesDriver(Driver):
@@ -39,6 +56,16 @@ class KubernetesDriver(Driver):
         self.pull_secret_path = pull_secret_path
         self.in_cluster = in_cluster
         self.run_id = run_id
+
+    @cached_property
+    def _exec_lock(self):
+        """Serialize exec calls that temporarily swap the shared ApiClient request method.
+
+        kubernetes.stream.stream mutates the API client while a connection is
+        open, so concurrent artifact downloads otherwise cross their websocket
+        streams and corrupt the archive payload.
+        """
+        return RLock()
 
     def _create_image_pull_secret(self):
         secret_name = "regcred"
@@ -280,116 +307,78 @@ class KubernetesDriver(Driver):
             pass
 
     def download(self, name, src_path, dst_path):
+        self._require_exec_ready(name)
         if src_path[-1] == "/":
             src_path = src_path[:-1]
         src_parent, src_target = os.path.split(src_path)
-        # Use rsync-like approach with tar to handle files being written to
-        # The --warning=no-file-changed flag helps handle files that change during reading
-        # The --ignore-failed-read flag ensures the process continues even if some files can't be read
+        # The websocket carries text frames that may split at any byte, so the
+        # archive is transported as one uninterrupted base64 stream (GNU base64
+        # wraps its output by default) and decoded strictly below.
         exec_command = [
-            "tar", "cf", "-",
-            "--warning=no-file-changed",
-            "--ignore-failed-read",
-            "-C", src_parent, src_target
+            "sh",
+            "-c",
+            f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64 | tr -d '\\n'",
         ]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
-        print("Opening connection")
+        encoded_chunks = []
+        stderr_chunks = []
+        deadline = time.monotonic() + DOWNLOAD_TIMEOUT_SECONDS
+        with self._exec_lock:
+            resp = self._exec_stream(name, exec_command, f"download {src_path}")
+            while resp.is_open():
+                if time.monotonic() >= deadline:
+                    resp.close()
+                    raise TimeoutError(f"Timed out downloading {name}:{src_path}")
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    encoded_chunks.append(resp.read_stdout())
+                if resp.peek_stderr():
+                    stderr_chunks.append(resp.read_stderr())
+            resp.close()
 
-        fo = BytesIO()
-        while resp.is_open():
-            print("Updating stream")
-            resp.update(timeout=10)
-            if resp.peek_stdout():
-                fo.write(resp.read_stdout().encode())
-        print("")
-        fo.seek(0)
-        print("Closing connection")
-        resp.close()
-
-        with tarfile.open(fileobj=fo) as tar:
-            print("Extracting")
+        benign_warnings, fatal_errors = _split_tar_diagnostics("".join(stderr_chunks))
+        if fatal_errors:
+            raise RuntimeError("download command wrote stderr: " + "\n".join(fatal_errors))
+        encoded = "".join(encoded_chunks)
+        if not encoded.strip():
+            detail = "; ".join(benign_warnings) or "no output"
+            raise RuntimeError(f"download of {name}:{src_path} produced an empty archive: {detail}")
+        if benign_warnings:
+            print(
+                f"[WARNING] {name}:{src_path} changed while it was archived; "
+                f"keeping the completed archive: {'; '.join(benign_warnings)}"
+            )
+        try:
+            payload = base64.b64decode(encoded, validate=True)
+        except ValueError as error:
+            raise RuntimeError(f"download of {name}:{src_path} returned invalid base64") from error
+        with tarfile.open(fileobj=BytesIO(payload)) as tar:
             tar.extractall(dst_path)
 
-        # Wait for required files to appear in dst_path
-        import glob
-        import time
-        start_time = time.time()
-        timeout = 120  # 2 minutes
-        found = False
-        waited = False
-        while True:
-            tumble_log = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.log"))
-            tumble_schedule = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.schedule*"))
-            j_logs = glob.glob(os.path.join(dst_path, "logs/J*.log"))
-            yifen = os.path.exists(os.path.join(dst_path, "logs/yigen-statement.csv"))
-
-            cond1 = tumble_log and tumble_schedule and len(j_logs) > 0
-            cond2 = len(j_logs) > 0 and yifen
-
-            print(f"Debug: tumble_log={tumble_log}, tumble_schedule={tumble_schedule}, j_logs={j_logs}, yigen={yifen}")
-
-            if cond1 or cond2:
-                print(f"All required log files found in {dst_path} after {time.time() - start_time} seconds")
-                print("Waiting for file transfer to complete...")
-                time.sleep(10)
-                if found:
-                    print("All required log files still found in {} after {} seconds".format(dst_path, time.time() - start_time))
-                    time.sleep(1)
-                    break
-                found = True
-
-            if time.time() - start_time > timeout:
-                print("Timeout waiting for required log files in {}".format(dst_path))
-                break
-
-            if not waited:
-                print("Waiting for required log files to appear in {}...".format(dst_path))
-                waited = True
-            time.sleep(2)
-
-        # sleep(60)
-
     def peek(self, name, path):
-        exec_command = ["cat", path]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
-
+        self._require_exec_ready(name)
         output = ""
-        while resp.is_open():
-            resp.update(timeout=1)
-            if resp.peek_stdout():
-                output += resp.read_stdout()
-        resp.close()
+        with self._exec_lock:
+            resp = self._exec_stream(name, ["cat", path], f"read {path}")
+            while resp.is_open():
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    output += resp.read_stdout()
+            resp.close()
         return output
 
-    def get_pod_resource_usage(self, name):
-        """
-        Get memory usage of a pod by reading /proc/self/status.
-        Returns dict with memory_mb and memory_limit_mb, or None if failed.
-        """
+    def _require_exec_ready(self, name):
+        """Reject a pod whose container cannot service a Kubernetes exec request."""
+        pod = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace)
+        if not getattr(getattr(pod, "spec", None), "node_name", None):
+            raise RuntimeError(f"pod {name} was never scheduled onto a node, so nothing can be read from it")
+        phase = getattr(getattr(pod, "status", None), "phase", None)
+        if phase != "Running":
+            raise RuntimeError(f"pod {name} is in phase {phase}, so its container is gone")
+
+    def _exec_stream(self, name, exec_command, action):
+        """Open an exec stream and turn a Kubernetes API failure into a clear error."""
         try:
-            # Read process memory info from /proc
-            exec_command = ["cat", "/proc/self/status"]
-            resp = stream(
+            return stream(
                 self.client.connect_get_namespaced_pod_exec,
                 name,
                 self.namespace,
@@ -400,13 +389,24 @@ class KubernetesDriver(Driver):
                 tty=False,
                 _preload_content=False,
             )
+        except ApiException as error:
+            raise RuntimeError(f"could not {action} on pod {name}: {error}") from error
 
+    def get_pod_resource_usage(self, name):
+        """
+        Get memory usage of a pod by reading /proc/self/status.
+        Returns dict with memory_mb and memory_limit_mb, or None if failed.
+        """
+        try:
+            # Read process memory info from /proc
             output = ""
-            while resp.is_open():
-                resp.update(timeout=1)
-                if resp.peek_stdout():
-                    output += resp.read_stdout()
-            resp.close()
+            with self._exec_lock:
+                resp = self._exec_stream(name, ["cat", "/proc/self/status"], "read /proc/self/status")
+                while resp.is_open():
+                    resp.update(timeout=1)
+                    if resp.peek_stdout():
+                        output += resp.read_stdout()
+                resp.close()
 
             # Parse VmRSS (Resident Set Size - actual RAM used)
             memory_kb = None

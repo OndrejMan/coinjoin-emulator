@@ -103,3 +103,107 @@ def test_waiting_for_a_pod_ip_has_a_deadline() -> None:
     with patch("manager.driver.kubernetes.time.monotonic", side_effect=[0.0, 10_000.0]):
         with pytest.raises(TimeoutError, match="did not receive an IP"):
             instance._wait_for_pod_ip("btc-node")  # pylint: disable=protected-access
+
+
+def running_pod() -> SimpleNamespace:
+    return SimpleNamespace(
+        spec=SimpleNamespace(node_name="node-1"), status=SimpleNamespace(phase="Running")
+    )
+
+
+class FakeStream:
+    """A one-shot exec stream that closes once its output has been read."""
+
+    def __init__(self, stdout: str = "", stderr: str = "") -> None:
+        self.stdout = stdout
+        self.stderr = stderr
+        self.open = True
+
+    def is_open(self) -> bool:
+        return self.open
+
+    def update(self, timeout: int) -> None:
+        if not self.stdout and not self.stderr:
+            self.open = False
+
+    def peek_stdout(self) -> bool:
+        return bool(self.stdout)
+
+    def read_stdout(self) -> str:
+        stdout, self.stdout = self.stdout, ""
+        return stdout
+
+    def peek_stderr(self) -> bool:
+        return bool(self.stderr)
+
+    def read_stderr(self) -> str:
+        stderr, self.stderr = self.stderr, ""
+        return stderr
+
+    def close(self) -> None:
+        self.open = False
+
+
+def archive(tmp_path) -> str:
+    import base64
+    import io
+    import tarfile
+
+    payload = io.BytesIO()
+    source = tmp_path / "logs"
+    source.mkdir(parents=True)
+    (source / "run.log").write_text("hello", encoding="utf-8")
+    with tarfile.open(fileobj=payload, mode="w") as tar:
+        tar.add(source, arcname="logs")
+    return base64.b64encode(payload.getvalue()).decode("ascii")
+
+
+def test_download_decodes_the_base64_archive(tmp_path) -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod_status.return_value = running_pod()
+    encoded = archive(tmp_path / "src")
+    destination = tmp_path / "dst"
+    destination.mkdir()
+
+    with patch("manager.driver.kubernetes.stream", return_value=FakeStream(stdout=encoded)):
+        instance.download("jcs-000", "/home/joinmarket/logs/", str(destination))
+
+    assert (destination / "logs" / "run.log").read_text(encoding="utf-8") == "hello"
+
+
+def test_download_keeps_an_archive_that_only_warned_about_changing_files(tmp_path) -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod_status.return_value = running_pod()
+    encoded = archive(tmp_path / "src")
+    destination = tmp_path / "dst"
+    destination.mkdir()
+    warning = "tar: logs/run.log: file changed as we read it\n"
+
+    with patch(
+        "manager.driver.kubernetes.stream", return_value=FakeStream(stdout=encoded, stderr=warning)
+    ):
+        instance.download("jcs-000", "/home/joinmarket/logs/", str(destination))
+
+    assert (destination / "logs" / "run.log").is_file()
+
+
+def test_download_reports_a_real_tar_error(tmp_path) -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod_status.return_value = running_pod()
+
+    with patch(
+        "manager.driver.kubernetes.stream",
+        return_value=FakeStream(stderr="tar: /home/joinmarket/logs: Cannot open: No such file\n"),
+    ):
+        with pytest.raises(RuntimeError, match="Cannot open"):
+            instance.download("jcs-000", "/home/joinmarket/logs/", str(tmp_path))
+
+
+def test_reading_from_a_pod_that_is_not_running_is_rejected(tmp_path) -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod_status.return_value = SimpleNamespace(
+        spec=SimpleNamespace(node_name="node-1"), status=SimpleNamespace(phase="Failed")
+    )
+
+    with pytest.raises(RuntimeError, match="phase Failed"):
+        instance.download("jcs-000", "/logs/", str(tmp_path))
