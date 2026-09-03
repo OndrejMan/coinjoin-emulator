@@ -64,3 +64,27 @@ def test_service_host_does_not_authorize_disabling_port_forward(monkeypatch, cap
     assert exit_info.value.code == 1
     driver.assert_not_called()
     assert "requires --proxy or --in-cluster" in capsys.readouterr().out
+
+
+def test_the_distributor_startup_timeout_defaults_to_the_engine_constant() -> None:
+    from manager.engine.wasabi_engine import DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT
+
+    assert parse("run").distributor_startup_timeout == DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT
+
+
+def test_the_distributor_startup_timeout_can_be_set_on_the_command_line() -> None:
+    assert parse("run", "--distributor-startup-timeout", "1500").distributor_startup_timeout == 1500
+
+
+def test_the_environment_does_not_override_the_distributor_startup_timeout(monkeypatch) -> None:
+    from manager.engine.wasabi_engine import DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT
+
+    monkeypatch.setenv("COINJOIN_DISTRIBUTOR_STARTUP_TIMEOUT", "1500")
+
+    assert parse("run").distributor_startup_timeout == DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])
+def test_an_unusable_distributor_startup_timeout_is_rejected(value) -> None:
+    with pytest.raises(SystemExit):
+        parse("run", "--distributor-startup-timeout", value)
