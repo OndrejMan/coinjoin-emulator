@@ -22,7 +22,7 @@ class BtcNode:
         request["id"] = "1"
         try:
             response = requests.post(
-                f"http://{self.host}:{self.port}" + ("/wallet/" + WALLET if wallet else ""),
+                f"http://{self.host}:{self.port}" + (f"/wallet/{wallet}" if wallet else ""),
                 data=json.dumps(request),
                 auth=("user", "password"),
                 proxies=dict(http=self.proxy),
