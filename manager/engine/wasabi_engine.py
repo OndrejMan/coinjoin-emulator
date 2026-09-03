@@ -31,6 +31,10 @@ SUCCESSFUL_BROADCAST_RE = re.compile(
 )
 WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
 WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
+# The distributor is the first client to start, so it downloads a block filter
+# for the whole pre-mined chain before its wallet answers; the previous
+# hard-coded 360s was within noise of a timeout on a loaded host.
+DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT = 900
 
 
 class WasabiEngine(EngineBase):
@@ -205,8 +209,9 @@ class WasabiEngine(EngineBase):
             delay=(0, 0),
             stop=(0, 0),
         )
-        if not self.distributor.wait_wallet(timeout=360):
-            print("- could not start distributor (application timeout)")
+        timeout = int(getattr(self.args, "distributor_startup_timeout", DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT))
+        if not self.distributor.wait_wallet(timeout=timeout):
+            print(f"- could not start distributor (application timeout {timeout} seconds)")
             raise Exception("Could not start distributor")
         print("- started distributor")
 

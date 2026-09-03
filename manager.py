@@ -11,7 +11,7 @@ import manager.commands.genscen_joinmarket
 from manager.driver import Driver
 from manager.engine.engine_base import EngineBase
 from manager.engine.joinmarket_engine import JoinmarketEngine
-from manager.engine.wasabi_engine import WasabiEngine
+from manager.engine.wasabi_engine import DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT, WasabiEngine
 from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 
 args: argparse.Namespace | None = None
@@ -27,6 +27,7 @@ def handle_shutdown_signal(signum, frame):
 
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
 DEFAULT_BTC_DOWNLOAD_PATH = "btc-node:/home/bitcoin/data/"
+DISTRIBUTOR_STARTUP_TIMEOUT_ENV = "COINJOIN_DISTRIBUTOR_STARTUP_TIMEOUT"
 
 
 def timezone_name(value: str) -> str:
@@ -160,6 +161,40 @@ def cleanup(engine, driver, args):
     print("[manager.py] Cleanup complete", flush=True)
     return failed
 
+
+def positive_seconds(value):
+    """Parse a timeout in whole seconds, rejecting zero and negatives."""
+    try:
+        seconds = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"timeout must be an integer number of seconds: {value!r}") from error
+    if seconds <= 0:
+        raise argparse.ArgumentTypeError(f"timeout must be a positive number of seconds: {value!r}")
+    return seconds
+
+
+def default_distributor_startup_timeout():
+    """Read the distributor timeout default from the environment.
+
+    Drivers that cannot easily extend the manager command line - compose and
+    the Kubernetes controller both template a fixed one - set the environment
+    variable instead. An unusable value falls back to the built-in default
+    rather than failing a run over a malformed knob.
+    """
+    raw = os.environ.get(DISTRIBUTOR_STARTUP_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT
+    try:
+        seconds = int(raw)
+    except ValueError:
+        print(f"Ignoring non-numeric {DISTRIBUTOR_STARTUP_TIMEOUT_ENV}={raw!r}", file=sys.stderr)
+        return DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT
+    if seconds <= 0:
+        print(f"Ignoring non-positive {DISTRIBUTOR_STARTUP_TIMEOUT_ENV}={raw!r}", file=sys.stderr)
+        return DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT
+    return seconds
+
+
 def build_parser():
     """Build the manager command line; kept out of __main__ so it can be tested."""
     parser = argparse.ArgumentParser(description="Run coinjoin simulation setup")
@@ -271,6 +306,16 @@ def build_parser():
         "--controller-failed-marker",
         default="",
         help="Write this marker when the emulation or artifact collection fails.",
+    )
+    run_subparser.add_argument(
+        "--distributor-startup-timeout",
+        type=positive_seconds,
+        default=default_distributor_startup_timeout(),
+        metavar="SECONDS",
+        help=(
+            "how long to wait for the distributor wallet to answer before failing the run "
+            f"(default {DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT}s, or ${DISTRIBUTOR_STARTUP_TIMEOUT_ENV})"
+        ),
     )
     run_subparser.add_argument(
         "--disable-port-forward", action="store_true", default=False,
