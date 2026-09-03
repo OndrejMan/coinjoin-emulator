@@ -111,7 +111,7 @@ class KubernetesDriver(Driver):
         pass
 
     def build_pod_manifest(self, name, image, env, ports, cpu, memory,
-                            user_id=None, volumes=None, command=None):
+                            user_id=None, volumes=None, command=None, group_id=None):
         if ports is None:
             ports = {}
         if env is None:
@@ -130,7 +130,7 @@ class KubernetesDriver(Driver):
                             "runAsNonRoot": True,
                             "seccompProfile": {"type": "RuntimeDefault"},
                             "runAsUser": user_id,
-                            "runAsGroup": user_id,
+                            "runAsGroup": user_id if group_id is None else group_id,
                         }
 
         return {
@@ -181,7 +181,7 @@ class KubernetesDriver(Driver):
     ):
         pod_manifest = self.build_pod_manifest(
             name, image, env, ports, cpu, memory, run_as_user,
-            kwargs.get("volumes"), kwargs.get("command"),
+            kwargs.get("volumes"), kwargs.get("command"), kwargs.get("run_as_group"),
         )
         resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
 
