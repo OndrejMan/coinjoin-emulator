@@ -27,6 +27,9 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY . .
+
+RUN chmod -R a+rX /app
+
 RUN mkdir /app/logs && chown -R 1000:1000 /app/logs
 
 ENV PYTHONPATH=/app
