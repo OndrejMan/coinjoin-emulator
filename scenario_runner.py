@@ -156,7 +156,9 @@ class ScenarioRunner:
 
         try:
             # Run the scenario
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            # Merge stderr into stdout: reading stderr only after the process
+            # exits deadlocks as soon as the manager fills the stderr pipe.
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             self.current_process = process  # Track the current process
 
             # Stream output in real-time
@@ -173,9 +175,7 @@ class ScenarioRunner:
                 print(f"[{self.get_timestamp()}] SUCCESS: Scenario completed in {duration:.1f} seconds")
                 return True, duration
             else:
-                stderr = process.stderr.read()
                 print(f"[{self.get_timestamp()}] ERROR: Scenario failed after {duration:.1f} seconds")
-                print(f"STDERR: {stderr}")
                 return False, duration
 
         except Exception as e:
@@ -200,6 +200,7 @@ class ScenarioRunner:
 
     def save_results(self):
         """Save run results to file"""
+        os.makedirs("logs", exist_ok=True)
         results_file = os.path.join('logs', f"run_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
 
         with open(results_file, 'w') as f:
