@@ -43,7 +43,9 @@ class DockerDriver(Driver):
         self.client.containers.run(
             image,
             detach=True,
-            auto_remove=True,
+            # Keep the container after it exits so its artifacts and logs stay
+            # readable while the run is being collected.
+            auto_remove=False,
             name=name,
             hostname=name,
             network=self.network.id,
@@ -60,14 +62,26 @@ class DockerDriver(Driver):
 
     def stop(self, name):
         try:
-            self.client.containers.get(name).stop()
+            container = self.client.containers.get(name)
+            container.stop()
+            container.remove(force=True, v=True)
             print(f"- stopped {name}")
         except docker.errors.NotFound:
             pass
 
     def download(self, name, src_path, dst_path):
+        container = None
+        paused = False
         try:
-            stream, _ = self.client.containers.get(name).get_archive(src_path)
+            container = self.client.containers.get(name)
+            container.reload()
+            if container.status == "running":
+                # Docker builds the archive while reading the live filesystem;
+                # a growing log otherwise invalidates the tar stream with
+                # "archive/tar: write too long".
+                container.pause()
+                paused = True
+            stream, _ = container.get_archive(src_path)
 
             fo = BytesIO()
             for d in stream:
@@ -75,8 +89,11 @@ class DockerDriver(Driver):
             fo.seek(0)
             with tarfile.open(fileobj=fo) as tar:
                 tar.extractall(dst_path)
-        except Exception:
-            pass
+        except (docker.errors.APIError, docker.errors.NotFound, tarfile.TarError, OSError) as error:
+            raise RuntimeError(f"Failed to download {name}:{src_path} to {dst_path}: {error}") from error
+        finally:
+            if paused and container is not None:
+                container.unpause()
 
     def peek(self, name, path):
         stream, _ = self.client.containers.get(name).get_archive(path)
@@ -97,7 +114,7 @@ class DockerDriver(Driver):
 
     def cleanup(self, image_prefix=""):
         containers = []
-        for container in self.client.containers.list():
+        for container in self.client.containers.list(all=True):
             if any(
                 x in container.attrs["Config"]["Image"]
                 for x in (
