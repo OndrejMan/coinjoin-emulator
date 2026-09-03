@@ -173,7 +173,7 @@ class JoinmarketEngine(EngineBase):
         try:
             ip, manager_ports, _ = self.driver.run(
                 name,
-                f"{self.args.image_prefix}irc-server",
+                self.image_ref("irc-server"),
                 env={},  # Add any necessary environment variables
                 ports={6667: 6667},
                 cpu=0.25,
@@ -193,7 +193,7 @@ class JoinmarketEngine(EngineBase):
         try:
             ip, distributor_node_ports, route = self.driver.run(
                 name,
-                f"{self.args.image_prefix}joinmarket-client-server",
+                self.image_ref("joinmarket-client-server"),
                 env=self.joinmarket_container_env(core_wallet),
                 ports={28183: port},
                 cpu=1,
@@ -295,7 +295,7 @@ class JoinmarketEngine(EngineBase):
         try:
             ip, obwatch_ports, route = self.driver.run(
                 name,
-                f"{self.args.image_prefix}joinmarket-client-server",
+                self.image_ref("joinmarket-client-server"),
                 env={"MODE": "obwatch"},
                 ports={62601: port},
                 cpu=0.25,
@@ -414,7 +414,7 @@ class JoinmarketEngine(EngineBase):
             print(f"Starting joinmarket-client-server: {name}")
             ip, client_node_ports, route = self.driver.run(
                 name,
-                f"{self.args.image_prefix}joinmarket-client-server",
+                self.image_ref("joinmarket-client-server"),
                 env=self.joinmarket_container_env(core_wallet),
                 ports={28183: port},
                 cpu=(0.05),
