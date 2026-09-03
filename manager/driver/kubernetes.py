@@ -13,9 +13,13 @@ from kubernetes.stream import stream
 
 from . import Driver
 
+MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
+MANAGED_BY_VALUE = "coinjoin-emulator"
+
 
 class KubernetesDriver(Driver):
-    def __init__(self, namespace="coinjoin", reuse_namespace=False, pull_secret_path=None, in_cluster=False):
+    def __init__(self, namespace="coinjoin", reuse_namespace=False, pull_secret_path=None, in_cluster=False,
+                 run_id=None):
 
         if in_cluster:
             try:
@@ -30,6 +34,7 @@ class KubernetesDriver(Driver):
         self.reuse_namespace = reuse_namespace
         self.pull_secret_path = pull_secret_path
         self.in_cluster = in_cluster
+        self.run_id = run_id
 
     def _create_image_pull_secret(self):
         secret_name = "regcred"
@@ -93,6 +98,13 @@ class KubernetesDriver(Driver):
     def pull(self, name):
         pass
 
+    def resource_labels(self, name):
+        """Label every resource so cleanup can find exactly this emulator's own."""
+        labels = {"app": name, MANAGED_BY_LABEL: MANAGED_BY_VALUE}
+        if self.run_id:
+            labels["coinjoin.run-id"] = self.run_id
+        return labels
+
     def build_pod_manifest(self, name, image, env, ports, cpu, memory,
                             user_id=None, volumes=None, command=None):
         if ports is None:
@@ -131,7 +143,7 @@ class KubernetesDriver(Driver):
         return {
             "apiVersion": "v1",
             "kind": "Pod",
-            "metadata": {"name": name, "labels": {"app": name}},
+            "metadata": {"name": name, "labels": self.resource_labels(name)},
             "spec": {
                 "restartPolicy": "Never",
                 "containers": [
@@ -194,7 +206,7 @@ class KubernetesDriver(Driver):
         service_manifest = {
             "apiVersion": "v1",
             "kind": "Service",
-            "metadata": {"name": f"{name}"},
+            "metadata": {"name": f"{name}", "labels": self.resource_labels(name)},
             "spec": {
                 "type": "NodePort",
                 "selector": {"app": name},
@@ -436,8 +448,12 @@ class KubernetesDriver(Driver):
         # self.client = fresh_client
         # return
 
+        # Match on the label the driver stamps instead of guessing from names:
+        # the name list missed pods and could delete a resource this run does
+        # not own in a shared namespace.
+        managed = f"{MANAGED_BY_LABEL}={MANAGED_BY_VALUE}"
         try:
-            pods = self.client.list_namespaced_pod(namespace=self._namespace)
+            pods = self.client.list_namespaced_pod(namespace=self._namespace, label_selector=managed)
         except ApiException as e:
             print("Error listing pods:", e)
             traceback.print_exc()
@@ -445,34 +461,18 @@ class KubernetesDriver(Driver):
             return
 
         for pod in pods.items:
-            if any(
-                    x in pod.metadata.name
-                    for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-coordinator", "wasabi-client",
-                              "joinmarket-client-server", "joinmarket-distributor", "jcs", "joinmarket-obwatch")
-            ):
-                try:
-                    print(f"Deleting pod {pod.metadata.name}")
-                    self.client.delete_namespaced_pod(
-                        name=pod.metadata.name, namespace=self._namespace
-                    )
-                    print(f"Deleted pod {pod.metadata.name}")
-                except ApiException:
-                    pass
-        services = self.client.list_namespaced_service(namespace=self._namespace)
+            try:
+                print(f"Deleting pod {pod.metadata.name}")
+                self.client.delete_namespaced_pod(name=pod.metadata.name, namespace=self._namespace)
+            except ApiException:
+                pass
+        services = self.client.list_namespaced_service(namespace=self._namespace, label_selector=managed)
         for service in services.items:
-            if any(
-                    x in service.metadata.name
-                    for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-coordinator", "wasabi-client",
-                              "joinmarket-client-server", "joinmarket-distributor", "jcs", "joinmarket-obwatch")
-            ):
-                try:
-                    print("Deleting service", service.metadata.name)
-                    self.client.delete_namespaced_service(
-                        name=service.metadata.name, namespace=self._namespace
-                    )
-                    print("Deleted service", service.metadata.name)
-                except ApiException:
-                    pass
+            try:
+                print("Deleting service", service.metadata.name)
+                self.client.delete_namespaced_service(name=service.metadata.name, namespace=self._namespace)
+            except ApiException:
+                pass
 
         if not self.reuse_namespace:
             try:

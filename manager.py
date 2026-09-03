@@ -326,10 +326,16 @@ if __name__ == "__main__":
 
             # Support for k8s image pull secret
             k8s_pull_secret = args.k8s_pull_secret or os.environ.get("K8S_PULL_SECRET")
+            # A manager pod always runs in-cluster, whether or not the flag was passed.
+            in_cluster = bool(args.in_cluster or os.environ.get("KUBERNETES_SERVICE_HOST"))
+            if getattr(args, "disable_port_forward", False) and not args.proxy and not in_cluster:
+                print("--disable-port-forward requires --proxy or an in-cluster manager")
+                sys.exit(1)
             driver = KubernetesDriver(args.namespace,
                                       args.reuse_namespace,
                                       k8s_pull_secret,
-                                      in_cluster=args.in_cluster)
+                                      in_cluster=in_cluster,
+                                      run_id=getattr(args, "run_id", None))
         case "openshift":
             from manager.driver.openshift import OpenshiftDriver
             k8s_pull_secret = args.k8s_pull_secret or os.environ.get("K8S_PULL_SECRET")
