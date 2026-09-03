@@ -5,7 +5,7 @@ from io import BytesIO
 
 import docker
 
-from . import Driver
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 
 
 class DockerDriver(Driver):
@@ -53,6 +53,7 @@ class DockerDriver(Driver):
             environment=env or {},
             volumes=kwargs.get("volumes"),
             command=kwargs.get("command"),
+            sysctls={RESERVED_PORTS_SYSCTL: RESERVED_PORT_RANGE},
         )
         # Containers on the user-defined bridge network resolve each other by
         # name. That is stable across Docker API versions, unlike the legacy

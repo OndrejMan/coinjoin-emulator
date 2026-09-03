@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 from kubernetes.client.exceptions import ApiException
 
+from manager.driver import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL
 from manager.driver.kubernetes import MANAGED_BY_LABEL, MANAGED_BY_VALUE, KubernetesDriver
 from manager.exceptions import KubernetesResourceQuotaError, StartupError
 
@@ -251,3 +252,24 @@ def test_the_image_pull_policy_defaults_to_always() -> None:
     manifest = driver().build_pod_manifest("btc-node", "btc-node:latest", {}, {}, 1.0, 512)
 
     assert manifest["spec"]["containers"][0]["imagePullPolicy"] == "Always"
+
+
+def test_the_wasabi_service_ports_are_reserved_for_the_pod() -> None:
+    manifest = driver().build_pod_manifest("wasabi-backend", "backend:latest", {}, {}, 1.0, 512)
+
+    assert manifest["spec"]["securityContext"]["sysctls"] == [
+        {"name": RESERVED_PORTS_SYSCTL, "value": RESERVED_PORT_RANGE}
+    ]
+
+
+def test_a_cluster_that_forbids_the_sysctl_still_gets_its_pod() -> None:
+    instance = driver()
+    rejection = ApiException(status=403)
+    rejection.body = "forbidden sysctl: net.ipv4.ip_local_reserved_ports"
+    instance.client.create_namespaced_pod.side_effect = [rejection, None]
+    manifest = instance.build_pod_manifest("wasabi-backend", "backend:latest", {}, {}, 1.0, 512)
+
+    instance._create_pod("wasabi-backend", manifest)  # pylint: disable=protected-access
+
+    assert "securityContext" not in manifest["spec"]
+    assert instance.client.create_namespaced_pod.call_count == 2

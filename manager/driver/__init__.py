@@ -1,6 +1,12 @@
 from abc import ABC, abstractmethod
 from multiprocessing.pool import ThreadPool
 
+# The Wasabi backend, coordinator and clients bind fixed ports inside the
+# default ephemeral range, where the kernel can hand the same port to an
+# outgoing connection first and make the bind fail.
+RESERVED_PORT_RANGE = "37127-37260"
+RESERVED_PORTS_SYSCTL = "net.ipv4.ip_local_reserved_ports"
+
 
 class Driver(ABC):
     @abstractmethod

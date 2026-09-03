@@ -3,7 +3,7 @@ from functools import cached_property
 
 from manager.exceptions import CoinjoinEmulatorError
 
-from . import Driver
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 
 
 class PodmanDriver(Driver):
@@ -51,7 +51,10 @@ class PodmanDriver(Driver):
         del cpu, memory
         self._remove_container(name)
 
-        command = ["run", "-d", "--name", name, "--hostname", name, "--network", self.network]
+        command = [
+            "run", "-d", "--name", name, "--hostname", name, "--network", self.network,
+            "--sysctl", f"{RESERVED_PORTS_SYSCTL}={RESERVED_PORT_RANGE}",
+        ]
         for container_port, host_port in (ports or {}).items():
             command.extend(["-p", f"{host_port}:{container_port}"])
         for key, value in (env or {}).items():

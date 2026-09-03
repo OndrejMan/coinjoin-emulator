@@ -18,7 +18,7 @@ from kubernetes.stream import stream
 
 from manager.exceptions import KubernetesResourceQuotaError, StartupError
 
-from . import Driver
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
 DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
@@ -30,6 +30,27 @@ BENIGN_TAR_WARNING_RE = re.compile(
 )
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
+
+
+def _strip_reserved_ports_sysctl(pod_manifest):
+    """Remove the reserved-port sysctl when a cluster does not allow it."""
+    spec = pod_manifest.get("spec") or {}
+    security_context = spec.get("securityContext") or {}
+    sysctls = security_context.get("sysctls") or []
+    remaining = [sysctl for sysctl in sysctls if sysctl.get("name") != RESERVED_PORTS_SYSCTL]
+    if len(remaining) == len(sysctls):
+        return False
+    if remaining:
+        security_context["sysctls"] = remaining
+    else:
+        spec.pop("securityContext", None)
+    return True
+
+
+def _is_sysctl_rejection(error):
+    return getattr(error, "status", None) in {400, 403, 422} and "sysctl" in str(
+        getattr(error, "body", "") or error
+    ).lower()
 
 
 def _split_tar_diagnostics(stderr):
@@ -207,6 +228,9 @@ class KubernetesDriver(Driver):
                     }
                 ],
                 "volumes": pod_volumes,
+                "securityContext": {
+                    "sysctls": [{"name": RESERVED_PORTS_SYSCTL, "value": RESERVED_PORT_RANGE}]
+                },
                 # Add imagePullSecrets if pull_secret_path is set
                 **({"imagePullSecrets": [{"name": "regcred"}]} if self.pull_secret_path else {}),
             },
@@ -227,17 +251,18 @@ class KubernetesDriver(Driver):
             name, image, env, ports, cpu, memory, run_as_user,
             kwargs.get("volumes"), kwargs.get("command"), kwargs.get("run_as_group"),
         )
-        try:
-            self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
-        except ApiException as error:
-            details = str(getattr(error, "body", "") or error)
-            if error.status == 403 and "exceeded quota" in details.lower():
-                raise KubernetesResourceQuotaError(
-                    f"Kubernetes quota rejected pod {name} in namespace {self.namespace}: {details}"
-                ) from error
-            raise
+        self._create_pod(name, pod_manifest)
 
         try:
+            pod_ip = self._wait_for_pod_ip(name)
+        except StartupError as error:
+            # Not every kubelet allows the reserved-port sysctl; the run is
+            # still valid without it, only more exposed to a port collision.
+            if "SysctlForbidden" not in str(error) or not _strip_reserved_ports_sysctl(pod_manifest):
+                raise
+            print(f"[WARNING] kubelet forbade {RESERVED_PORTS_SYSCTL} for pod {name}; recreating it without it")
+            self.stop(name)
+            self._create_pod(name, pod_manifest)
             pod_ip = self._wait_for_pod_ip(name)
         except Exception as e:
             print(f"Failed to get pod IP: {e}")
@@ -280,6 +305,21 @@ class KubernetesDriver(Driver):
                 map(lambda x: (x.target_port, x.node_port), resp.spec.ports)
             )
             return pod_ip or "", port_mapping, None
+
+    def _create_pod(self, name, pod_manifest):
+        try:
+            self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+            return
+        except ApiException as error:
+            details = str(getattr(error, "body", "") or error)
+            if error.status == 403 and "exceeded quota" in details.lower():
+                raise KubernetesResourceQuotaError(
+                    f"Kubernetes quota rejected pod {name} in namespace {self.namespace}: {details}"
+                ) from error
+            if not _is_sysctl_rejection(error) or not _strip_reserved_ports_sysctl(pod_manifest):
+                raise
+            print(f"[WARNING] cluster rejected {RESERVED_PORTS_SYSCTL} for pod {name}; starting it without it")
+        self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
 
     def _wait_for_pod_ip(self, name):
         """Wait for a scheduled pod's IP, giving up on a terminal pod or a deadline."""
