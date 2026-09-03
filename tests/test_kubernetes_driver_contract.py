@@ -1,9 +1,13 @@
 """Kubernetes driver contracts that keep a shared namespace usable."""
 
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
+
+import pytest
+from kubernetes.client.exceptions import ApiException
 
 from manager.driver.kubernetes import MANAGED_BY_LABEL, MANAGED_BY_VALUE, KubernetesDriver
+from manager.exceptions import KubernetesResourceQuotaError, StartupError
 
 
 def driver(**overrides: object) -> KubernetesDriver:
@@ -68,3 +72,34 @@ def test_cleanup_only_touches_resources_this_emulator_created() -> None:
     instance.client.delete_namespaced_pod.assert_called_once_with(
         name="btc-node", namespace="coinjoin"
     )
+
+
+def test_a_quota_rejection_is_reported_as_a_quota_error() -> None:
+    instance = driver()
+    rejection = ApiException(status=403)
+    rejection.body = 'pods "btc-node" is forbidden: exceeded quota: cpu'
+    instance.client.create_namespaced_pod.side_effect = rejection
+
+    with pytest.raises(KubernetesResourceQuotaError):
+        instance.run("btc-node", "btc-node:latest", ports={18443: 18443}, cpu=1.0, memory=512)
+
+
+def test_a_pod_that_terminates_before_it_gets_an_ip_fails_the_run() -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod_status.return_value = SimpleNamespace(
+        status=SimpleNamespace(pod_ip=None, phase="Failed", reason="Evicted", message="no memory")
+    )
+
+    with pytest.raises(StartupError, match="terminal phase Failed"):
+        instance._wait_for_pod_ip("btc-node")  # pylint: disable=protected-access
+
+
+def test_waiting_for_a_pod_ip_has_a_deadline() -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod_status.return_value = SimpleNamespace(
+        status=SimpleNamespace(pod_ip=None, phase="Pending", reason=None, message=None)
+    )
+
+    with patch("manager.driver.kubernetes.time.monotonic", side_effect=[0.0, 10_000.0]):
+        with pytest.raises(TimeoutError, match="did not receive an IP"):
+            instance._wait_for_pod_ip("btc-node")  # pylint: disable=protected-access
