@@ -340,7 +340,7 @@ def test_cleanup_runs_every_step_even_when_one_fails():
     entrypoint = load_entrypoint()
     engine = CleanupEngine(failing={"stop_coinjoins"})
     driver = types.SimpleNamespace(cleanup=lambda prefix: engine.calls.append("driver_cleanup"))
-    args = types.SimpleNamespace(no_logs=False, image_prefix="")
+    args = types.SimpleNamespace(no_logs=False, image_prefix="", download_btc_data="", download_path="")
 
     assert entrypoint.cleanup(engine, driver, args) is True
     assert engine.calls == ["stop_coinjoins", "shutdown_engine", "store_logs", "driver_cleanup"]
@@ -350,7 +350,42 @@ def test_cleanup_skips_log_storage_without_a_bitcoin_node():
     entrypoint = load_entrypoint()
     engine = CleanupEngine(node=None)
     driver = types.SimpleNamespace(cleanup=lambda prefix: engine.calls.append("driver_cleanup"))
-    args = types.SimpleNamespace(no_logs=False, image_prefix="")
+    args = types.SimpleNamespace(no_logs=False, image_prefix="", download_btc_data="", download_path="")
 
     assert entrypoint.cleanup(engine, driver, args) is False
     assert "store_logs" not in engine.calls
+
+
+def test_raw_bitcoin_data_is_downloaded_before_the_driver_is_cleaned_up(tmp_path):
+    entrypoint = load_entrypoint()
+    engine = CleanupEngine()
+    calls = engine.calls
+    driver = types.SimpleNamespace(
+        cleanup=lambda prefix: calls.append("driver_cleanup"),
+        download=lambda name, src, dst: calls.append(("download", name, src, dst)),
+    )
+    args = types.SimpleNamespace(
+        no_logs=True,
+        image_prefix="",
+        download_btc_data=str(tmp_path / "btc"),
+        download_path="btc-node:/home/bitcoin/data/",
+    )
+
+    assert entrypoint.cleanup(engine, driver, args) is False
+    assert calls[-2:] == [
+        ("download", "btc-node", "/home/bitcoin/data/", str(tmp_path / "btc")),
+        "driver_cleanup",
+    ]
+    assert (tmp_path / "btc").is_dir()
+
+
+def test_a_malformed_download_path_fails_the_run_without_stopping_cleanup():
+    entrypoint = load_entrypoint()
+    engine = CleanupEngine()
+    driver = types.SimpleNamespace(cleanup=lambda prefix: engine.calls.append("driver_cleanup"))
+    args = types.SimpleNamespace(
+        no_logs=True, image_prefix="", download_btc_data="/tmp/btc", download_path="no-separator"
+    )
+
+    assert entrypoint.cleanup(engine, driver, args) is True
+    assert "driver_cleanup" in engine.calls
