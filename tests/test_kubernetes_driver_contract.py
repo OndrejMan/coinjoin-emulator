@@ -12,7 +12,12 @@ from unittest.mock import Mock, patch
 import pytest
 from kubernetes.client.exceptions import ApiException
 
-from manager.driver.kubernetes import MANAGED_BY_LABEL, MANAGED_BY_VALUE, KubernetesDriver
+from manager.driver.kubernetes import (
+    MANAGED_BY_LABEL,
+    MANAGED_BY_VALUE,
+    UPLOAD_COMMAND_CHUNK_SIZE,
+    KubernetesDriver,
+)
 from manager.exceptions import KubernetesResourceQuotaError, StartupError
 
 
@@ -303,3 +308,44 @@ def test_reading_an_unavailable_pod_is_rejected_before_exec(tmp_path, method, no
             getattr(instance, method)(*arguments)
 
     open_stream.assert_not_called()
+
+
+def test_upload_stages_the_archive_in_chunks_and_unpacks_it(tmp_path) -> None:
+    instance = driver()
+    source = tmp_path / "scenario.json"
+    contents = b'{"large-config":"' + (b"x" * UPLOAD_COMMAND_CHUNK_SIZE) + b'"}'
+    source.write_bytes(contents)
+    commands = []
+
+    def record(api, name, namespace, command, **kwargs):
+        commands.append(command)
+        return FakeStream()
+
+    with patch("manager.driver.kubernetes.stream", side_effect=record):
+        instance.upload("jcs-000", str(source), "/app/scenario.json")
+
+    append_commands = commands[:-1]
+    assert len(append_commands) >= 2
+    assert append_commands[0][2] == 'printf "%s" "$1" > "$2"'
+    assert all(command[2] == 'printf "%s" "$1" >> "$2"' for command in append_commands[1:])
+    assert "base64 -d" in commands[-1][2] and "tar xf -" in commands[-1][2]
+
+    payload = base64.b64decode("".join(command[4] for command in append_commands))
+    with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
+        member = archive.getmember("app/scenario.json")
+        extracted = archive.extractfile(member)
+        assert extracted is not None
+        assert extracted.read() == contents
+
+
+def test_upload_fails_when_the_remote_command_writes_to_stderr(tmp_path) -> None:
+    instance = driver()
+    source = tmp_path / "scenario.json"
+    source.write_text("{}", encoding="utf-8")
+
+    with patch(
+        "manager.driver.kubernetes.stream",
+        return_value=FakeStream(stderr="tar: /app: Cannot open\n"),
+    ):
+        with pytest.raises(RuntimeError, match="upload to jcs-000:/app/scenario.json failed"):
+            instance.upload("jcs-000", str(source), "/app/scenario.json")
