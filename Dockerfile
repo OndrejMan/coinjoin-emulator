@@ -1,4 +1,9 @@
-FROM python:3.13
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.12.1
+FROM ${UV_IMAGE} AS uv
+
+FROM python:3.11
+
+ARG TARGETARCH=amd64
 
 RUN apt-get update && apt-get install -y \
     curl \
@@ -6,16 +11,30 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${TARGETARCH}/kubectl" \
     && chmod +x kubectl \
     && mv kubectl /usr/local/bin/
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# run-all.sh seeds a daemon-local, pinned uv image for local builds so this
+# stage does not need to contact GHCR after the initial pull.
+COPY --from=uv /uv /uvx /bin/
+
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Dependency metadata first, so the layer is cached across source changes.
+COPY pyproject.toml requirements.txt ./
+RUN uv venv && uv pip install -r requirements.txt
 
 COPY . .
+
+# A local checkout can contain owner-only files after a restrictive umask.
+# Kubernetes runs this manager image as a non-root UID, so normalize source
+# readability inside the image instead of depending on host file modes.
+RUN chmod -R a+rX /app
+
 RUN mkdir /app/logs && chown -R 1000:1000 /app/logs
 
 ENV PYTHONPATH=/app

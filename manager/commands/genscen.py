@@ -1,14 +1,16 @@
 import argparse
 import json
 import os
-import sys
-import numpy.random
-import copy
 import random
+import sys
+from collections.abc import Callable, Iterable
 
-from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
+import numpy.random
 
-def create_backend_config(args):
+from manager.engine.configuration import FundConfig, ScenarioConfig, WalletConfig, WasabiConfig
+
+
+def create_backend_config(args: argparse.Namespace) -> dict[str, object]:
     """Create backend configuration dictionary."""
     return {
         "MaxInputCountByRound": args.max_coinjoin,
@@ -22,7 +24,7 @@ def create_backend_config(args):
     }
 
 
-def setup_parser(parser: argparse.ArgumentParser):
+def setup_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--engine", type=str, default="wasabi", help="engine type")
     parser.add_argument("--name", type=str, help="scenario name")
     parser.add_argument(
@@ -66,7 +68,10 @@ def setup_parser(parser: argparse.ArgumentParser):
         "--skip-rounds",
         type=str,
         required=False,
-        help="skip rounds ('random[fraction]' for randomly sampled fraction of rounds, or comma-separated list of rounds to skip)",
+        help=(
+            "skip rounds ('random[fraction]' for randomly sampled fraction of rounds, "
+            "or comma-separated list of rounds to skip)"
+        ),
     )
     parser.add_argument("--force", action="store_true", help="overwrite existing files")
     parser.add_argument(
@@ -98,9 +103,9 @@ def setup_parser(parser: argparse.ArgumentParser):
     )
 
 
-def format_name(args):
+def format_name(args: argparse.Namespace) -> str:
     if args.name:
-        return args.name
+        return str(args.name)
     if args.type == "static":
         return (
             f"{args.distribution}-{args.type}-{args.client_count}-{args.utxo_count}utxo"
@@ -118,7 +123,7 @@ def format_name(args):
     return f"{args.distribution}-{args.type}-{args.client_count}"
 
 
-def prepare_skip_rounds(args):
+def prepare_skip_rounds(args: argparse.Namespace) -> Callable[[int], list[int]] | None:
     if not args.skip_rounds:
         return None
     if args.skip_rounds.startswith("random"):
@@ -145,19 +150,18 @@ def prepare_skip_rounds(args):
                 ),
             )
         )
-    else:
-        try:
-            return lambda idx: (
-                sorted(map(int, args.skip_rounds.split(",")))
-                if idx < args.client_count // 2
-                else []
-            )
-        except ValueError:
-            print("- invalid skip rounds list")
-            sys.exit(1)
+    try:
+        return lambda idx: (
+            sorted(map(int, args.skip_rounds.split(",")))
+            if idx < args.client_count // 2
+            else []
+        )
+    except ValueError:
+        print("- invalid skip rounds list")
+        sys.exit(1)
 
 
-def prepare_distribution(distribution):
+def prepare_distribution(distribution: str) -> Callable[[int], Iterable[int]] | None:
     dist_name = distribution.split("[")[0]
     dist_params = None
     if "[" in distribution:
@@ -180,9 +184,16 @@ def prepare_distribution(distribution):
             return None
 
 
-def prepare_wallet(args, idx, distribution, skip_rounds):
+def prepare_wallet(
+    args: argparse.Namespace,
+    idx: int,
+    distribution: Callable[[int], Iterable[int]] | None,
+    skip_rounds: Callable[[int], list[int]] | None,
+) -> WalletConfig:
     """Create a WalletConfig object based on args and wallet type."""
-    funds = None
+    if distribution is None:
+        raise ValueError(f"Unknown fund distribution: {args.distribution}")
+    funds: list[int | FundConfig] | None = None
     anon_score_target = None
     redcoin_isolation = None
     skip_rounds_list = None
@@ -243,7 +254,7 @@ def prepare_wallet(args, idx, distribution, skip_rounds):
     )
 
 
-def handler(args):
+def handler(args: argparse.Namespace) -> None:
     print("Generating scenario...")
     
     distribution = prepare_distribution(args.distribution)
@@ -285,13 +296,13 @@ def handler(args):
         print(f"- file {args.out_dir}/{scenario.name}.json already exists")
         sys.exit(1)
 
-    with open(f"{args.out_dir}/{scenario.name}.json", "w") as f:
+    with open(f"{args.out_dir}/{scenario.name}.json", "w", encoding="utf-8") as f:
         json.dump(scenario.to_dict(), f, indent=2)
 
     print(f"- saved to {args.out_dir}/{scenario.name}.json")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate a scenario file")
-    setup_parser(parser)
-    handler(parser.parse_args())
+    arg_parser = argparse.ArgumentParser(description="Generate a scenario file")
+    setup_parser(arg_parser)
+    handler(arg_parser.parse_args())

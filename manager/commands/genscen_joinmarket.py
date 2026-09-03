@@ -4,12 +4,18 @@ JoinMarket Configuration Generator
 Generates customizable JoinMarket simulation configurations with takers and makers
 """
 
+import argparse
+import datetime
 import json
+import os
 import random
-from typing import List, Dict, Any, Tuple, Optional
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
-import argparse
+from typing import Dict, List, Optional, cast
+
+import numpy as np
+
 
 class OfferType(Enum):
     ABSOLUTE = "sw0absoffer"
@@ -28,8 +34,10 @@ class FeeConfig:
 @dataclass
 class QuantileFeeConfig:
     """Quantile-based configuration for maker fees"""
-    absolute_quantiles: List[int] = field(default_factory=lambda: [1000, 2000, 3000, 4000, 5000, 6000])  # 0%, 20%, 40%, 60%, 80%, 100%
-    relative_quantiles: List[float] = field(default_factory=lambda: [0.0001, 0.001, 0.002, 0.003, 0.004, 0.005])  # 0%, 20%, 40%, 60%, 80%, 100%
+    # 0%, 20%, 40%, 60%, 80%, 100%
+    absolute_quantiles: List[int] = field(default_factory=lambda: [1000, 2000, 3000, 4000, 5000, 6000])
+    # 0%, 20%, 40%, 60%, 80%, 100%
+    relative_quantiles: List[float] = field(default_factory=lambda: [0.0001, 0.001, 0.002, 0.003, 0.004, 0.005])
 
 
 @dataclass
@@ -47,14 +55,16 @@ class QuantileWalletConfig:
     """Quantile-based configuration for wallet generation"""
     min_utxos: int = 9
     max_utxos: int = 11
-    btc_quantiles: List[float] = field(default_factory=lambda: [1.0, 2.5, 4.0, 6.0, 8.5, 10.0])  # 0%, 20%, 40%, 60%, 80%, 100%
+    # 0%, 20%, 40%, 60%, 80%, 100%
+    btc_quantiles: List[float] = field(default_factory=lambda: [1.0, 2.5, 4.0, 6.0, 8.5, 10.0])
     min_utxo_size: int = 100000  # satoshis
 
 
 @dataclass
 class QuantileBondConfig:
     """Quantile-based configuration for fidelity bonds"""
-    amount_quantiles: List[int] = field(default_factory=lambda: [10000, 25000, 50000, 75000, 100000, 150000])  # 0%, 20%, 40%, 60%, 80%, 100%
+    # 0%, 20%, 40%, 60%, 80%, 100%
+    amount_quantiles: List[int] = field(default_factory=lambda: [10000, 25000, 50000, 75000, 100000, 150000])
 
 
 @dataclass
@@ -80,7 +90,7 @@ class TumblerOptions:
 
 
 class JoinMarketConfigGenerator:
-    def __init__(self):
+    def __init__(self) -> None:
         self.fee_config = FeeConfig()
         self.wallet_config = WalletConfig()
         self.tumbler_options = TumblerOptions()
@@ -91,8 +101,7 @@ class JoinMarketConfigGenerator:
 
         # Ensure we have enough for minimum UTXO sizes
         min_total = num_utxos * self.wallet_config.min_utxo_size
-        if total_sats < min_total:
-            total_sats = min_total
+        total_sats = max(total_sats, min_total)
 
         # Generate random distribution
         utxos = []
@@ -122,12 +131,12 @@ class JoinMarketConfigGenerator:
         random.shuffle(utxos)
         return utxos
 
-    def create_taker_wallet(self, delay_blocks: int = 0) -> Dict[str, Any]:
+    def create_taker_wallet(self, delay_blocks: int = 0) -> Dict[str, object]:
         """Create a taker wallet configuration"""
         num_utxos = random.randint(self.wallet_config.min_utxos, self.wallet_config.max_utxos)
         total_btc = random.uniform(self.wallet_config.min_total_btc, self.wallet_config.max_total_btc)
 
-        wallet = {
+        wallet: Dict[str, object] = {
             "funds": self.generate_utxos(total_btc, num_utxos),
             "type": "taker",
             "tumbler_options": {
@@ -156,7 +165,7 @@ class JoinMarketConfigGenerator:
 
         return wallet
 
-    def create_maker_wallet(self, offer_type: OfferType, fee_value: Optional[float] = None) -> Dict[str, Any]:
+    def create_maker_wallet(self, offer_type: OfferType, fee_value: Optional[float] = None) -> Dict[str, object]:
         """Create a maker wallet configuration"""
         num_utxos = random.randint(self.wallet_config.min_utxos, self.wallet_config.max_utxos)
         total_btc = random.uniform(self.wallet_config.min_total_btc, self.wallet_config.max_total_btc)
@@ -164,7 +173,7 @@ class JoinMarketConfigGenerator:
         funds = self.generate_utxos(total_btc, num_utxos)
         total_balance = sum(funds)
 
-        offer = {
+        offer: Dict[str, object] = {
             "txfee": 0,
             "ordertype": offer_type.value,
             "minsize": self.wallet_config.min_utxo_size,
@@ -180,7 +189,7 @@ class JoinMarketConfigGenerator:
             if fee_value is None:
                 fee_value = random.uniform(self.fee_config.min_relative, self.fee_config.max_relative)
             offer["cjfee_a"] = 0
-            offer["cjfee_r"] = fee_value
+            offer["cjfee_r"] = float(fee_value)
 
         return {
             "funds": funds,
@@ -195,24 +204,25 @@ class JoinMarketConfigGenerator:
                         taker_delays: Optional[List[int]] = None,
                         maker_fee_split: float = 0.5,  # Fraction of makers using absolute fees
                         rounds: int = 0,
-                        blocks: int = 1000) -> Dict[str, Any]:
+                        blocks: int = 1000) -> Dict[str, object]:
         """Generate complete configuration"""
 
         if taker_delays is None:
             taker_delays = [0, 30, 60, 90, 120][:num_takers]
 
-        config = {
+        config: Dict[str, object] = {
             "name": name,
             "default_version": "joinmarket",
             "rounds": rounds,
             "blocks": blocks,
             "wallets": []
         }
+        wallets: List[Dict[str, object]] = []
 
         # Create takers
         for i in range(num_takers):
             delay = taker_delays[i] if i < len(taker_delays) else 0
-            config["wallets"].append(self.create_taker_wallet(delay))
+            wallets.append(self.create_taker_wallet(delay))
 
         # Create makers
         num_absolute = int(num_makers * maker_fee_split)
@@ -220,7 +230,7 @@ class JoinMarketConfigGenerator:
 
         # Absolute fee makers
         for i in range(num_absolute):
-            config["wallets"].append(self.create_maker_wallet(OfferType.ABSOLUTE))
+            wallets.append(self.create_maker_wallet(OfferType.ABSOLUTE))
 
         # Relative fee makers with distributed fees
         if num_relative > 0:
@@ -233,40 +243,38 @@ class JoinMarketConfigGenerator:
                 relative_fees.append(fee)
 
             for fee in relative_fees:
-                config["wallets"].append(self.create_maker_wallet(OfferType.RELATIVE, fee))
+                wallets.append(self.create_maker_wallet(OfferType.RELATIVE, fee))
 
+        config["wallets"] = wallets
         return config
 
-    def save_config(self, config: Dict[str, Any], filename: str):
+    def save_config(self, config: Dict[str, object], filename: str) -> None:
         """Save configuration to JSON file"""
-        with open(filename, 'w') as f:
+        with open(filename, 'w', encoding="utf-8") as f:
             json.dump(config, f, indent=2)
 
-    def load_and_modify_config(self, filename: str) -> Dict[str, Any]:
+    def load_and_modify_config(self, filename: str) -> Dict[str, object]:
         """Load existing configuration for modification"""
-        with open(filename, 'r') as f:
-            return json.load(f)
+        with open(filename, encoding="utf-8") as f:
+            return cast(Dict[str, object], json.load(f))
 
 
-def format_name(args):
+def format_name(args: argparse.Namespace) -> str:
     # Use a JoinMarket-specific naming convention
     if args.name:
-        return args.name
+        return str(args.name)
     # Example: tumbler_1_maker_30.json
     if args.tumbler_taker_count > 0:
         return f"tumbler_{args.tumbler_taker_count}_maker_{args.maker_count}.json"
-    else:
-        return f"taker_{args.taker_count}_maker_{args.maker_count}.json"
+    return f"taker_{args.taker_count}_maker_{args.maker_count}.json"
 
 
-def random_partition(total, n):
+def random_partition(total: int, n: int) -> List[int]:
     # Partition 'total' into 'n' positive random integers (satoshis)
     # Returns a list of n integers summing to total
-    import numpy as np
     if n == 1:
         return [total]
-    cuts = np.sort(np.random.randint(1, total, n - 1))
-    cuts = cuts.tolist()  # convert numpy array to list for easier handling
+    cuts = np.sort(np.random.randint(1, total, n - 1)).tolist()
     parts = [cuts[0]]
     for i in range(1, len(cuts)):
         parts.append(cuts[i] - cuts[i - 1])
@@ -274,7 +282,7 @@ def random_partition(total, n):
     return parts
 
 
-def parse_delays(delays_str, count):
+def parse_delays(delays_str: str | None, count: int) -> List[int]:
     if not delays_str:
         return [0] * count
     delays = [int(x) for x in delays_str.split(",")]
@@ -283,15 +291,15 @@ def parse_delays(delays_str, count):
     return delays[:count]
 
 
-def parse_list_int(s):
+def parse_list_int(s: str) -> List[int]:
     return [int(x) for x in s.split(",") if x]
 
 
-def parse_list_float(s):
+def parse_list_float(s: str) -> List[float]:
     return [float(x) for x in s.split(",") if x]
 
 
-def parse_bool(s):
+def parse_bool(s: str) -> bool:
     return str(s).lower() in ("true", "1", "yes", "y")
 
 
@@ -342,12 +350,13 @@ def sample_from_int_quantiles(quantiles: List[int], count: int) -> List[int]:
     return [int(round(sample)) for sample in float_samples]
 
 
-def generate_fidelity_bond_config_quantile(args, quantile_config: QuantileBondConfig):
+def generate_fidelity_bond_config_quantile(
+    args: argparse.Namespace, quantile_config: QuantileBondConfig
+) -> Dict[str, object] | None:
     """Generate fidelity bond configuration using quantile distribution"""
     if not args.enable_fidelity_bonds:
         return None
 
-    import datetime
 
     # Calculate locktime in YYYY-MM format (JoinMarket API format)
     months = random.randint(args.bond_min_locktime_months, args.bond_max_locktime_months)
@@ -374,12 +383,11 @@ def generate_fidelity_bond_config_quantile(args, quantile_config: QuantileBondCo
     }
 
 
-def generate_fidelity_bond_config(args):
+def generate_fidelity_bond_config(args: argparse.Namespace) -> Dict[str, object] | None:
     """Generate fidelity bond configuration for a maker wallet"""
     if not args.enable_fidelity_bonds:
         return None
 
-    import datetime
 
     # Calculate locktime in YYYY-MM format (JoinMarket API format)
     # Current date + random months
@@ -407,17 +415,30 @@ def generate_fidelity_bond_config(args):
     }
 
 
-def setup_parser(parser: argparse.ArgumentParser):
+# One statement per command-line option.
+def setup_parser(parser: argparse.ArgumentParser) -> None:  # pylint: disable=too-many-statements
     parser.add_argument("--name", type=str, help="scenario name")
     parser.add_argument("--maker-count", type=int, default=30, help="number of makers")
-    parser.add_argument("--relative-makers", type=int, default=0, help="number of makers with relative offers (sw0reloffer)")
+    parser.add_argument(
+        "--relative-makers", type=int, default=0,
+        help="number of makers with relative offers (sw0reloffer)",
+    )
     parser.add_argument("--taker-count", type=int, default=2, help="number of takers")
     parser.add_argument("--tumbler-taker-count", type=int, default=1, help="number of tumbler takers")
     parser.add_argument("--round-count", type=int, default=0, help="number of rounds")
     parser.add_argument("--block-count", type=int, default=0, help="number of blocks")
-    parser.add_argument("--taker-delays", type=str, required=False, help="comma-separated block delays for takers, e.g. 0,10,30")
-    parser.add_argument("--tumbler-taker-delays", type=str, required=False, help="comma-separated block delays for tumbler takers, e.g. 0,10,20,30")
-    parser.add_argument("--taker-max-coinjoins", type=int, default=0, help="max coinjoins for standard takers (0 for unlimited)")
+    parser.add_argument(
+        "--taker-delays", type=str, required=False,
+        help="comma-separated block delays for takers, e.g. 0,10,30",
+    )
+    parser.add_argument(
+        "--tumbler-taker-delays", type=str, required=False,
+        help="comma-separated block delays for tumbler takers, e.g. 0,10,20,30",
+    )
+    parser.add_argument(
+        "--taker-max-coinjoins", type=int, default=0,
+        help="max coinjoins for standard takers (0 for unlimited)",
+    )
     parser.add_argument("--force", action="store_true", help="overwrite existing files")
     parser.add_argument("--out-dir", type=str, default="scenarios/joinmarket", help="output directory")
     # FeeConfig
@@ -434,46 +455,77 @@ def setup_parser(parser: argparse.ArgumentParser):
     # TumblerOptions
     parser.add_argument("--tumbler-addrcount", type=int, default=3, help="tumbler option: addrcount")
     parser.add_argument("--tumbler-minmakercount", type=int, default=4, help="tumbler option: minmakercount")
-    parser.add_argument("--tumbler-makercountrange", type=str, default="9,1", help="tumbler option: makercountrange, e.g. 9,1")
+    parser.add_argument(
+        "--tumbler-makercountrange", type=str, default="9,1",
+        help="tumbler option: makercountrange, e.g. 9,1",
+    )
     parser.add_argument("--tumbler-mixdepthcount", type=int, default=4, help="tumbler option: mixdepthcount")
     parser.add_argument("--tumbler-mintxcount", type=int, default=2, help="tumbler option: mintxcount")
-    parser.add_argument("--tumbler-txcountparams", type=str, default="2,1", help="tumbler option: txcountparams, e.g. 2,1")
+    parser.add_argument(
+        "--tumbler-txcountparams", type=str, default="2,1",
+        help="tumbler option: txcountparams, e.g. 2,1",
+    )
     parser.add_argument("--tumbler-timelambda", type=int, default=60, help="tumbler option: timelambda")
-    parser.add_argument("--tumbler-stage1-timelambda-increase", type=int, default=3, help="tumbler option: stage1_timelambda_increase")
+    parser.add_argument(
+        "--tumbler-stage1-timelambda-increase", type=int, default=3,
+        help="tumbler option: stage1_timelambda_increase",
+    )
     parser.add_argument("--tumbler-liquiditywait", type=int, default=60, help="tumbler option: liquiditywait")
     parser.add_argument("--tumbler-waittime", type=int, default=20, help="tumbler option: waittime")
     parser.add_argument("--tumbler-mixdepthsrc", type=int, default=0, help="tumbler option: mixdepthsrc")
     parser.add_argument("--tumbler-restart", type=parse_bool, default=True, help="tumbler option: restart (bool)")
-    parser.add_argument("--tumbler-schedulefile", type=str, default="TUMBLE.schedule", help="tumbler option: schedulefile")
+    parser.add_argument(
+        "--tumbler-schedulefile", type=str, default="TUMBLE.schedule",
+        help="tumbler option: schedulefile",
+    )
     parser.add_argument("--tumbler-mincjamount", type=int, default=100000, help="tumbler option: mincjamount")
     parser.add_argument("--tumbler-amtmixdepths", type=int, default=4, help="tumbler option: amtmixdepths")
     parser.add_argument("--tumbler-rounding-chance", type=float, default=0.25, help="tumbler option: rounding_chance")
-    parser.add_argument("--tumbler-rounding-sigfig-weights", type=str, default="55,15,25,65,40", help="tumbler option: rounding_sigfig_weights, e.g. 55,15,25,65,40")
+    parser.add_argument(
+        "--tumbler-rounding-sigfig-weights", type=str, default="55,15,25,65,40",
+        help="tumbler option: rounding_sigfig_weights, e.g. 55,15,25,65,40",
+    )
     # Fidelity Bond options
     parser.add_argument("--enable-fidelity-bonds", action="store_true", help="enable fidelity bonds for maker wallets")
-    parser.add_argument("--bond-percentage-makers", type=float, default=0.5, help="percentage of makers with fidelity bonds (0.0-1.0)")
+    parser.add_argument(
+        "--bond-percentage-makers", type=float, default=0.5,
+        help="percentage of makers with fidelity bonds (0.0-1.0)",
+    )
     parser.add_argument("--bond-min-amount", type=int, default=10000, help="minimum fidelity bond amount (satoshis)")
     parser.add_argument("--bond-max-amount", type=int, default=100000, help="maximum fidelity bond amount (satoshis)")
     parser.add_argument("--bond-min-locktime-months", type=int, default=3, help="minimum bond locktime (months)")
     parser.add_argument("--bond-max-locktime-months", type=int, default=12, help="maximum bond locktime (months)")
-    parser.add_argument("--bond-maker-extra-utxos", action="store_true", help="give fidelity bond makers more UTXOs scaled by taker count to handle concurrent coinjoins")
-    parser.add_argument("--bond-maker-utxo-multiplier", type=float, default=1.0, help="multiplier for bond maker UTXOs (e.g., 1.5 = 50% more UTXOs than taker count)")
+    parser.add_argument(
+        "--bond-maker-extra-utxos", action="store_true",
+        help="give fidelity bond makers more UTXOs scaled by taker count to handle concurrent coinjoins",
+    )
+    parser.add_argument(
+        "--bond-maker-utxo-multiplier", type=float, default=1.0,
+        help="multiplier for bond maker UTXOs (e.g., 1.5 = 50%% more UTXOs than taker count)",
+    )
 
     # Quantile-based distribution options
-    parser.add_argument("--use-quantiles", action="store_true", help="use quantile-based distributions instead of min/max ranges")
+    parser.add_argument(
+        "--use-quantiles", action="store_true",
+        help="use quantile-based distributions instead of min/max ranges",
+    )
     parser.add_argument("--fee-absolute-quantiles", type=str, default="1000,2000,3000,4000,5000,6000",
-                       help="absolute fee quantiles (0%,20%,40%,60%,80%,100%) in satoshis")
+                       help="absolute fee quantiles (0%%,20%%,40%%,60%%,80%%,100%%) in satoshis")
     parser.add_argument("--fee-relative-quantiles", type=str, default="0.0001,0.001,0.002,0.003,0.004,0.005",
-                       help="relative fee quantiles (0%,20%,40%,60%,80%,100%) as fractions")
+                       help="relative fee quantiles (0%%,20%%,40%%,60%%,80%%,100%%) as fractions")
     parser.add_argument("--wallet-btc-quantiles", type=str, default="1.0,2.5,4.0,6.0,8.5,10.0",
-                       help="wallet BTC amount quantiles (0%,20%,40%,60%,80%,100%) for makers")
+                       help="wallet BTC amount quantiles (0%%,20%%,40%%,60%%,80%%,100%%) for makers")
     parser.add_argument("--taker-btc-quantiles", type=str, default="",
-                       help="taker BTC amount quantiles (0%,20%,40%,60%,80%,100%). If not specified, uses wallet-btc-quantiles divided by 3")
+                       help=(
+                           "taker BTC amount quantiles (0%%,20%%,40%%,60%%,80%%,100%%). "
+                           "If not specified, uses wallet-btc-quantiles divided by 3"
+                       ))
     parser.add_argument("--bond-amount-quantiles", type=str, default="10000,25000,50000,75000,100000,150000",
-                       help="fidelity bond amount quantiles (0%,20%,40%,60%,80%,100%) in satoshis")
+                       help="fidelity bond amount quantiles (0%%,20%%,40%%,60%%,80%%,100%%) in satoshis")
 
 
-def handler(args):
+# The generator builds the whole scenario in one pass over the options.
+def handler(args: argparse.Namespace) -> None:  # pylint: disable=too-many-statements
     print("Generating JoinMarket scenario...")
     scenario = {
         "name": args.name or f"tumbler_{args.tumbler_taker_count}_maker_{args.maker_count}",
@@ -482,7 +534,7 @@ def handler(args):
         "blocks": args.block_count,
         "wallets": []
     }
-    import random
+    scenario_wallets: List[Dict[str, object]] = []
     SATOSHI = 100_000_000
     # AUTOMATIC LIQUIDITY BALANCING:
     # Scale down taker parameters to ensure they have less liquidity than makers
@@ -523,14 +575,13 @@ def handler(args):
         if args.taker_btc_quantiles:
             validation_quantiles.append(("taker BTC", taker_btc_quantiles))
 
-        for name, quantiles in validation_quantiles:
+        for name, raw_quantiles in validation_quantiles:
+            quantiles = cast(List[float], raw_quantiles)
             if len(quantiles) != 6:
                 print(f"ERROR: {name} quantiles must have exactly 6 values (0%,20%,40%,60%,80%,100%)")
-                import sys
                 sys.exit(1)
             if not all(quantiles[i] <= quantiles[i+1] for i in range(len(quantiles)-1)):
                 print(f"ERROR: {name} quantiles must be in ascending order")
-                import sys
                 sys.exit(1)
     else:
         print("Using traditional min/max distributions")
@@ -544,8 +595,12 @@ def handler(args):
     if makercountrange:
         min_makers_required = makercountrange[0] * (args.tumbler_taker_count)
         if args.maker_count < min_makers_required:
-            print(f"ERROR: Not enough makers for the scenario. Requested {args.maker_count}, but at least {min_makers_required} are required for taker_count={args.taker_count}, tumbler_taker_count={args.tumbler_taker_count}, makercountrange={makercountrange[0]}.")
-            import sys
+            print(
+                f"ERROR: Not enough makers for the scenario. Requested {args.maker_count}, "
+                f"but at least {min_makers_required} are required for "
+                f"taker_count={args.taker_count}, tumbler_taker_count={args.tumbler_taker_count}, "
+                f"makercountrange={makercountrange[0]}."
+            )
             sys.exit(1)
 
     # Taker wallet parameters (automatically scaled down)
@@ -555,7 +610,7 @@ def handler(args):
     taker_max_total_btc = args.wallet_max_total_btc / taker_btc_divisor
 
 
-    def default_tumbler_options():
+    def default_tumbler_options() -> Dict[str, object]:
         return {
             "addrcount": args.tumbler_addrcount,
             "minmakercount": args.tumbler_minmakercount,
@@ -587,7 +642,7 @@ def handler(args):
 
         total_sats = int(total_btc * SATOSHI)
         funds = random_partition(total_sats, n_utxos)
-        wallet = {
+        wallet: Dict[str, object] = {
             "funds": funds,
             "type": "taker",
             "offers": [
@@ -603,7 +658,7 @@ def handler(args):
             wallet["delay_blocks"] = delay
         if args.taker_max_coinjoins > 0:
             wallet["max_coinjoins"] = args.taker_max_coinjoins
-        scenario["wallets"].append(wallet)
+        scenario_wallets.append(wallet)
     # TUMBLER TAKERS
     tumbler_taker_delays = parse_delays(args.tumbler_taker_delays, args.tumbler_taker_count)
     for idx in range(args.tumbler_taker_count):
@@ -624,7 +679,7 @@ def handler(args):
         delay = tumbler_taker_delays[idx] if idx < len(tumbler_taker_delays) else 0
         if delay:
             wallet["delay_blocks"] = delay
-        scenario["wallets"].append(wallet)
+        scenario_wallets.append(wallet)
     # MAKERS
     abs_makers = args.maker_count - args.relative_makers
 
@@ -638,13 +693,14 @@ def handler(args):
     if args.bond_maker_extra_utxos and makers_with_bonds > 0:
         # Each bond maker should have at least enough UTXOs to handle multiple concurrent takers
         # Formula: max(4, total_takers * multiplier / num_bond_makers)
-        bond_maker_min_utxos = max(int(total_taker_count * 1.5), int(total_taker_count * args.bond_maker_utxo_multiplier / makers_with_bonds))
-        # Calculate total UTXOs needed for all bond makers
-        total_bond_utxos = bond_maker_min_utxos * makers_with_bonds
+        bond_maker_min_utxos = max(
+            int(total_taker_count * 1.5),
+            int(total_taker_count * args.bond_maker_utxo_multiplier / makers_with_bonds),
+        )
         # Calculate liquidity multiplier to maintain proportional liquidity
         regular_maker_avg_utxos = (args.wallet_min_utxos + args.wallet_max_utxos) / 2
         bond_maker_liquidity_multiplier = bond_maker_min_utxos / regular_maker_avg_utxos
-        print(f"Bond maker UTXO configuration:")
+        print("Bond maker UTXO configuration:")
         print(f"  - Total takers: {total_taker_count}")
         print(f"  - Bond makers: {makers_with_bonds}")
         print(f"  - UTXOs per bond maker: {bond_maker_min_utxos}")
@@ -662,6 +718,7 @@ def handler(args):
             n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
 
         if args.use_quantiles:
+            assert wallet_config is not None and fee_config is not None
             total_btc = sample_from_quantiles(wallet_config.btc_quantiles, 1)[0]
             cjfee_a = sample_from_int_quantiles(fee_config.absolute_quantiles, 1)[0]
         else:
@@ -692,13 +749,14 @@ def handler(args):
         # Add fidelity bond configuration if this maker is selected for bonds
         if idx in bond_indices:
             if args.use_quantiles:
+                assert bond_config is not None
                 bond_config_obj = generate_fidelity_bond_config_quantile(args, bond_config)
             else:
                 bond_config_obj = generate_fidelity_bond_config(args)
             if bond_config_obj:
                 wallet["fidelity_bond"] = bond_config_obj
 
-        scenario["wallets"].append(wallet)
+        scenario_wallets.append(wallet)
     for idx in range(args.relative_makers):
         maker_idx = abs_makers + idx  # Adjust index for relative makers
 
@@ -710,6 +768,7 @@ def handler(args):
             n_utxos = random.randint(args.wallet_min_utxos, args.wallet_max_utxos)
 
         if args.use_quantiles:
+            assert wallet_config is not None and fee_config is not None
             total_btc = sample_from_quantiles(wallet_config.btc_quantiles, 1)[0]
             cjfee_r = round(sample_from_quantiles(fee_config.relative_quantiles, 1)[0], 6)
         else:
@@ -740,40 +799,49 @@ def handler(args):
         # Add fidelity bond configuration if this maker is selected for bonds
         if maker_idx in bond_indices:
             if args.use_quantiles:
+                assert bond_config is not None
                 bond_config_obj = generate_fidelity_bond_config_quantile(args, bond_config)
             else:
                 bond_config_obj = generate_fidelity_bond_config(args)
             if bond_config_obj:
                 wallet["fidelity_bond"] = bond_config_obj
 
-        scenario["wallets"].append(wallet)
+        scenario_wallets.append(wallet)
+
+    scenario["wallets"] = scenario_wallets
 
     # Calculate and display bond statistics
-    wallets_with_bonds = [w for w in scenario["wallets"] if w.get("fidelity_bond", {}).get("enabled", False)]
-    total_bond_amount = sum(w["fidelity_bond"]["amount"] for w in wallets_with_bonds)
-    total_wallet_funds = sum(sum(w["funds"]) for w in scenario["wallets"])
+    wallets_with_bonds = [
+        w for w in scenario_wallets
+        if cast(Dict[str, object], w.get("fidelity_bond", {})).get("enabled", False)
+    ]
+    total_bond_amount = sum(
+        int(cast(int, cast(Dict[str, object], w["fidelity_bond"])["amount"])) for w in wallets_with_bonds
+    )
+    total_wallet_funds = sum(sum(cast(List[int], w["funds"])) for w in scenario_wallets)
 
     print(f"- requires {(total_wallet_funds / 100_000_000):0.8f} BTC for wallet funds")
     if wallets_with_bonds:
-        print(f"- created {len(wallets_with_bonds)} fidelity bonds ({len(wallets_with_bonds)/len([w for w in scenario['wallets'] if w['type'] == 'maker'])*100:.1f}% of makers)")
+        maker_count = len([w for w in scenario_wallets if w['type'] == 'maker'])
+        print(
+            f"- created {len(wallets_with_bonds)} fidelity bonds "
+            f"({len(wallets_with_bonds) / maker_count * 100:.1f}% of makers)"
+        )
         print(f"- requires {(total_bond_amount / 100_000_000):0.8f} BTC for fidelity bonds")
         print(f"- total funding requirement: {((total_wallet_funds + total_bond_amount) / 100_000_000):0.8f} BTC")
-    import os
     os.makedirs(args.out_dir, exist_ok=True)
     out_path = os.path.join(args.out_dir, scenario["name"])
     if not out_path.endswith(".json"):
         out_path += ".json"
     if os.path.exists(out_path) and not args.force:
         print(f"- file {out_path} already exists")
-        import sys
         sys.exit(1)
-    import json
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(scenario, f, indent=2)
     print(f"- saved to {out_path}")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="JoinMarket Configuration Generator")
     setup_parser(parser)
     args = parser.parse_args()

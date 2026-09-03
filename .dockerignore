@@ -4,7 +4,6 @@ logs/
 .github
 .secrets
 .venv
-containers
 shadowsocks
 logs*
 logs_download

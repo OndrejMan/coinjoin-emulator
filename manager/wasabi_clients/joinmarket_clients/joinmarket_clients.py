@@ -1,30 +1,35 @@
-import uuid
-import os
 import json
+import os
 import time
+import uuid
 from datetime import datetime
-import requests
+from typing import cast
+
 import httpx
+import requests
 
 from .joinmarket_client_base import JoinMarketClientServer
+from .types import JsonDict
+
 
 class MakerClient(JoinMarketClientServer):
     """
     This class implements the logic for a maker.
     """
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, **kwargs: object) -> None:
+        # The subclasses only forward what the factory passes to the base class.
+        super().__init__(**kwargs)  # type: ignore[arg-type]
         self.maker_running = False
 
-    def update_status(self):
+    def update_status(self) -> JsonDict:
         """
         Get the status of the client and update the maker_running flag.
         """
         response = super().update_status()
-        self.maker_running = response.get("maker_running", False)
+        self.maker_running = bool(response.get("maker_running", False))
         return response
 
-    def update(self, current_block, current_round) -> int:
+    def update(self, current_block: int, current_round: int) -> int:
         """
         Start the maker if it is not running.
         """
@@ -44,16 +49,16 @@ class MakerClient(JoinMarketClientServer):
             else:
                 print(f"Starting maker {self.name} (no fidelity bonds)")
 
-            self.start_maker(**offer)
+            self.start_maker(**offer)  # type: ignore[arg-type]
             self.maker_running = True
         return 0
 
-    async def update_async(self, current_block, current_round) -> int:
+    async def update_async(self, current_block: int, current_round: int) -> int:
         """
         Async version: Start the maker if it is not running.
         """
         response = await self.update_status_async()
-        self.maker_running = response.get("maker_running", False)
+        self.maker_running = bool(response.get("maker_running", False))
 
         if self.is_paused(current_block):
             return 0
@@ -69,7 +74,7 @@ class MakerClient(JoinMarketClientServer):
             else:
                 print(f"Starting maker {self.name} (no fidelity bonds)")
 
-            await self.start_maker_async(**offer)
+            await self.start_maker_async(**offer)  # type: ignore[arg-type]
             self.maker_running = True
         return 0
 
@@ -78,13 +83,16 @@ class TakerClient(JoinMarketClientServer):
     This class implements the logic for a taker that does *not* have tumbler options.
     """
 
-    def update_status(self):
+    def has_unconfirmed_round(self) -> bool:
+        return any(event.get("status") == "started" for event in self.round_events)
+
+    def update_status(self) -> JsonDict:
         """
         Get the status of the client and update the coinjoin_in_process flag.
         """
         response = super().update_status()
         was_in_process = self.coinjoin_in_process
-        self.coinjoin_in_process = response.get("coinjoin_in_process", False)
+        self.coinjoin_in_process = bool(response.get("coinjoin_in_process", False))
 
         # Detect coinjoin completion and increment counter
         if was_in_process and not self.coinjoin_in_process:
@@ -94,7 +102,7 @@ class TakerClient(JoinMarketClientServer):
 
         return response
 
-    def update(self, current_block, current_round):
+    def update(self, current_block: int, current_round: int) -> int:
         """
         Start a coinjoin if none is running and the client is not paused.
         Stop the coinjoin if it has been running for 8 blocks.
@@ -102,10 +110,23 @@ class TakerClient(JoinMarketClientServer):
         self.update_status()
 
         delta = 0
-        if not self.coinjoin_in_process and not self.is_paused(current_block):
+        if self.has_unconfirmed_round() and not self.coinjoin_in_process:
+            return -1 if self.coinjoin_start + 8 < current_block else 0
+        if (
+            not self.coinjoin_in_process
+            and not self.is_paused(current_block)
+            and not self.has_unconfirmed_round()
+        ):
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
-            self.start_coinjoin(**offer)
+            self.start_coinjoin(**offer)  # type: ignore[arg-type]
+            self.record_round_start(
+                str(offer["destination"]),
+                cast(int | None, offer.get("amount_sats")),
+                cast(int | None, offer.get("counterparties")),
+                cast(int | None, offer.get("mixdepth")),
+                current_block,
+            )
             self.coinjoin_start = current_block
             self.coinjoin_in_process = True
             delta = +1
@@ -122,7 +143,7 @@ class TakerClient(JoinMarketClientServer):
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
         return delta
 
-    async def update_async(self, current_block, current_round):
+    async def update_async(self, current_block: int, current_round: int) -> int:
         """
         Async version: Start a coinjoin if none is running and the client is not paused.
         Stop the coinjoin if it has been running for 8 blocks.
@@ -130,7 +151,7 @@ class TakerClient(JoinMarketClientServer):
         # Update status (which will increment completed_coinjoins if coinjoin finished)
         response = await self.update_status_async()
         was_in_process = self.coinjoin_in_process
-        self.coinjoin_in_process = response.get("coinjoin_in_process", False)
+        self.coinjoin_in_process = bool(response.get("coinjoin_in_process", False))
 
         # Detect coinjoin completion and increment counter
         if was_in_process and not self.coinjoin_in_process:
@@ -143,10 +164,19 @@ class TakerClient(JoinMarketClientServer):
             return 0
 
         delta = 0
-        if not self.coinjoin_in_process:
+        if self.has_unconfirmed_round() and not self.coinjoin_in_process:
+            return -1 if self.coinjoin_start + 8 < current_block else 0
+        if not self.coinjoin_in_process and not self.has_unconfirmed_round():
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
-            await self.start_coinjoin_async(**offer)
+            await self.start_coinjoin_async(**offer)  # type: ignore[arg-type]
+            self.record_round_start(
+                str(offer["destination"]),
+                cast(int | None, offer.get("amount_sats")),
+                cast(int | None, offer.get("counterparties")),
+                cast(int | None, offer.get("mixdepth")),
+                current_block,
+            )
             self.coinjoin_start = current_block
             self.coinjoin_in_process = True
             delta = +1
@@ -154,6 +184,8 @@ class TakerClient(JoinMarketClientServer):
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
 
         # TODO: The 8 block limit could be a parameter.
+        # mypy narrows the flag from the branch above; update_status() can change
+        # it in between, so the check is not actually redundant.
         elif self.coinjoin_in_process and self.coinjoin_start + 8 < current_block:
             self.stop_coinjoin()
             self.coinjoin_in_process = False
@@ -169,36 +201,37 @@ class OrderbookWatchClient(JoinMarketClientServer):
     A lightweight client that periodically queries the JoinMarket ob-watcher HTTP endpoint
     and stores snapshots to disk under /tmp to avoid large memory usage.
     """
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: object) -> None:
         # Default port for ob-watcher is 62601 and it is plain HTTP (not HTTPS)
-        super().__init__(**kwargs)
-        self.ob_host = kwargs.get("host", self.host)
-        self.ob_port = int(kwargs.get("port", 62601))
-        self.snapshot_dir = kwargs.get("snapshot_dir", f"/tmp/jm-orderbook/{self.name}")
+        # The subclasses only forward what the factory passes to the base class.
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.ob_host = str(kwargs.get("host", self.host))
+        self.ob_port = int(cast(int, kwargs.get("port", 62601)))
+        self.snapshot_dir = str(kwargs.get("snapshot_dir", f"/tmp/jm-orderbook/{self.name}"))
         # Default minimum polling interval is 1 minute
-        self.poll_interval_sec = int(kwargs.get("poll_interval_sec", 60))
-        self._last_poll_ts = 0
+        self.poll_interval_sec = int(cast(int, kwargs.get("poll_interval_sec", 60)))
+        self._last_poll_ts = 0.0
 
         os.makedirs(self.snapshot_dir, exist_ok=True)
 
-    def _fetch_orderbook(self):
+    def _fetch_orderbook(self) -> JsonDict:
         url = f"http://{self.ob_host}:{self.ob_port}/orderbook.json"
         resp = requests.get(
             url,
             timeout=10,
-            proxies=dict(http=self.proxy) if self.proxy else None
+            proxies={"http": self.proxy} if self.proxy else None
         )
         resp.raise_for_status()
-        return resp.json()
+        return cast(JsonDict, resp.json())
 
-    def _fetch_fidelity_bonds(self):
+    def _fetch_fidelity_bonds(self) -> object:
         """Fetch fidelity bonds data for debugging"""
         url = f"http://{self.ob_host}:{self.ob_port}/fidelitybonds"
         try:
             resp = requests.get(
                 url,
                 timeout=10,
-                proxies=dict(http=self.proxy) if self.proxy else None
+                proxies={"http": self.proxy} if self.proxy else None
             )
             resp.raise_for_status()
             return resp.json()
@@ -206,18 +239,18 @@ class OrderbookWatchClient(JoinMarketClientServer):
             print(f"[FidelityBonds] Failed to fetch bonds data: {e}")
             return None
 
-    def _store_snapshot(self, data: dict):
+    def _store_snapshot(self, data: JsonDict) -> str:
         # Group by date directory and name files orderbook_HH-MM.json
         date_dir = datetime.now().strftime("%Y-%m-%d")
         time_part = datetime.now().strftime("%H-%M")
         target_dir = os.path.join(self.snapshot_dir, date_dir)
         os.makedirs(target_dir, exist_ok=True)
         path = os.path.join(target_dir, f"orderbook_{time_part}.json")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         return path
 
-    def update(self, current_block, current_round) -> int:
+    def update(self, current_block: int, current_round: int) -> int:
         """
         Periodically poll the orderbook and store a snapshot to disk.
         Also periodically check fidelity bonds endpoint for debugging.
@@ -260,7 +293,7 @@ class OrderbookWatchClient(JoinMarketClientServer):
 
         return 0
 
-    async def _refresh_orderbook_async(self):
+    async def _refresh_orderbook_async(self) -> bool:
         """Refresh the orderbook by calling the refreshorderbook endpoint."""
         url = f"http://{self.ob_host}:{self.ob_port}/refreshorderbook"
         proxy_config = self.proxy if self.proxy else None
@@ -274,7 +307,7 @@ class OrderbookWatchClient(JoinMarketClientServer):
             print(f"[Orderbook] Error refreshing orderbook: {e}")
             return False
 
-    async def _fetch_orderbook_async(self):
+    async def _fetch_orderbook_async(self) -> JsonDict | None:
         """Async version of _fetch_orderbook using httpx"""
         # First refresh the orderbook
         await self._refresh_orderbook_async()
@@ -287,12 +320,12 @@ class OrderbookWatchClient(JoinMarketClientServer):
             async with httpx.AsyncClient(proxy=proxy_config, timeout=10.0) as client:
                 response = await client.get(url)
                 response.raise_for_status()
-                return response.json()
+                return cast(JsonDict, response.json())
         except Exception as e:
             print(f"[Orderbook] Error fetching orderbook: {e}")
             return None
 
-    async def _fetch_fidelity_bonds_async(self):
+    async def _fetch_fidelity_bonds_async(self) -> object:
         """Async version of _fetch_fidelity_bonds using httpx"""
         url = f"http://{self.ob_host}:{self.ob_port}/fidelitybonds"
         proxy_config = self.proxy if self.proxy else None
@@ -301,12 +334,12 @@ class OrderbookWatchClient(JoinMarketClientServer):
             async with httpx.AsyncClient(proxy=proxy_config, timeout=10.0) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
-                return resp.json()
+                return cast(JsonDict, resp.json())
         except Exception as e:
             print(f"[FidelityBonds] Failed to fetch bonds data: {e}")
             return None
 
-    async def update_async(self, current_block, current_round) -> int:
+    async def update_async(self, current_block: int, current_round: int) -> int:
         """
         Async version: Periodically poll the orderbook and store a snapshot to disk.
         Also periodically check fidelity bonds endpoint for debugging.
@@ -320,6 +353,8 @@ class OrderbookWatchClient(JoinMarketClientServer):
         try:
             # Fetch and store orderbook data
             data = await self._fetch_orderbook_async()
+            if data is None:
+                return 0
             path = self._store_snapshot(data)
             print(f"[Orderbook] Stored snapshot for {self.name} at {path}")
 
@@ -353,29 +388,32 @@ class TumblerTakerClient(JoinMarketClientServer):
     """
     This subclass is for a taker with tumbler options.
     """
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.tumbler_options = kwargs.get("tumbler_options", None)
+    def __init__(self, **kwargs: object) -> None:
+        # The subclasses only forward what the factory passes to the base class.
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.tumbler_options = cast(JsonDict | None, kwargs.get("tumbler_options"))
         if self.tumbler_options:
-            self.tumbler_options['schedulefile'] = self.tumbler_options['schedulefile'] + "_" + uuid.uuid4().hex
-        self.last_schedule = None
+            # A unique schedule file per run keeps restarts from resuming an old schedule.
+            schedulefile = str(self.tumbler_options["schedulefile"])
+            self.tumbler_options["schedulefile"] = f"{schedulefile}_{uuid.uuid4().hex}"
+        self.last_schedule: object = None
         self.coinjoin_completed = True
 
-    def update_status(self):
+    def update_status(self) -> JsonDict:
         """
         Get the status of the client and updates flags
         The conjoin_completed flag is determined by comparing the current and
         last schedule, which gets updated after each coinjoin.
         """
         response = super().update_status()
-        self.coinjoin_in_process = response.get("coinjoin_in_process", False)
+        self.coinjoin_in_process = bool(response.get("coinjoin_in_process", False))
         schedule = response.get("schedule", None)
         if schedule != self.last_schedule:
             self.coinjoin_completed = True
             self.last_schedule = schedule
         return response
 
-    def update(self, current_block, current_round):
+    def update(self, current_block: int, current_round: int) -> int:
         """
         Start a coinjoin if none is running and the client is not paused.
         Increment the round count if a coinjoin has completed.
@@ -395,19 +433,19 @@ class TumblerTakerClient(JoinMarketClientServer):
         if self.coinjoin_completed:
             delta = +1
             self.coinjoin_completed = False
-            print("Coinjoin for {self.name} completed.")
+            print(f"Coinjoin for {self.name} completed.")
             print(self.get_schedule())
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
 
         return delta
 
-    async def update_async(self, current_block, current_round):
+    async def update_async(self, current_block: int, current_round: int) -> int:
         """
         Async version: Start a coinjoin if none is running and the client is not paused.
         Increment the round count if a coinjoin has completed.
         """
         response = await self.update_status_async()
-        self.coinjoin_in_process = response.get("coinjoin_in_process", False)
+        self.coinjoin_in_process = bool(response.get("coinjoin_in_process", False))
         schedule = response.get("schedule", None)
         if schedule != self.last_schedule:
             self.coinjoin_completed = True
@@ -426,7 +464,7 @@ class TumblerTakerClient(JoinMarketClientServer):
         if self.coinjoin_completed:
             delta = +1
             self.coinjoin_completed = False
-            print("Coinjoin for {self.name} completed.")
+            print(f"Coinjoin for {self.name} completed.")
             print(await self.get_schedule_async())
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
 

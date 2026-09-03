@@ -1,9 +1,12 @@
-import sys
 import argparse
-from kubernetes_local_proxy import KubernetesLocalProxy
-from manager_remote import deploy_manager, download_logs_remote
+import sys
+from typing import cast
 
-def run_scenario_batch(args):
+from manager.kubernetes_local_proxy import KubernetesLocalProxy
+from manager.manager_remote import deploy_manager, download_logs_remote
+
+
+def run_scenario_batch(args: argparse.Namespace) -> bool:
     """Run a batch of scenarios using the scenario runner"""
     try:
         proxy = KubernetesLocalProxy(
@@ -25,10 +28,10 @@ def run_scenario_batch(args):
         print(f"  Cleanup wait: {args.cleanup_wait}s")
 
         # Save runner ID
-        with open(f".runner-{args.namespace}", "w") as f:
+        with open(f".runner-{args.namespace}", "w", encoding="utf-8") as f:
             f.write(runner_id)
 
-        print(f"\nUseful commands:")
+        print("\nUseful commands:")
         print(f"  Check status:  python manager/manager_remote_batch.py --namespace {args.namespace} status")
         print(f"  Follow logs:   python manager/manager_remote_batch.py --namespace {args.namespace} logs -f")
         print(f"  Stop runner:   python manager/manager_remote_batch.py --namespace {args.namespace} stop")
@@ -40,7 +43,7 @@ def run_scenario_batch(args):
     return True
 
 
-def runner_status(args):
+def runner_status(args: argparse.Namespace) -> bool:
     """Check scenario runner status"""
     try:
         proxy = KubernetesLocalProxy(
@@ -53,7 +56,7 @@ def runner_status(args):
         runner_id = args.runner_id
         if not runner_id:
             try:
-                with open(f".runner-{args.namespace}", "r") as f:
+                with open(f".runner-{args.namespace}", "r", encoding="utf-8") as f:
                     runner_id = f.read().strip()
             except FileNotFoundError:
                 print("No runner ID provided and no saved ID found", file=sys.stderr)
@@ -63,8 +66,8 @@ def runner_status(args):
         print(f"Runner status: {status['status']}")
 
         if 'current_status' in status and status['current_status']:
-            current = status['current_status']
-            print(f"\nCurrent progress:")
+            current = cast(dict[str, object], status["current_status"])
+            print("\nCurrent progress:")
             print(f"  Scenario: {current.get('current_scenario', 'Unknown')}")
             print(f"  Completed: {current.get('completed', 0)}/{current.get('total', 0)}")
             print(f"  Last update: {current.get('timestamp', 'Unknown')}")
@@ -75,7 +78,7 @@ def runner_status(args):
     return True
 
 
-def runner_logs(args):
+def runner_logs(args: argparse.Namespace) -> bool:
     """Get scenario runner logs"""
     try:
         proxy = KubernetesLocalProxy(
@@ -88,7 +91,7 @@ def runner_logs(args):
         runner_id = args.runner_id
         if not runner_id:
             try:
-                with open(f".runner-{args.namespace}", "r") as f:
+                with open(f".runner-{args.namespace}", "r", encoding="utf-8") as f:
                     runner_id = f.read().strip()
             except FileNotFoundError:
                 print("No runner ID provided and no saved ID found", file=sys.stderr)
@@ -103,13 +106,12 @@ def runner_logs(args):
             if success:
                 print("✓ Runner logs downloaded successfully")
             return success
-        else:
-            # Tail/follow logs
-            proxy.tail_runner_logs(
-                runner_id=runner_id,
-                lines=args.lines,
-                follow=args.follow
-            )
+        # Tail/follow logs
+        proxy.tail_runner_logs(
+            runner_id=runner_id,
+            lines=args.lines,
+            follow=args.follow
+        )
 
     except KeyboardInterrupt:
         print("\n✓ Stopped following logs")
@@ -119,7 +121,7 @@ def runner_logs(args):
     return True
 
 
-def runner_stop(args):
+def runner_stop(args: argparse.Namespace) -> bool:
     """Stop a running scenario batch - terminates entire run"""
     try:
         proxy = KubernetesLocalProxy(
@@ -132,7 +134,7 @@ def runner_stop(args):
         runner_id = args.runner_id
         if not runner_id:
             try:
-                with open(f".runner-{args.namespace}", "r") as f:
+                with open(f".runner-{args.namespace}", "r", encoding="utf-8") as f:
                     runner_id = f.read().strip()
             except FileNotFoundError:
                 print("No runner ID provided and no saved ID found", file=sys.stderr)
@@ -152,7 +154,7 @@ def runner_stop(args):
     return True
 
 
-def runner_skip(args):
+def runner_skip(args: argparse.Namespace) -> bool:
     """Skip current scenario and continue to next"""
     try:
         proxy = KubernetesLocalProxy(
@@ -165,7 +167,7 @@ def runner_skip(args):
         runner_id = args.runner_id
         if not runner_id:
             try:
-                with open(f".runner-{args.namespace}", "r") as f:
+                with open(f".runner-{args.namespace}", "r", encoding="utf-8") as f:
                     runner_id = f.read().strip()
             except FileNotFoundError:
                 print("No runner ID provided and no saved ID found", file=sys.stderr)
@@ -184,7 +186,7 @@ def runner_skip(args):
     return True
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Batch Scenario Runner Manager for Kubernetes - Manages running multiple scenarios sequentially",
         prog="manager_remote_batch.py"
@@ -221,7 +223,8 @@ def main():
     batch_parser = subparsers.add_parser("run",
                                         help="Start a new batch scenario runner")
     batch_parser.add_argument("--scenario-dir", type=str, required=True,
-                             help="Path to scenario directory inside the orchestrator container (e.g., '/app/scenarios/experiment1')")
+                             help=("Path to scenario directory inside the orchestrator "
+                                   "container (e.g., '/app/scenarios/experiment1')"))
     batch_parser.add_argument("--engine", type=str, choices=["joinmarket", "wasabi"],
                              default="joinmarket",
                              help="Coinjoin simulation engine to use")
@@ -234,7 +237,8 @@ def main():
     runner_status_parser = subparsers.add_parser("status",
                                                  help="Check status of running scenario batch")
     runner_status_parser.add_argument("--runner-id", type=str,
-                                     help="Runner ID (optional, uses saved ID from .runner-{namespace} if not provided)")
+                                     help=("Runner ID (optional, uses saved ID from "
+                                           ".runner-{namespace} if not provided)"))
 
     # Logs command
     runner_logs_parser = subparsers.add_parser("logs",
@@ -252,7 +256,8 @@ def main():
 
     # Stop command
     runner_stop_parser = subparsers.add_parser("stop",
-                                              help="Terminate entire scenario batch run (stops current scenario and exits)")
+                                              help=("Terminate entire scenario batch run "
+                                                    "(stops current scenario and exits)"))
     runner_stop_parser.add_argument("--runner-id", type=str,
                                     help="Runner ID (optional, uses saved ID from .runner-{namespace} if not provided)")
 
