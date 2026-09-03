@@ -133,3 +133,16 @@ def test_the_node_keeps_its_image_identity_without_a_shared_folder(
     engine(args(), driver).start_btc_node()
 
     assert driver.run.call_args.kwargs["run_as_user"] is None
+
+
+@patch("manager.engine.engine_base.BtcNode")
+def test_the_btc_node_receives_the_requested_initial_block_count(
+    node_class: Mock, monkeypatch
+) -> None:
+    monkeypatch.setenv("COINJOIN_BTC_NODE_INITIAL_BLOCK_COUNT", "201")
+    driver = Mock()
+    driver.run.return_value = ("node-ip", {18443: 18443, 18444: 18444}, None)
+
+    engine(args(), driver).start_btc_node()
+
+    assert driver.run.call_args.kwargs["env"] == {"COINJOIN_INITIAL_BLOCK_COUNT": "201"}
