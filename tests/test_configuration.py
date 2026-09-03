@@ -39,7 +39,6 @@ def test_nested_wasabi_config_round_trips(tmp_path: Path) -> None:
 
     assert reloaded.wallets[0].wasabi == config.wallets[0].wasabi
 
-
 @pytest.mark.parametrize("field", ["anon_score_target", "redcoin_isolation", "skip_rounds"])
 def test_flat_wasabi_settings_are_rejected(tmp_path: Path, field: str) -> None:
     with pytest.raises(ValueError, match="flat Wasabi wallet settings"):
@@ -85,3 +84,11 @@ def test_invalid_joinmarket_role_is_rejected(tmp_path: Path) -> None:
 def test_flat_joinmarket_settings_are_rejected(tmp_path: Path, field: str) -> None:
     with pytest.raises(ValueError, match="flat JoinMarket wallet settings"):
         load_scenario(tmp_path, base_scenario({"funds": [1000], field: "legacy"}))
+
+
+def test_joinmarket_engine_requires_explicit_roles(tmp_path: Path) -> None:
+    config = load_scenario(tmp_path, base_scenario({"funds": [1000]}))
+
+    config.validate_for_engine("wasabi")
+    with pytest.raises(ValueError, match="explicit maker/taker role"):
+        config.validate_for_engine("joinmarket")
