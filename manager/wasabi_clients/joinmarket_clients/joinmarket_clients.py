@@ -411,7 +411,7 @@ class TumblerTakerClient(JoinMarketClientServer):
         if self.coinjoin_completed:
             delta = +1
             self.coinjoin_completed = False
-            print("Coinjoin for {self.name} completed.")
+            print(f"Coinjoin for {self.name} completed.")
             print(self.get_schedule())
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
 
@@ -442,7 +442,7 @@ class TumblerTakerClient(JoinMarketClientServer):
         if self.coinjoin_completed:
             delta = +1
             self.coinjoin_completed = False
-            print("Coinjoin for {self.name} completed.")
+            print(f"Coinjoin for {self.name} completed.")
             print(await self.get_schedule_async())
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
 
