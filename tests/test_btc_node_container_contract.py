@@ -36,3 +36,9 @@ def test_miner_only_mines_missing_initial_blocks() -> None:
 
     assert "BLOCKS_TO_MINE=$((INITIAL_BLOCK_COUNT - BLOCK_COUNT))" in miner
     assert '\\"params\\": [$BLOCKS_TO_MINE, \\"$ADDR\\"]' in miner
+
+
+def test_entrypoint_forwards_bitcoind_arguments() -> None:
+    entrypoint = (CONTAINER_DIR / "run.sh").read_text(encoding="utf-8")
+
+    assert 'maxconnections=1024 "$@"' in entrypoint
