@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 ENTRYPOINT = Path(__file__).resolve().parents[1] / "manager.py"
 
 
@@ -37,3 +39,11 @@ def test_an_unusable_distributor_startup_timeout_falls_back_to_the_default(monke
     monkeypatch.setenv("COINJOIN_DISTRIBUTOR_STARTUP_TIMEOUT", "not-a-number")
 
     assert parse("run").distributor_startup_timeout == DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT
+
+
+def test_the_joinmarket_generator_help_can_be_rendered() -> None:
+    # An unescaped % in a help string makes argparse fail while formatting it.
+    with pytest.raises(SystemExit) as exit_info:
+        parse("genscen-joinmarket", "--help")
+
+    assert exit_info.value.code == 0
