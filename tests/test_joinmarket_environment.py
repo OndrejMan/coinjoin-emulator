@@ -4,6 +4,9 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
+import pytest
+
+from manager.engine.configuration import ScenarioConfig, WalletConfig
 from manager.engine.joinmarket_engine import JoinmarketEngine
 
 
@@ -32,3 +35,30 @@ def test_core_wallet_creation_does_not_import_funding_descriptors() -> None:
     assert instance.node.mock_calls == [
         call.create_wallet("jm_wallet_jcs-002", disable_private_keys=True),
     ]
+
+
+class RoleClient:
+    def __init__(self, role: str) -> None:
+        self.name = role
+        self.type = role
+
+    def get_balance(self) -> int:
+        return 0
+
+
+def role_engine(*roles: str) -> JoinmarketEngine:
+    instance = engine()
+    instance.clients = [RoleClient(role) for role in roles]
+    instance.scenario = ScenarioConfig(
+        "roles", 1, 1, "joinmarket", [WalletConfig(funds=[1]) for _ in roles]
+    )
+    return instance
+
+
+def test_a_joinmarket_run_requires_a_started_maker_and_taker() -> None:
+    with pytest.raises(RuntimeError, match="taker"):
+        role_engine("maker").validate_clients()
+    with pytest.raises(RuntimeError, match="maker"):
+        role_engine("taker").validate_clients()
+
+    role_engine("maker", "taker").validate_clients()

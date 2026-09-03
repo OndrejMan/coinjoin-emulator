@@ -139,6 +139,14 @@ class JoinmarketEngine(EngineBase):
     def joinmarket_container_env(self, rpc_wallet_file):
         return {"JM_RPC_WALLET_FILE": rpc_wallet_file}
 
+    def validate_clients(self):
+        super().validate_clients()
+        roles = {getattr(client, "type", "") for client in self.clients}
+        if "taker" not in roles:
+            raise RuntimeError("JoinMarket scenario requires at least one started taker client")
+        if "maker" not in roles:
+            raise RuntimeError("JoinMarket scenario requires at least one started maker client")
+
     def create_core_wallet(self, client_name):
         """Create the container's own Bitcoin Core wallet and return its name."""
         if self.node is None:
