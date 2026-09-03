@@ -182,7 +182,7 @@ class KubernetesDriver(Driver):
                 "containers": [
                     {
                         "image": image,
-                        "imagePullPolicy": "Always",
+                        "imagePullPolicy": os.environ.get("KUBERNETES_IMAGE_PULL_POLICY", "Always"),
                         "name": name,
                         "ports": [
                             {"containerPort": container_port}
