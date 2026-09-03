@@ -56,3 +56,20 @@ def test_an_unknown_startup_failure_fails_the_run_with_the_logs() -> None:
             instance.start_wasabi_coordinator()
 
     instance.driver.stop.assert_not_called()
+
+
+def test_the_split_distributor_is_pointed_at_the_coordinator() -> None:
+    instance = engine()
+    instance.backend = SimpleNamespace(internal_ip="10.0.0.3")
+    instance.coordinator = SimpleNamespace(internal_ip="10.0.0.4")
+    instance.args.wasabi_backend_ip = ""
+    instance.scenario = SimpleNamespace(distributor_version=None, default_version="2.6.0")
+    instance.driver.run.return_value = ("wasabi-client-distributor", {37128: 37131}, None)
+    distributor = Mock()
+    distributor.wait_wallet.return_value = True
+    instance.init_wasabi_client = Mock(return_value=distributor)
+    instance.args.distributor_startup_timeout = 60
+
+    instance.start_distributor()
+
+    assert instance.driver.run.call_args.kwargs["env"]["ADDR_WASABI_COORDINATOR"] == "10.0.0.4"
