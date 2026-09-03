@@ -80,6 +80,10 @@ class TakerClient(JoinMarketClientServer):
     This class implements the logic for a taker that does *not* have tumbler options.
     """
 
+    def has_unconfirmed_round(self):
+        """True while an earlier attempt is still waiting for its destination to be mined."""
+        return any(event.get("status") == "started" for event in self.round_events)
+
     def update_status(self):
         """
         Get the status of the client and update the coinjoin_in_process flag.
@@ -104,7 +108,15 @@ class TakerClient(JoinMarketClientServer):
         self.update_status()
 
         delta = 0
-        if not self.coinjoin_in_process and not self.is_paused(current_block):
+        if self.has_unconfirmed_round() and not self.coinjoin_in_process:
+            # jmwalletd reports the attempt as finished before the transaction
+            # is mined; report a timeout only once it cannot land any more.
+            return -1 if self.coinjoin_start + 8 < current_block else 0
+        if (
+            not self.coinjoin_in_process
+            and not self.is_paused(current_block)
+            and not self.has_unconfirmed_round()
+        ):
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
             self.start_coinjoin(**offer)
@@ -152,7 +164,9 @@ class TakerClient(JoinMarketClientServer):
             return 0
 
         delta = 0
-        if not self.coinjoin_in_process:
+        if self.has_unconfirmed_round() and not self.coinjoin_in_process:
+            return -1 if self.coinjoin_start + 8 < current_block else 0
+        if not self.coinjoin_in_process and not self.has_unconfirmed_round():
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
             await self.start_coinjoin_async(**offer)
