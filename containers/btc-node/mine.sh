@@ -14,19 +14,19 @@ do
         exit 1
     fi
     sleep 1
-    BLOCK_COUNT=$(curl --max-time 5 -s -u user:password --data-binary '{"jsonrpc": "1.0", "method": "getblockcount", "params": []}' -H 'content-type: text/plain;' http://localhost:18443 | jq ".result")
+    BLOCK_COUNT=$(curl --max-time 5 -s -u user:password --data-binary '{"jsonrpc": "2.0", "id": "initial-block-count", "method": "getblockcount", "params": []}' -H 'content-type: text/plain;' http://localhost:18443 | jq ".result")
 done
 
 if [ "$BLOCK_COUNT" -lt "$INITIAL_BLOCK_COUNT" ]
 then
-    curl -s -u user:password --data-binary '{"jsonrpc": "1.0", "method": "createwallet", "params": ["wallet"]}' -H 'content-type: text/plain;' http://localhost:18443 > /dev/null
+    curl -s -u user:password --data-binary '{"jsonrpc": "2.0", "id": "create-wallet", "method": "createwallet", "params": ["wallet"]}' -H 'content-type: text/plain;' http://localhost:18443 > /dev/null
 
     # Mine only the missing blocks for mature coinbase outputs. The default
     # provides a realistic history; a constrained integration run can use a
     # smaller explicit value to shorten Wasabi's initial filter download.
     BLOCKS_TO_MINE=$((INITIAL_BLOCK_COUNT - BLOCK_COUNT))
-    ADDR=$(curl -s -u user:password --data-binary '{"jsonrpc": "1.0", "method": "getnewaddress", "params": ["wallet"]}' -H 'content-type: text/plain;' http://localhost:18443 | jq -r '.result')
-    curl -s -u user:password --data-binary "{\"jsonrpc\": \"1.0\", \"method\": \"generatetoaddress\", \"params\": [$BLOCKS_TO_MINE, \"$ADDR\"]}" -H 'content-type: text/plain;' http://localhost:18443 > /dev/null
+    ADDR=$(curl -s -u user:password --data-binary '{"jsonrpc": "2.0", "id": "initial-address", "method": "getnewaddress", "params": ["wallet"]}' -H 'content-type: text/plain;' http://localhost:18443 | jq -r '.result')
+    curl -s -u user:password --data-binary "{\"jsonrpc\": \"2.0\", \"id\": \"initial-blocks\", \"method\": \"generatetoaddress\", \"params\": [$BLOCKS_TO_MINE, \"$ADDR\"]}" -H 'content-type: text/plain;' http://localhost:18443 > /dev/null
 
     # Build a fee history so estimatesmartfee returns an estimate; the Wasabi
     # backend refuses to start without one.
@@ -65,6 +65,6 @@ fi
 while true
 do
     sleep $(($RANDOM % 60 + 30))
-    ADDR=$(curl -s -u user:password --data-binary '{"jsonrpc": "2.0", "method": "getnewaddress", "params": ["wallet"]}' -H 'content-type: text/plain;' http://localhost:18443/wallet/wallet | jq -r '.result')
-    curl -s -u user:password --data-binary "{\"jsonrpc\": \"2.0\", \"method\": \"generatetoaddress\", \"params\": [1, \"$ADDR\"]}" -H 'content-type: text/plain;' http://localhost:18443> /dev/null
+    ADDR=$(curl -s -u user:password --data-binary '{"jsonrpc": "2.0", "id": "periodic-address", "method": "getnewaddress", "params": ["wallet"]}' -H 'content-type: text/plain;' http://localhost:18443/wallet/wallet | jq -r '.result')
+    curl -s -u user:password --data-binary "{\"jsonrpc\": \"2.0\", \"id\": \"periodic-block\", \"method\": \"generatetoaddress\", \"params\": [1, \"$ADDR\"]}" -H 'content-type: text/plain;' http://localhost:18443> /dev/null
 done
