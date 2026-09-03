@@ -27,6 +27,6 @@ class WasabiCoordinatorProtocol(Protocol):
         """
         ...
     
-    def wait_ready(self) -> None:
+    def wait_ready(self, timeout: int = 120) -> None:
         """Wait for coordinator to be ready."""
         ...
