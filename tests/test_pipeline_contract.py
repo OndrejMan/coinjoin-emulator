@@ -18,7 +18,12 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from manager.engine.configuration import ScenarioConfig, WalletConfig  # noqa: E402
+from manager.engine.configuration import (  # noqa: E402
+    JoinMarketConfig,
+    JoinMarketRole,
+    ScenarioConfig,
+    WalletConfig,
+)
 from manager.engine.engine_base import EngineBase, write_producer_label_manifest  # noqa: E402
 from manager.engine.joinmarket_engine import JoinmarketEngine  # noqa: E402
 
@@ -94,6 +99,25 @@ def test_log_run_path_falls_back_to_timestamp_and_scenario_name():
     path = make_engine().log_run_path()
     assert path.startswith("./logs/")
     assert path.endswith("_scenario")
+
+
+def test_a_joinmarket_scenario_is_json_serialisable() -> None:
+    scenario = ScenarioConfig(
+        name="joinmarket",
+        rounds=1,
+        blocks=0,
+        default_version="joinmarket",
+        wallets=[
+            WalletConfig(
+                funds=[1000],
+                joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER),
+            )
+        ],
+    )
+
+    stored = json.loads(json.dumps(scenario.to_dict()))
+
+    assert stored["wallets"][0]["joinmarket"]["role"] == "maker"
 
 
 # --- controller markers ----------------------------------------------------

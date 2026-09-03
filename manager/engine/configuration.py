@@ -149,7 +149,11 @@ class ScenarioConfig:
     
     def to_dict(self) -> dict[str, Any]:
         """Convert the scenario configuration to a dictionary for JSON serialization."""
-        return asdict(self)
+        def unwrap(items: list[tuple[str, Any]]) -> dict[str, Any]:
+            # Enums are not JSON serializable; store the value the scenario file uses.
+            return {key: value.value if isinstance(value, Enum) else value for key, value in items}
+
+        return asdict(self, dict_factory=unwrap)
 
 
 # Type aliases for convenience
