@@ -311,3 +311,46 @@ def test_rounds_without_a_mined_destination_stay_unconfirmed(tmp_path):
     label = json.loads((tmp_path / "joinmarket_round_events.json").read_text(encoding="utf-8"))[0]
     assert label["status"] == "started"
     assert evidence["positive_count"] == 0
+
+
+# --- cleanup lifecycle -----------------------------------------------------
+
+class CleanupEngine:
+    def __init__(self, failing=(), node=object()):
+        self.failing = set(failing)
+        self.node = node
+        self.calls = []
+
+    def _step(self, name):
+        self.calls.append(name)
+        if name in self.failing:
+            raise RuntimeError(f"{name} failed")
+
+    def stop_coinjoins(self):
+        self._step("stop_coinjoins")
+
+    def shutdown_engine(self):
+        self._step("shutdown_engine")
+
+    def store_logs(self):
+        self._step("store_logs")
+
+
+def test_cleanup_runs_every_step_even_when_one_fails():
+    entrypoint = load_entrypoint()
+    engine = CleanupEngine(failing={"stop_coinjoins"})
+    driver = types.SimpleNamespace(cleanup=lambda prefix: engine.calls.append("driver_cleanup"))
+    args = types.SimpleNamespace(no_logs=False, image_prefix="")
+
+    assert entrypoint.cleanup(engine, driver, args) is True
+    assert engine.calls == ["stop_coinjoins", "shutdown_engine", "store_logs", "driver_cleanup"]
+
+
+def test_cleanup_skips_log_storage_without_a_bitcoin_node():
+    entrypoint = load_entrypoint()
+    engine = CleanupEngine(node=None)
+    driver = types.SimpleNamespace(cleanup=lambda prefix: engine.calls.append("driver_cleanup"))
+    args = types.SimpleNamespace(no_logs=False, image_prefix="")
+
+    assert entrypoint.cleanup(engine, driver, args) is False
+    assert "store_logs" not in engine.calls
