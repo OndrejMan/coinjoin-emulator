@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "backoff",
-    "bip-utils",
     "docker==6.1",
     "httpx[http2]>=0.27,<0.28",
     "kubernetes==28.1.0",

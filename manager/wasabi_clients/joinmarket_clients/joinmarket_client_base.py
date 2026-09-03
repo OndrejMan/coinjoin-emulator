@@ -6,7 +6,6 @@ from typing import List
 import httpx
 import requests
 import urllib3
-from bip_utils import Bip32Slip10Secp256k1, Bip39SeedGenerator
 
 from manager.exceptions import RpcError
 
@@ -960,34 +959,26 @@ class JoinMarketClientServer:
             list(self.coin_history.values()))
 
     def list_keys(self):
-        """List all keys in the wallet."""
-        seed_bytes = Bip39SeedGenerator(self.seedphrase).Generate()
-        coins = self.list_coins()
+        """List every address the wallet derived, including already spent ones.
+
+        Deriving from the UTXO set missed every address whose coins were spent,
+        so the analysis attributed the corresponding outputs to a coordinator
+        that does not exist.
+        """
+        walletinfo = self.display_wallet().get("walletinfo") or {}
         keys = []
-        for coin in coins:
-            key_path = coin.get("keyPath", "")
-
-            # Skip fidelity bond coins that have colons in their paths (e.g., "79:1785542400")
-            # These are not valid BIP32 paths and are handled differently in JoinMarket
-            if ":" in key_path:
-                print(f"Skipping fidelity bond coin with path: {key_path}")
-                continue
-
-            # Skip empty paths
-            if not key_path:
-                continue
-
-            key = {"full_key_path": key_path}
-            try:
-                bip32_ctx = Bip32Slip10Secp256k1.FromSeedAndPath(seed_bytes, str(key_path))
-                key["pubKey"] = bip32_ctx.PublicKey().RawUncompressed().ToHex()
-                key["internal"] = str(key_path).split("/")[-2] == "1"
-                key["address"] = coin.get("address", "")
-                keys.append(key)
-            except Exception as e:
-                print(f"Error processing key path '{key_path}': {e}")
-                continue
-
+        for account in walletinfo.get("accounts") or []:
+            for branch in account.get("branches") or []:
+                for entry in branch.get("entries") or []:
+                    if not entry.get("address"):
+                        continue
+                    keys.append({
+                        "address": str(entry["address"]),
+                        "path": str(entry.get("hd_path", "")),
+                        "account": str(account.get("account", "")),
+                        "status": str(entry.get("status", "")),
+                        "amount": str(entry.get("amount", "")),
+                    })
         return keys
 
     def get_offer(self, round=0):
