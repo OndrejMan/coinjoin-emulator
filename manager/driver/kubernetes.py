@@ -5,6 +5,7 @@ import shlex
 import tarfile
 import time
 import traceback
+import uuid
 from functools import cached_property
 from io import BytesIO
 from threading import RLock
@@ -21,6 +22,8 @@ from . import Driver
 
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
 DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
+UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_UPLOAD_TIMEOUT", "120"))
+UPLOAD_COMMAND_CHUNK_SIZE = 16 * 1024
 BENIGN_TAR_WARNING_RE = re.compile(
     r"^tar: .*: (file changed as we read it|socket ignored)$"
     r"|^tar: Removing leading [`'\"]?/[`'\"]? from (member names|hard link targets)$"
@@ -440,33 +443,55 @@ class KubernetesDriver(Driver):
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:tar") as tar:
             tar.add(src_path, arcname=dst_path)
-        commands = [buf.getvalue()]
+        # write_stdin() truncated the archive whenever it exceeded a websocket
+        # frame, and the loop exited before the remote tar had finished, so the
+        # payload is staged in text chunks and unpacked with a checked command.
+        payload = base64.b64encode(buf.getvalue()).decode("ascii")
+        remote_payload = f"/tmp/coinjoin-emulator-upload-{uuid.uuid4().hex}.b64"
+        deadline = time.monotonic() + UPLOAD_TIMEOUT_SECONDS
 
-        exec_command = ["tar", "xf", "-", "-C", "/"]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
+        try:
+            for offset in range(0, len(payload), UPLOAD_COMMAND_CHUNK_SIZE):
+                chunk = payload[offset:offset + UPLOAD_COMMAND_CHUNK_SIZE]
+                redirect = ">" if offset == 0 else ">>"
+                self._exec_checked(
+                    name, dst_path, deadline,
+                    ["sh", "-c", f'printf "%s" "$1" {redirect} "$2"', "sh", chunk, remote_payload],
+                )
+            self._exec_checked(
+                name, dst_path, deadline,
+                [
+                    "sh", "-c",
+                    'base64 -d "$1" | tar xf - -C /; status=$?; rm -f -- "$1"; exit "$status"',
+                    "sh", remote_payload,
+                ],
+            )
+        except Exception:
+            try:
+                self._exec_checked(name, dst_path, deadline, ["rm", "-f", "--", remote_payload])
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass
+            raise
 
-        while resp.is_open():
-            resp.update(timeout=1)
-            if resp.peek_stdout():
-                print(f"STDOUT: {resp.read_stdout()}")
-            if resp.peek_stderr():
-                print(f"STDERR: {resp.read_stderr()}")
-            if commands:
-                c = commands.pop(0)
-                resp.write_stdin(c)
-            else:
-                break
-        resp.close()
+    def _exec_checked(self, name, dst_path, deadline, exec_command):
+        """Run one upload command and fail if it wrote to stderr or exited non-zero."""
+        stderr_chunks = []
+        with self._exec_lock:
+            resp = self._exec_stream(name, exec_command, f"upload to {dst_path}")
+            while resp.is_open():
+                if time.monotonic() >= deadline:
+                    resp.close()
+                    raise TimeoutError(f"Timed out uploading to {name}:{dst_path}")
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    resp.read_stdout()
+                if resp.peek_stderr():
+                    stderr_chunks.append(resp.read_stderr())
+            returncode = getattr(resp, "returncode", None)
+            resp.close()
+        stderr = "".join(stderr_chunks).strip()
+        if returncode not in (None, 0) or stderr:
+            raise RuntimeError(f"upload to {name}:{dst_path} failed" + (f": {stderr}" if stderr else ""))
 
 
     def cleanup(self, image_prefix=""):

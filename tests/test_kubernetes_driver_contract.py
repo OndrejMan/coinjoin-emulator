@@ -207,3 +207,33 @@ def test_reading_from_a_pod_that_is_not_running_is_rejected(tmp_path) -> None:
 
     with pytest.raises(RuntimeError, match="phase Failed"):
         instance.download("jcs-000", "/logs/", str(tmp_path))
+
+
+def test_upload_stages_the_archive_in_chunks_and_unpacks_it(tmp_path) -> None:
+    instance = driver()
+    source = tmp_path / "scenario.json"
+    source.write_text("{}", encoding="utf-8")
+    commands = []
+
+    def record(api, name, namespace, command, **kwargs):
+        commands.append(command)
+        return FakeStream()
+
+    with patch("manager.driver.kubernetes.stream", side_effect=record):
+        instance.upload("jcs-000", str(source), "/app/scenario.json")
+
+    assert all(command[0] == "sh" for command in commands[:-1])
+    assert "base64 -d" in commands[-1][2] and "tar xf -" in commands[-1][2]
+
+
+def test_upload_fails_when_the_remote_command_writes_to_stderr(tmp_path) -> None:
+    instance = driver()
+    source = tmp_path / "scenario.json"
+    source.write_text("{}", encoding="utf-8")
+
+    with patch(
+        "manager.driver.kubernetes.stream",
+        return_value=FakeStream(stderr="tar: /app: Cannot open\n"),
+    ):
+        with pytest.raises(RuntimeError, match="upload to jcs-000:/app/scenario.json failed"):
+            instance.upload("jcs-000", str(source), "/app/scenario.json")
