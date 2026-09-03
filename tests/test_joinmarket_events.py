@@ -311,6 +311,20 @@ class TestStoreRoundEvents:
         assert evidence["positive_count"] == 0
         assert "multiple exported transactions" in str(evidence["reason"])
 
+    def test_a_tumbler_without_labels_marks_the_evidence_incomplete(self, tmp_path: Path) -> None:
+        harness = EventHarness(
+            EventClient("jcs-000", [], tumbler_options={"addrcount": 3}),
+            EventClient(
+                "jcs-001",
+                [{"round_id": 1, "status": "started", "destination_address": "bcrt1qdest"}],
+            ),
+        )
+
+        evidence = harness.store_round_events(str(tmp_path))
+
+        assert evidence["complete"] is False
+        assert "jcs-000" in str(evidence["reason"])
+
     def test_a_tumbler_that_recorded_labels_keeps_the_evidence_complete(self, tmp_path: Path) -> None:
         harness = EventHarness(
             EventClient(
