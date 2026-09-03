@@ -7,6 +7,8 @@ import uuid
 
 import backoff
 
+from manager.exceptions import CoinjoinEmulatorError
+
 # File transfer settings
 CHUNK_SIZE_MB = 10
 LARGE_FILE_THRESHOLD_MB = 20
@@ -27,8 +29,8 @@ class KubernetesLocalProxy:
         self.simulation_id = str(uuid.uuid4())[:8]
         self._kubectl_base_cmd = self._build_kubectl_cmd()
 
-        if auto_deploy:
-            self.deploy_manager(image_prefix=image_prefix)
+        if auto_deploy and not self.deploy_manager(image_prefix=image_prefix):
+            raise CoinjoinEmulatorError("Could not deploy the orchestrator")
 
         # Test connection to orchestrator
         self._test_connection()
@@ -1035,20 +1037,6 @@ class KubernetesLocalProxy:
             # Use pre-created manifests
             print("Using pre-created manifests from containers/emulator-manager/...")
 
-            # Update the image in deployment.yaml if needed
-            if image_prefix:
-                import yaml
-                with open(deployment_file, 'r') as f:
-                    deployment = yaml.safe_load(f)
-
-                # Update image
-                deployment['spec']['template']['spec']['containers'][0]['image'] = manager_image
-                deployment['spec']['template']['spec']['containers'][0]['imagePullPolicy'] = 'Always'
-
-                # Save updated deployment
-                with open(deployment_file, 'w') as f:
-                    yaml.dump(deployment, f, default_flow_style=False)
-
             # Apply all manifests
             manifest_files = [
                 "role.yaml",
@@ -1067,6 +1055,20 @@ class KubernetesLocalProxy:
                     subprocess.run(apply_cmd, check=True)
                 else:
                     print(f"Warning: {manifest} not found in {manifest_dir}")
+
+            # The image override is applied to the running deployment; rewriting
+            # the manifest in the repository would leave a dirty working tree.
+            if image_prefix:
+                patch = json.dumps({
+                    "spec": {"template": {"spec": {"containers": [
+                        {"name": "manager", "image": manager_image, "imagePullPolicy": "Always"}
+                    ]}}}
+                })
+                subprocess.run(
+                    self._kubectl_base_cmd
+                    + ["patch", "deployment", "emulation-manager", "-n", self.namespace, "-p", patch],
+                    check=True,
+                )
 
         if wait_ready:
             # rollout status only understands controllers; a bare pod reference
