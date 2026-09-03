@@ -17,9 +17,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-# Dependency metadata first, so the layer is cached across source changes.
-COPY pyproject.toml requirements.txt ./
-RUN uv venv && uv pip install -r requirements.txt
+# Locked dependency metadata first, so the layer is cached across source changes.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY . .
 RUN mkdir /app/logs && chown -R 1000:1000 /app/logs
