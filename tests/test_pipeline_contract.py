@@ -41,6 +41,8 @@ class FakeNode:
         self.blocks = blocks
 
     def get_block_count(self):
+        if self.blocks is None:
+            raise TypeError("block count is unavailable")
         return self.blocks
 
     def get_block_hash(self, height):
@@ -159,11 +161,25 @@ def test_store_logs_writes_the_emulator_artifact_layout(tmp_path, monkeypatch):
         "emulation_logs.zip",
         "scenario.json",
     ]
-    assert (experiment / "data" / "btc-node" / "block_0.json").is_file()
+    # get_block_count() reports the tip height, which must be exported too.
+    assert sorted(
+        path.name for path in (experiment / "data" / "btc-node").glob("block_*.json")
+    ) == ["block_0.json", "block_1.json", "block_2.json"]
 
     with zipfile.ZipFile(experiment / "emulation_logs.zip") as archive:
         roots = {name.split("/")[0] for name in archive.namelist()}
     assert roots == {"coinjoin_emulator_data"}
+
+
+def test_store_logs_skips_block_export_when_tip_is_unavailable(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    engine = make_engine(run_id="my-run")
+    engine.node = FakeNode(blocks=None)
+
+    engine.store_logs()
+
+    blocks = tmp_path / "logs" / "my-run" / "coinjoin_emulator_data" / "data" / "btc-node"
+    assert list(blocks.glob("block_*.json")) == []
 
 
 def test_run_refuses_to_overwrite_an_existing_run(tmp_path, monkeypatch):
