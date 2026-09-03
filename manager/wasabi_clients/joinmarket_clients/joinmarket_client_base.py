@@ -8,6 +8,8 @@ import requests
 import urllib3
 from bip_utils import Bip32Slip10Secp256k1, Bip39SeedGenerator
 
+from manager.exceptions import RpcError
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
@@ -199,10 +201,9 @@ class JoinMarketClientServer:
                 if attempt == repeat - 1:
                     raise
                 sleep(1)
-        if response is not None:
-            return response.json()
-
-        raise Exception("timeout")
+        # Only reachable when every attempt answered 401: the wallet never
+        # unlocked. Returning the last 401 body hid that as a valid result.
+        raise RpcError(f"{method} {endpoint} stayed unauthorized after {repeat} attempts")
 
     async def _rpc_async(self, method, endpoint, json_data=None, timeout=60, repeat=4) -> dict:
         """Async version of _rpc using httpx.AsyncClient."""
@@ -255,7 +256,7 @@ class JoinMarketClientServer:
                     raise
                 await asyncio.sleep(1)
 
-        raise Exception("timeout")
+        raise RpcError(f"{method} {endpoint} stayed unauthorized after {repeat} attempts")
 
     def is_paused(self, current_block):
         # Check delay - "delay[0]" means "don't run until current_block >= delay[0]"
