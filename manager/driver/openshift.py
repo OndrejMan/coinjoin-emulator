@@ -42,8 +42,11 @@ class OpenshiftDriver(KubernetesDriver):
         except Exception as e:
             print(f"[WARNING] Failed to run 'oc adm policy add-scc-to-user': {e}")
 
-    def build_pod_manifest(self, name, image, env, ports, cpu, memory, service_account="jm", run_as_user=1000, run_as_group=1000):
-        manifest = super().build_pod_manifest(name, image, env, ports, cpu, memory)
+    def build_pod_manifest(self, name, image, env, ports, cpu, memory, service_account="jm", run_as_user=1000,
+                           run_as_group=1000, volumes=None, command=None):
+        manifest = super().build_pod_manifest(
+            name, image, env, ports, cpu, memory, volumes=volumes, command=command
+        )
         # Inject ServiceAccount and securityContext
         manifest["spec"]["serviceAccountName"] = service_account
         manifest["spec"]["securityContext"] = {
@@ -53,7 +56,8 @@ class OpenshiftDriver(KubernetesDriver):
         }
         return manifest
 
-    def run(self, name, image, env=None, ports=None, skip_ip=False, cpu=0.1, memory=768, service_account="jm", run_as_user=1000, run_as_group=1000):
+    def run(self, name, image, env=None, ports=None, skip_ip=False, cpu=0.1, memory=768, service_account="jm",
+            run_as_user=1000, run_as_group=1000, **kwargs):
         """
         Override pod creation to inject OpenShift-compatible securityContext.
         These parameters are per-run, allowing different containers to use different accounts/UIDs.
@@ -61,7 +65,8 @@ class OpenshiftDriver(KubernetesDriver):
         self.ensure_service_account(service_account)
         # Call the parent's pod manifest creation logic
         pod_manifest = self.build_pod_manifest(
-            name, image, env, ports, cpu, memory, service_account, run_as_user, run_as_group
+            name, image, env, ports, cpu, memory, service_account, run_as_user, run_as_group,
+            kwargs.get("volumes"), kwargs.get("command"),
         )
         return self._create_and_wait_for_pod(pod_manifest, name, skip_ip)
 
