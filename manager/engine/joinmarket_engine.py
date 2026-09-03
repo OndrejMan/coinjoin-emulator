@@ -403,7 +403,15 @@ class JoinmarketEngine(EngineBase):
         with open(os.path.join(data_path, "joinmarket_round_events.json"), "w", encoding="utf-8") as stream:
             json.dump(labels, stream, indent=2)
         print(f"- stored {len(labels)} JoinMarket round labels")
-        return dict(producer_label_evidence(labels, []))
+        return dict(producer_label_evidence(labels, self._unlabelled_takers()))
+
+    def _unlabelled_takers(self) -> list[str]:
+        """Tumblers that cannot emit a producer-owned record per round."""
+        return [
+            str(getattr(client, "name", "?"))
+            for client in self.clients
+            if getattr(client, "tumbler_options", None) and not getattr(client, "round_events", None)
+        ]
 
     def store_engine_logs(self, data_path):
         print("- storing engine-logs")
