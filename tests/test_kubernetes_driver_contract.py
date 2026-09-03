@@ -237,3 +237,17 @@ def test_upload_fails_when_the_remote_command_writes_to_stderr(tmp_path) -> None
     ):
         with pytest.raises(RuntimeError, match="upload to jcs-000:/app/scenario.json failed"):
             instance.upload("jcs-000", str(source), "/app/scenario.json")
+
+
+def test_the_image_pull_policy_is_configurable(monkeypatch) -> None:
+    monkeypatch.setenv("KUBERNETES_IMAGE_PULL_POLICY", "IfNotPresent")
+
+    manifest = driver().build_pod_manifest("btc-node", "btc-node:latest", {}, {}, 1.0, 512)
+
+    assert manifest["spec"]["containers"][0]["imagePullPolicy"] == "IfNotPresent"
+
+
+def test_the_image_pull_policy_defaults_to_always() -> None:
+    manifest = driver().build_pod_manifest("btc-node", "btc-node:latest", {}, {}, 1.0, 512)
+
+    assert manifest["spec"]["containers"][0]["imagePullPolicy"] == "Always"

@@ -183,7 +183,10 @@ class KubernetesDriver(Driver):
                 "containers": [
                     {
                         "image": image,
-                        "imagePullPolicy": "Always",
+                        # CI pulls immutable registry images. A local k3d test imports an
+                        # explicitly named image and opts into IfNotPresent so Kubernetes
+                        # does not replace it with the registry tag.
+                        "imagePullPolicy": os.environ.get("KUBERNETES_IMAGE_PULL_POLICY", "Always"),
                         "name": name,
                         "ports": [
                             {"containerPort": container_port}
