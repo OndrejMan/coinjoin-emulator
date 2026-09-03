@@ -23,6 +23,16 @@ BTC = 100_000_000
 INFRASTRUCTURE_IMAGES = ("btc-node", "joinmarket-client-server", "irc-server")
 
 
+def positive_int_env(name):
+    """Read a positive integer id from the environment, ignoring unusable values.
+
+    Root (0) is skipped on purpose: pods declare runAsNonRoot, and a root caller
+    can read the shared datadir whatever owns it.
+    """
+    raw = os.environ.get(name, "").strip()
+    return int(raw) if raw.isdigit() and int(raw) > 0 else None
+
+
 def _has_fidelity_bond(wallet):
     """True when the wallet asks for a fidelity bond (typed scenario model)."""
     bond = (wallet.joinmarket.fidelity_bond if wallet.joinmarket else None) or {}
@@ -118,8 +128,15 @@ class EngineBase:
 
     def start_btc_node(self):
         node_volumes = None
+        # bitcoind creates <datadir>/regtest with mode 0700, so the image's own
+        # user would leave a shared datadir unreadable for whoever runs the
+        # analysis afterwards. Run the node as the caller's storage identity.
+        storage_uid = None
+        storage_gid = None
         if self.args.btcFolder:
             node_volumes = {os.path.abspath(self.args.btcFolder): {"bind": "/home/bitcoin/data", "mode": "rw"}}
+            storage_uid = positive_int_env("KUBERNETES_STORAGE_UID")
+            storage_gid = positive_int_env("KUBERNETES_STORAGE_GID") if storage_uid else None
         command = ["./run.sh", *self.args.btc_node_arg] if self.args.btc_node_arg else None
 
         btc_node_ip, btc_node_ports, route = self.driver.run(
@@ -131,6 +148,8 @@ class EngineBase:
             service_account="btc-node",
             volumes=node_volumes,
             command=command,
+            run_as_user=storage_uid,
+            run_as_group=storage_gid,
         )
 
         print(btc_node_ip, btc_node_ports)

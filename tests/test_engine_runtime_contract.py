@@ -105,3 +105,31 @@ def test_a_proxied_run_reaches_the_container_port_directly() -> None:
     runtime = engine(args(proxy="socks5://localhost:9050"), Mock(in_cluster=False))
 
     assert runtime.service_endpoint("172.17.0.2", 28183, {28183: 28185}) == ("172.17.0.2", 28183)
+
+
+@patch("manager.engine.engine_base.BtcNode")
+def test_a_shared_btc_folder_runs_the_node_as_the_storage_identity(
+    node_class: Mock, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("KUBERNETES_STORAGE_UID", "5001")
+    monkeypatch.setenv("KUBERNETES_STORAGE_GID", "5002")
+    driver = Mock()
+    driver.run.return_value = ("node-ip", {18443: 18443, 18444: 18444}, None)
+
+    engine(args(btcFolder=str(tmp_path)), driver).start_btc_node()
+
+    assert driver.run.call_args.kwargs["run_as_user"] == 5001
+    assert driver.run.call_args.kwargs["run_as_group"] == 5002
+
+
+@patch("manager.engine.engine_base.BtcNode")
+def test_the_node_keeps_its_image_identity_without_a_shared_folder(
+    node_class: Mock, monkeypatch
+) -> None:
+    monkeypatch.setenv("KUBERNETES_STORAGE_UID", "5001")
+    driver = Mock()
+    driver.run.return_value = ("node-ip", {18443: 18443, 18444: 18444}, None)
+
+    engine(args(), driver).start_btc_node()
+
+    assert driver.run.call_args.kwargs["run_as_user"] is None
