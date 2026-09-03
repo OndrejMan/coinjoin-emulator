@@ -94,11 +94,25 @@ class KubernetesDriver(Driver):
         pass
 
     def build_pod_manifest(self, name, image, env, ports, cpu, memory,
-                            user_id=None):
+                            user_id=None, volumes=None, command=None):
         if ports is None:
             ports = {}
         if env is None:
             env = {}
+
+        volume_mounts = []
+        pod_volumes = []
+        for index, (host_path, mount) in enumerate((volumes or {}).items()):
+            volume_name = f"host-volume-{index}"
+            volume_mounts.append({
+                "name": volume_name,
+                "mountPath": mount["bind"],
+                "readOnly": mount.get("mode") == "ro",
+            })
+            pod_volumes.append({
+                "name": volume_name,
+                "hostPath": {"path": host_path, "type": "DirectoryOrCreate"},
+            })
 
         security_context = {
                             "allowPrivilegeEscalation": False,
@@ -133,13 +147,17 @@ class KubernetesDriver(Driver):
                             {"name": k, "value": v}
                             for k, v in env.items()
                         ],
+                        "volumeMounts": volume_mounts,
                         "securityContext": security_context,
                         "resources": {
                             "limits": {"cpu": cpu*1.5, "memory": f"{memory*1.5}Mi"},
                             "requests": {"cpu": cpu, "memory": f"{memory}Mi"},
                         },
+                        # Keep the image ENTRYPOINT unless the caller overrides it
+                        **({"command": command} if command is not None else {}),
                     }
                 ],
+                "volumes": pod_volumes,
                 # Add imagePullSecrets if pull_secret_path is set
                 **({"imagePullSecrets": [{"name": "regcred"}]} if self.pull_secret_path else {}),
             },
@@ -156,7 +174,10 @@ class KubernetesDriver(Driver):
         run_as_user=None,
         **kwargs
     ):
-        pod_manifest = self.build_pod_manifest(name, image, env, ports, cpu, memory, run_as_user)
+        pod_manifest = self.build_pod_manifest(
+            name, image, env, ports, cpu, memory, run_as_user,
+            kwargs.get("volumes"), kwargs.get("command"),
+        )
         resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
 
         pod_ip = None

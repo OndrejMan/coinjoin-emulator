@@ -49,6 +49,8 @@ class DockerDriver(Driver):
             network=self.network.id,
             ports=ports or {},
             environment=env or {},
+            volumes=kwargs.get("volumes"),
+            command=kwargs.get("command"),
         )
         container_ip = container.attrs['NetworkSettings']['IPAddress']
         
