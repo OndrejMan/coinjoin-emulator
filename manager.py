@@ -20,11 +20,10 @@ driver: Driver | None = None
 versions = set()
 
 def handle_shutdown_signal(signum, frame):
-    """Convert SIGTERM to SystemExit to ensure finally block runs"""
+    """Convert SIGTERM to SystemExit to ensure the cleanup phase runs"""
     signal_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
     print(f"\n[manager.py] Received {signal_name}, triggering cleanup...", flush=True)
-    # Raise SystemExit which will trigger the finally block
-    sys.exit(1)
+    raise SystemExit(128 + signum)
 
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
 
@@ -97,29 +96,47 @@ def run():
         print()
         print("KeyboardInterrupt received", flush=True)
         exit_code = 130
-    except SystemExit:
+    except SystemExit as e:
+        # Re-raising here would skip the controller marker and lose the exit
+        # code, so the shutdown is finished like any other failed run.
         print("[manager.py] SystemExit caught, proceeding to cleanup...", flush=True)
-        raise  # Re-raise to ensure finally runs
+        exit_code = e.code if isinstance(e.code, int) and e.code > 0 else 1
     except Exception as e:
         print(f"Terminating exception: {e}", file=sys.stderr, flush=True)
         print_exception(e)
         exit_code = 1
-    finally:
-        print("[manager.py] Starting cleanup phase...", flush=True)
-        engine.stop_coinjoins()
-        if not args.no_logs:
-            print("[manager.py] Storing logs...", flush=True)
-            try:
-                engine.store_logs()
-            except Exception as e:
-                print(f"- failed to store logs: {e}", file=sys.stderr, flush=True)
-                print_exception(e)
-                exit_code = 1
-        print("[manager.py] Cleaning up resources...", flush=True)
-        driver.cleanup(args.image_prefix)
-        print("[manager.py] Cleanup complete", flush=True)
 
+    if cleanup(engine, driver, args):
+        exit_code = 1
     return finalize_controller_marker(exit_code)
+
+
+def cleanup_step(description, action):
+    """Run one cleanup action; a failure must not skip the remaining ones."""
+    try:
+        action()
+        return False
+    except BaseException as e:  # pylint: disable=broad-exception-caught
+        print(f"- failed to {description}: {e}", file=sys.stderr, flush=True)
+        print_exception(e)
+        return True
+
+
+def cleanup(engine, driver, args):
+    """Collect artifacts and release resources; returns True if a step failed."""
+    print("[manager.py] Starting cleanup phase...", flush=True)
+    failed = cleanup_step("stop coinjoins", engine.stop_coinjoins)
+    failed |= cleanup_step("shut down engine resources", engine.shutdown_engine)
+    if not args.no_logs:
+        if engine.node is None:
+            print("- skipping log storage: Bitcoin node is not initialized", flush=True)
+        else:
+            print("[manager.py] Storing logs...", flush=True)
+            failed |= cleanup_step("store logs", engine.store_logs)
+    print("[manager.py] Cleaning up resources...", flush=True)
+    failed |= cleanup_step("cleanup driver resources", lambda: driver.cleanup(args.image_prefix))
+    print("[manager.py] Cleanup complete", flush=True)
+    return failed
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run coinjoin simulation setup")

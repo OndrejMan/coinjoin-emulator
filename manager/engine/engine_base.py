@@ -397,6 +397,9 @@ class EngineBase:
         success_count = sum(1 for r in results if r)
         print(f"- stopped mixing for {success_count}/{len(self.clients)} clients")
 
+    def shutdown_engine(self):
+        """Release engine-specific local resources after the clients have stopped."""
+
     def update_invoice_payments(self):
         due = list(filter(lambda x: x[0] <= self.current_block and x[1] <= self.current_round, self.invoices.keys()))
         for schedule in due:
