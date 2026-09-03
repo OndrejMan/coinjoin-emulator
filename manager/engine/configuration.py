@@ -70,7 +70,7 @@ class ScenarioConfig:
     default_anon_score_target: int | None = None
     default_redcoin_isolation: bool | None = None
     backend: dict[str, Any] | None = None
-    
+
     @classmethod
     def from_json_config(cls, filepath: str | Path) -> "ScenarioConfig":
         """Load scenario configuration from JSON file."""
@@ -95,6 +95,21 @@ class ScenarioConfig:
             backend=data.get("backend")
         )
     
+    def validate_for_engine(self, engine: str) -> None:
+        """Validate the constraints that depend on the selected CoinJoin engine."""
+        if engine != "joinmarket":
+            return
+        missing_roles = [
+            str(index)
+            for index, wallet in enumerate(self.wallets)
+            if wallet.joinmarket is None or wallet.joinmarket.role is None
+        ]
+        if missing_roles:
+            raise ValueError(
+                "JoinMarket wallets require an explicit maker/taker role; missing at indexes: "
+                + ", ".join(missing_roles)
+            )
+
     @classmethod
     def _parse_wallet(cls, wallet_data: dict[str, Any]) -> WalletConfig:
         """Parse wallet configuration from JSON data."""
