@@ -94,6 +94,9 @@ class PodmanDriver(Driver):
     def peek(self, name: str, path: str) -> str:
         return self._run(["exec", name, "cat", path], capture=True).stdout
 
+    def logs(self, name: str) -> str:
+        return self._run(["logs", name], capture=True).stdout
+
     def upload(self, name: str, src_path: str, dst_path: str) -> None:
         self._run(["cp", src_path, f"{name}:{dst_path}"])
 

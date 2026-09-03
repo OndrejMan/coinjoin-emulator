@@ -438,6 +438,9 @@ class KubernetesDriver(Driver):
         except ApiException as error:
             raise RuntimeError(f"could not {action} on pod {name}: {error}") from error
 
+    def logs(self, name):
+        return str(self.client.read_namespaced_pod_log(name=name, namespace=self.namespace))
+
     def get_pod_resource_usage(self, name):
         """
         Get memory usage of a pod by reading /proc/self/status.

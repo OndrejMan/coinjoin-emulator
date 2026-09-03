@@ -106,6 +106,9 @@ class DockerDriver(Driver):
         with tarfile.open(fileobj=fo) as tar:
             return tar.extractfile(os.path.basename(path)).read().decode()
 
+    def logs(self, name):
+        return self.client.containers.get(name).logs(stdout=True, stderr=True).decode(errors="replace")
+
     def upload(self, name, src_path, dst_path):
         fo = BytesIO()
         with tarfile.open(fileobj=fo, mode="w") as tar:

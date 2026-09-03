@@ -35,6 +35,20 @@ WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
 # for the whole pre-mined chain before its wallet answers; the previous
 # hard-coded 360s was within noise of a timeout on a loaded host.
 DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT = 900
+WASABI_COORDINATOR_START_TIMEOUT_SECONDS = 120
+WASABI_COORDINATOR_START_ATTEMPTS = 3
+WASABI_COORDINATOR_RETRYABLE_STARTUP_FAILURES = {
+    "Bitcoin Node is not fully synchronized": "raced a freshly mined block",
+    "address already in use": "could not bind port 37128",
+}
+
+
+def coordinator_retry_reason(coordinator_logs):
+    """Explain a known transient coordinator startup failure, if present."""
+    for marker, reason in WASABI_COORDINATOR_RETRYABLE_STARTUP_FAILURES.items():
+        if marker in coordinator_logs:
+            return reason
+    return None
 
 
 class WasabiEngine(EngineBase):
@@ -152,30 +166,49 @@ class WasabiEngine(EngineBase):
         if self.backend_architecture is None:
             self.backend_architecture = self.determine_backend_architecture()
         version = get_backend_version(self.backend_architecture)
-        wasabi_coordinator_ip, wasabi_coordinator_ports, route = self.driver.run(
-            "wasabi-coordinator",
-            f"{self.args.image_prefix}wasabi-coordinator:{version}",
-            ports={37128: 37128},
-            env={
-                "ADDR_BTC_NODE": self.args.btc_node_ip or self.node.internal_ip,
-                "WASABI_BIND": "http://0.0.0.0:37128",
-            },
-            cpu=4.0,
-            memory=4096,
-        )
-        sleep(1)
+        for attempt in range(1, WASABI_COORDINATOR_START_ATTEMPTS + 1):
+            wasabi_coordinator_ip, wasabi_coordinator_ports, route = self.driver.run(
+                "wasabi-coordinator",
+                f"{self.args.image_prefix}wasabi-coordinator:{version}",
+                ports={37128: 37128},
+                env={
+                    "ADDR_BTC_NODE": self.args.btc_node_ip or self.node.internal_ip,
+                    "WASABI_BIND": "http://0.0.0.0:37128",
+                },
+                cpu=4.0,
+                memory=4096,
+            )
+            sleep(1)
 
-        coordinator_host, coordinator_port = self.service_endpoint(
-            wasabi_coordinator_ip, 37128, wasabi_coordinator_ports, route
-        )
-        self.coordinator = create_coordinator(
-            host=coordinator_host,
-            port=coordinator_port,
-            internal_ip=wasabi_coordinator_ip,
-            proxy=self.args.proxy,
-        )
-        self.coordinator.wait_ready()
-        print("- started wasabi-coordinator")
+            coordinator_host, coordinator_port = self.service_endpoint(
+                wasabi_coordinator_ip, 37128, wasabi_coordinator_ports, route
+            )
+            self.coordinator = create_coordinator(
+                host=coordinator_host,
+                port=coordinator_port,
+                internal_ip=wasabi_coordinator_ip,
+                proxy=self.args.proxy,
+            )
+            try:
+                self.coordinator.wait_ready(timeout=WASABI_COORDINATOR_START_TIMEOUT_SECONDS)
+            except TimeoutError as error:
+                try:
+                    coordinator_logs = self.driver.logs("wasabi-coordinator").strip()
+                except Exception as log_error:
+                    coordinator_logs = f"<unable to read coordinator logs: {log_error}>"
+                retry_reason = coordinator_retry_reason(coordinator_logs)
+                if attempt < WASABI_COORDINATOR_START_ATTEMPTS and retry_reason is not None:
+                    print(
+                        f"[WARNING] wasabi-coordinator {retry_reason} "
+                        f"(attempt {attempt}/{WASABI_COORDINATOR_START_ATTEMPTS}); restarting it"
+                    )
+                    self.driver.stop("wasabi-coordinator")
+                    continue
+                raise Exception(
+                    f"Wasabi coordinator failed to start: {error}\nCoordinator logs:\n{coordinator_logs}"
+                ) from error
+            print("- started wasabi-coordinator")
+            return
 
     def start_distributor(self):
         if self.node is None:

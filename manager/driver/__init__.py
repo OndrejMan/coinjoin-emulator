@@ -51,6 +51,9 @@ class Driver(ABC):
         pass
 
     @abstractmethod
+    def logs(self, name):
+        """Return the container's combined stdout and stderr."""
+
     def upload(self, name, src_path, dst_path):
         pass
 
