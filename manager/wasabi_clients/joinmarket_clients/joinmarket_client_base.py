@@ -101,6 +101,28 @@ class JoinMarketClientServer:
             self._client_initialized = False
 
     @classmethod
+    def offers_for_wallet(cls, joinmarket, role):
+        """Configured offers, or the legacy defaults for a role that declares none."""
+        configured = [dict(offer) for offer in (joinmarket.offers if joinmarket else None) or []]
+        return configured or cls._default_offers(role)
+
+    @staticmethod
+    def _default_offers(role):
+        """Offers a scenario that only declares a role used to get implicitly."""
+        if role == "maker":
+            return [{
+                "txfee": 0,
+                "cjfee_a": 5000,
+                "cjfee_r": 0.00004,
+                "ordertype": "sw0reloffer",
+                "minsize": 30000,
+                "maxsize": 3000000,
+            }]
+        if role == "taker":
+            return [{"mixdepth": 0, "amount_sats": 40000, "counterparties": 4}]
+        return []
+
+    @classmethod
     def from_wallet(cls, name: str, port: int, wallet, host: str, proxy=""):
         joinmarket = getattr(wallet, "joinmarket", None)
         type_ = joinmarket.role.value if joinmarket and joinmarket.role else "maker"
@@ -133,7 +155,7 @@ class JoinMarketClientServer:
             type=type_,
             delay=(wallet.delay_blocks or 0, wallet.delay_rounds or 0),
             stop=(wallet.stop_blocks or 0, wallet.stop_rounds or 0),
-            offers=(joinmarket.offers if joinmarket else None) or [],
+            offers=cls.offers_for_wallet(joinmarket, type_),
             tumbler_options=tumbler_options,
             time_between_rounds=(joinmarket.time_between_rounds if joinmarket else 0) or 0,
             has_fidelity_bonds=has_fidelity_bonds,
