@@ -160,7 +160,8 @@ def cleanup(engine, driver, args):
     print("[manager.py] Cleanup complete", flush=True)
     return failed
 
-if __name__ == "__main__":
+def build_parser():
+    """Build the manager command line; kept out of __main__ so it can be tested."""
     parser = argparse.ArgumentParser(description="Run coinjoin simulation setup")
     subparsers = parser.add_subparsers(dest="command", title="command")
 
@@ -293,6 +294,11 @@ if __name__ == "__main__":
     genscen_jm_subparser = subparsers.add_parser("genscen-joinmarket", help="generate JoinMarket scenario file")
     manager.commands.genscen_joinmarket.setup_parser(genscen_jm_subparser)
 
+    return parser
+
+
+if __name__ == "__main__":
+    parser = build_parser()
     args = parser.parse_args()
 
     if args.command == "genscen":
