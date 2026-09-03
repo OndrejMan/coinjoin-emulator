@@ -1,6 +1,6 @@
 import json
 import random
-from time import sleep, time
+from time import monotonic, sleep, time
 
 import requests
 
@@ -164,11 +164,13 @@ class WasabiClientBase:
         }
         return self._rpc(request, timeout=10, repeat=3)
 
-    def wait_ready(self):
-        while True:
+    def wait_ready(self, timeout=120):
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
             try:
                 self.get_status()
-                break
+                return
             except Exception:
                 pass
             sleep(0.1)
+        raise TimeoutError(f"{self.__class__.__name__} at {self.host}:{self.port} was not ready after {timeout}s")
