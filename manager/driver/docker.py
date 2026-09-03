@@ -5,7 +5,7 @@ from io import BytesIO
 
 import docker
 
-from . import MANAGED_IMAGE_MARKERS, Driver
+from . import MANAGED_IMAGE_MARKERS, RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 
 
 class DockerDriver(Driver):
@@ -51,6 +51,7 @@ class DockerDriver(Driver):
             environment=env or {},
             volumes=kwargs.get("volumes"),
             command=kwargs.get("command"),
+            sysctls={RESERVED_PORTS_SYSCTL: RESERVED_PORT_RANGE},
         )
         return name, dict(ports or {}), None
 

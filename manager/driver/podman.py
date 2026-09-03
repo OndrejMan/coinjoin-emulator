@@ -7,7 +7,7 @@ import podman
 
 from manager.exceptions import CoinjoinEmulatorError
 
-from . import MANAGED_IMAGE_MARKERS, Driver
+from . import MANAGED_IMAGE_MARKERS, RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 
 
 class PodmanDriver(Driver):
@@ -57,6 +57,7 @@ class PodmanDriver(Driver):
             ports={str(port): host_port for port, host_port in (ports or {}).items()},
             environment=env or {},
             volumes=kwargs.get("volumes") or {},
+            sysctls={RESERVED_PORTS_SYSCTL: RESERVED_PORT_RANGE},
         )
         inspect = container.inspect()
         networks = inspect.get("NetworkSettings", {}).get("Networks", {})

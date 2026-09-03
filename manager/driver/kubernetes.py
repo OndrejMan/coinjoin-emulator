@@ -18,7 +18,7 @@ from kubernetes.stream import stream
 
 from manager.exceptions import KubernetesResourceQuotaError, StartupError
 
-from . import Driver
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
 DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
@@ -203,6 +203,9 @@ class KubernetesDriver(Driver):
                     }
                 ],
                 "volumes": pod_volumes,
+                "securityContext": {
+                    "sysctls": [{"name": RESERVED_PORTS_SYSCTL, "value": RESERVED_PORT_RANGE}]
+                },
                 # Add imagePullSecrets if pull_secret_path is set
                 **({"imagePullSecrets": [{"name": "regcred"}]} if self.pull_secret_path else {}),
             },

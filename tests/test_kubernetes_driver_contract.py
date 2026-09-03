@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 import pytest
 from kubernetes.client.exceptions import ApiException
 
+from manager.driver import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL
 from manager.driver.kubernetes import (
     MANAGED_BY_LABEL,
     MANAGED_BY_VALUE,
@@ -363,3 +364,12 @@ def test_the_image_pull_policy_defaults_to_always() -> None:
     manifest = driver().build_pod_manifest("btc-node", "btc-node:latest", {}, {}, 1.0, 512)
 
     assert manifest["spec"]["containers"][0]["imagePullPolicy"] == "Always"
+
+
+def test_the_wasabi_service_ports_are_reserved_for_the_pod() -> None:
+    manifest = driver().build_pod_manifest("wasabi-backend", "backend:latest", {}, {}, 1.0, 512)
+
+    assert manifest["spec"]["securityContext"]["sysctls"] == [
+        {"name": RESERVED_PORTS_SYSCTL, "value": RESERVED_PORT_RANGE}
+    ]
+
