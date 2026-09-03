@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Container-based emulator for CoinJoin transactions on RegTest."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
-# Mirrors requirements.txt, which the container image still installs with pip.
 dependencies = [
     "backoff",
     "bip-utils",

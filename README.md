@@ -4,10 +4,10 @@ A container-based setup for the emulation of CoinJoin transactions on RegTest ne
 
 ## Usage
 
-1. Install [Docker](https://docker.com/) and [Python](http://python.org/).
+1. Install [Docker](https://docker.com/), [Python](http://python.org/), and [uv](https://docs.astral.sh/uv/).
 2. Clone the repository `git clone --recurse-submodules https://github.com/crocs-muni/coinjoin-emulator`.
-3. Install dependencies: `pip install -r requirements.txt`.
-4. Run the default scenario with the default driver: `python manager.py run`.
+3. Install dependencies: `uv sync`.
+4. Run the default scenario with the default driver: `uv run python manager.py run`.
    - [Scenario](#scenarios) definition file can be specified using the `--scenario` option.
 
 For more complex setups see section [Advanced usage](#advanced-usage).
