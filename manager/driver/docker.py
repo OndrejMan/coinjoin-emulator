@@ -40,7 +40,7 @@ class DockerDriver(Driver):
         memory=None,
         **kwargs
     ):
-        container = self.client.containers.run(
+        self.client.containers.run(
             image,
             detach=True,
             auto_remove=True,
@@ -52,19 +52,7 @@ class DockerDriver(Driver):
             volumes=kwargs.get("volumes"),
             command=kwargs.get("command"),
         )
-        container_ip = container.attrs['NetworkSettings']['IPAddress']
-        
-        # Normalize port mapping to match Kubernetes format
-        # Docker format: {'8080/tcp': [{'HostIp': '', 'HostPort': '8080'}]}
-        # Kubernetes format: {8080: 8080}
-        port_mapping = {}
-        
-        if ports:
-            for internal_port in ports.keys():
-                # For Docker networking, internal container port maps to itself
-                port_mapping[internal_port] = internal_port
-        
-        return container_ip, port_mapping, None
+        return name, dict(ports or {}), None
 
     def stop(self, name):
         try:
