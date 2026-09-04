@@ -66,3 +66,32 @@ def test_stopped_containers_are_still_found_during_cleanup() -> None:
     instance.cleanup()
 
     assert instance.client.containers.list.call_args.kwargs == {"all": True}
+
+
+def test_get_pod_resource_usage_reports_memory(monkeypatch) -> None:
+    """The engine samples this every resource check; Docker used to raise."""
+    driver = DockerDriver.__new__(DockerDriver)
+    container = SimpleNamespace(
+        stats=lambda stream=False: {
+            "memory_stats": {"usage": 128 * 1024 * 1024, "limit": 256 * 1024 * 1024}
+        }
+    )
+    driver.client = SimpleNamespace(
+        containers=SimpleNamespace(get=lambda name: container)
+    )
+
+    stats = driver.get_pod_resource_usage("wasabi-client-000")
+
+    assert stats["memory_mb"] == 128
+    assert stats["memory_limit_mb"] == 256
+    assert stats["memory_percent"] == 50
+
+
+def test_get_pod_resource_usage_returns_none_without_stats() -> None:
+    driver = DockerDriver.__new__(DockerDriver)
+    container = SimpleNamespace(stats=lambda stream=False: {})
+    driver.client = SimpleNamespace(
+        containers=SimpleNamespace(get=lambda name: container)
+    )
+
+    assert driver.get_pod_resource_usage("wasabi-client-000") is None

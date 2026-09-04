@@ -106,6 +106,33 @@ class DockerDriver(Driver):
         with tarfile.open(fileobj=fo) as tar:
             return tar.extractfile(os.path.basename(path)).read().decode()
 
+    def get_pod_resource_usage(self, name):
+        """Memory usage of a container, mirroring the Kubernetes driver's shape.
+
+        Without this the engine's resource sampling failed on every check with
+        "'DockerDriver' object has no attribute 'get_pod_resource_usage'", so
+        Docker runs silently had no resource monitoring at all.
+        """
+        try:
+            container = self.client.containers.get(name)
+            stats = container.stats(stream=False)
+        except (docker.errors.NotFound, docker.errors.APIError, OSError):
+            return None
+
+        memory = stats.get("memory_stats") or {}
+        usage = memory.get("usage")
+        limit = memory.get("limit")
+        if not usage or not limit:
+            return None
+
+        memory_mb = usage / (1024 * 1024)
+        memory_limit_mb = limit / (1024 * 1024)
+        return {
+            "memory_mb": memory_mb,
+            "memory_limit_mb": memory_limit_mb,
+            "memory_percent": (memory_mb / memory_limit_mb) * 100 if memory_limit_mb else 0.0,
+        }
+
     def logs(self, name):
         return self.client.containers.get(name).logs(stdout=True, stderr=True).decode(errors="replace")
 

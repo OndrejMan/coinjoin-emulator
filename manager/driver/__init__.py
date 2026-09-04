@@ -57,6 +57,15 @@ class Driver(ABC):
     def upload(self, name, src_path, dst_path):
         pass
 
+    def get_pod_resource_usage(self, name):
+        """Return memory usage for a running container, or None when unknown.
+
+        The engine samples this during a run; a driver that cannot report usage
+        answers None instead of raising, so the sampling degrades to a no-op
+        rather than logging a failure on every check.
+        """
+        return None
+
     @abstractmethod
     def cleanup(self, image_prefix=""):
         pass
