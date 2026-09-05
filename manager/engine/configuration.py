@@ -109,6 +109,16 @@ class ScenarioConfig:
                 "JoinMarket wallets require an explicit maker/taker role; missing at indexes: "
                 + ", ".join(missing_roles)
             )
+        if self.rounds > 0 and self.blocks == 0 and any(
+            wallet.joinmarket is not None
+            and wallet.joinmarket.role == JoinMarketRole.TAKER
+            and wallet.joinmarket.tumbler_options
+            for wallet in self.wallets
+        ):
+            raise ValueError(
+                "JoinMarket tumbler scenarios with a round limit require blocks > 0: "
+                "tumbler rounds have no confirmed round-event counter"
+            )
 
     @classmethod
     def _parse_wallet(cls, wallet_data: dict[str, Any]) -> WalletConfig:

@@ -92,6 +92,10 @@ manager. Initialize the pinned source with `git submodule update --init` before
 building the JoinMarket base image. The fork's display API accepts
 `displayall=true` for complete address exports.
 
+JoinMarket tumbler scenarios using a round limit must also set `blocks` to a
+positive limit. Tumblers do not export confirmed per-round events, so their
+completion cannot advance the round counter; the block limit bounds the run.
+
 #### Podman
 
 *Podman support will be likely **removed** in the future versions.*
