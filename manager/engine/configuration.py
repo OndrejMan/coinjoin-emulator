@@ -112,7 +112,6 @@ class ScenarioConfig:
             else:
                 funds.append(fund)  # fallback
         
-        # Extract Wasabi-specific fields
         wasabi_config = None
         if (wasabi_data := wallet_data.get("wasabi")) is not None:
             wasabi_config = WasabiConfig(
@@ -121,18 +120,33 @@ class ScenarioConfig:
                 skip_rounds=wasabi_data.get("skip_rounds"),
             )
         
-        # Extract JoinMarket-specific fields
+        legacy_joinmarket_fields = {
+            "type",
+            "offers",
+            "tumbler_options",
+            "time_between_rounds",
+            "fidelity_bond",
+            "max_coinjoins",
+        }
+        if legacy_joinmarket_fields.intersection(wallet_data):
+            raise ValueError("flat JoinMarket wallet settings are unsupported; use the joinmarket object")
+
+        nested_joinmarket = wallet_data.get("joinmarket") or {}
+        role_value = nested_joinmarket.get("role")
+        joinmarket_fields = {
+            "offers": nested_joinmarket.get("offers"),
+            "tumbler_options": nested_joinmarket.get("tumbler_options"),
+            "time_between_rounds": nested_joinmarket.get("time_between_rounds"),
+            "fidelity_bond": nested_joinmarket.get("fidelity_bond"),
+            "max_coinjoins": nested_joinmarket.get("max_coinjoins"),
+        }
         joinmarket_config = None
-        if (joinmarket_data := wallet_data.get("joinmarket")) is not None:
-            role = joinmarket_data.get("role")
-            joinmarket_config = JoinMarketConfig(
-                role=JoinMarketRole(role) if role is not None else None,
-                offers=joinmarket_data.get("offers"),
-                tumbler_options=joinmarket_data.get("tumbler_options"),
-                time_between_rounds=joinmarket_data.get("time_between_rounds"),
-                fidelity_bond=joinmarket_data.get("fidelity_bond"),
-                max_coinjoins=joinmarket_data.get("max_coinjoins"),
-            )
+        if role_value is not None or any(value is not None for value in joinmarket_fields.values()):
+            try:
+                role = None if role_value is None else JoinMarketRole(str(role_value))
+            except ValueError as error:
+                raise ValueError(f"invalid JoinMarket role {role_value!r}") from error
+            joinmarket_config = JoinMarketConfig(role=role, **joinmarket_fields)
         
         return WalletConfig(
             funds=funds,
