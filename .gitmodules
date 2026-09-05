@@ -1,0 +1,3 @@
+[submodule "vendor/joinmarket-clientserver"]
+	path = vendor/joinmarket-clientserver
+	url = https://github.com/OndrejMan/joinmarket-clientserver.git
