@@ -468,17 +468,21 @@ class JoinMarketClientServer:
             print(f"[TIMEOUT] Wallet {self.walletname} not ready after {int(time() - self._wait_wallet_start)}s on {self.host}:{self.port}")
             return False
 
-    def display_wallet(self):
+    def display_wallet(self, display_all=False):
         """Get detailed breakdown of wallet contents by account."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/display"
+        if display_all:
+            endpoint += "?displayall=true"
         response = self._rpc(method, endpoint)
         return response
 
-    async def display_wallet_async(self):
+    async def display_wallet_async(self, display_all=False):
         """Async get detailed breakdown of wallet contents by account."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/display"
+        if display_all:
+            endpoint += "?displayall=true"
         response = await self._rpc_async(method, endpoint)
         return response
 
@@ -965,7 +969,7 @@ class JoinMarketClientServer:
         so the analysis attributed the corresponding outputs to a coordinator
         that does not exist.
         """
-        walletinfo = self.display_wallet().get("walletinfo") or {}
+        walletinfo = self.display_wallet(display_all=True).get("walletinfo") or {}
         keys = []
         for account in walletinfo.get("accounts") or []:
             for branch in account.get("branches") or []:

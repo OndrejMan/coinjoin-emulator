@@ -25,7 +25,7 @@ else
   socat TCP-LISTEN:28183,fork,reuseaddr TCP:127.0.0.1:28182 &
 
   # Launch the wallet daemon bound to 127.0.0.1:28182
-  exec python3 /usr/local/bin/jmwalletd_entrypoint.py \
+  exec python3 /jm/clientserver/scripts/jmwalletd.py \
        --rpc-wallet-file "$JM_RPC_WALLET_FILE" --port 28182 \
        2>&1 | tee -a /home/joinmarket/jmwalletd.log
 fi

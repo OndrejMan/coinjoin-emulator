@@ -83,6 +83,15 @@ The simulation script enables advanced configuration for running on different co
 
 The default driver is `docker`. Running `docker` requires [Docker](https://www.docker.com/) installed locally and running.
 
+The emulator creates a watch-only Core monitoring wallet for each JoinMarket
+client. The [JoinMarket fork](https://github.com/OndrejMan/joinmarket-clientserver)
+in the `vendor/joinmarket-clientserver` submodule defers mining-address creation
+until JoinMarket actually requests mining; no funding descriptor is imported
+into client wallets. The emulator controls mining through btc-node and the
+manager. Initialize the pinned source with `git submodule update --init` before
+building the JoinMarket base image. The fork's display API accepts
+`displayall=true` for complete address exports.
+
 #### Podman
 
 *Podman support will be likely **removed** in the future versions.*

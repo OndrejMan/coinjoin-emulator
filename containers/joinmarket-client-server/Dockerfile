@@ -12,7 +12,9 @@ RUN apt-get update -qq && \
         socat ca-certificates iproute2 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# The pinned fork contains the regtest mining fix and its RPC-mocked checks.
+# Both integration changes and their checks live in the pinned fork.
+RUN python3 /jm/clientserver/test/jmclient/test_wallet_displayall.py
+
 RUN python3 /jm/clientserver/test/jmclient/test_regtest_mining.py
 
 RUN python3 /jm/clientserver/test/jmclient/test_config_overrides.py
@@ -29,7 +31,6 @@ RUN mkdir -p /home/joinmarket/.joinmarket/ssl \
 RUN python3 /jm/clientserver/scripts/wallet-tool.py generate; exit 0
 
 COPY --chown=joinmarket:joinmarket run.sh /home/joinmarket/
-COPY --chown=joinmarket:joinmarket jmwalletd_entrypoint.py /usr/local/bin/jmwalletd_entrypoint.py
 COPY --chown=joinmarket:joinmarket joinmarket.cfg /home/joinmarket/.joinmarket/
 RUN chmod +x /home/joinmarket/run.sh
 WORKDIR /home/joinmarket
