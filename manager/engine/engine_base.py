@@ -10,7 +10,6 @@ import time
 from time import sleep
 from zoneinfo import ZoneInfo
 
-from manager import utils
 from manager.btc_node import BtcNode
 from manager.engine.base.manifest import write_producer_label_manifest
 from manager.engine.configuration import FundConfig, ScenarioConfig, WalletConfig
@@ -509,7 +508,8 @@ class EngineBase:
             f"- paying {len(addressed_invoices)} invoices (batch size {BATCH_SIZE}, block {self.current_block}, round {self.current_round})"
         )
         try:
-            for batch in utils.batched(addressed_invoices, BATCH_SIZE):
+            while addressed_invoices:
+                batch = addressed_invoices[:BATCH_SIZE]
                 for _ in range(3):
                     try:
                         if self.distributor is None:
@@ -518,6 +518,8 @@ class EngineBase:
                         if str(result) == "timeout":
                             print("- transaction timeout")
                             continue
+                        # Retain only unpaid batches if a later send fails.
+                        del addressed_invoices[:len(batch)]
                         break
                     except Exception as e:
                         # https://github.com/zkSNACKs/WalletWasabi/issues/12764
