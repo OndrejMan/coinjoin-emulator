@@ -36,8 +36,8 @@ Scenario definition files can be passed to the simulation script using the `--sc
         {"funds": [1000000, 50000], "delay_rounds": 3},
         {"funds": [100000, {"value": 200000, "delay_rounds": 5}]},
         {"funds": [200000], "version": "2.0.3"},
-        {"funds": [4000000], "anon_score_target": "25"},
-        {"funds": [3500000], "redcoin_isolation": true},
+        {"funds": [4000000], "wasabi": {"anon_score_target": "25"}},
+        {"funds": [3500000], "wasabi": {"redcoin_isolation": true}},
         ...
     ],
 }
@@ -62,8 +62,10 @@ The fields are as follows:
   - `stop_blocks` is the number of blocks after which the wallet will stop participating.
   - `stop_rounds` is the number of rounds after which the wallet will stop participating.
   - `version` is the string representation of wallet wasabi version used for client running this wallet.
-  - `anon_score_target` is the target anon score of the wallet.
-  - `redcoin_isolation` is a boolean value indicating whether the wallet should use redcoin isolation.
+  - `wasabi` is an optional object with Wasabi-specific wallet settings:
+    - `anon_score_target` is the target anon score of the wallet.
+    - `redcoin_isolation` is a boolean value indicating whether the wallet should use redcoin isolation.
+    - `skip_rounds` is a list of round numbers the wallet skips.
 
 ## Engine
 You can run the simulation with different CoinJoin protocols. Currently, Wasabi and Joinmarket are supported. 
