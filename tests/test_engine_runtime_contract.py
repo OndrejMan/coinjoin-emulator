@@ -55,6 +55,34 @@ def test_local_build_wins_over_a_remote_image() -> None:
     driver.has_image.assert_not_called()
 
 
+def test_versioned_wasabi_images_are_built_locally_too() -> None:
+    """Wasabi images carry this project's container definitions, like btc-node.
+
+    They are versioned (wasabi-client:2.6.0), so the membership test has to look
+    past the tag; before that they were pulled even with a local build requested.
+    """
+    driver = Mock()
+
+    engine(args(coinjoin_infrastructure_local_build=True), driver).prepare_image(
+        "wasabi-client:2.6.0", "./containers/wasabi-clients/2.6.0"
+    )
+
+    driver.build.assert_called_once_with(
+        "registry/wasabi-client:2.6.0", "./containers/wasabi-clients/2.6.0"
+    )
+    driver.pull.assert_not_called()
+
+
+def test_unknown_images_are_still_pulled_with_a_local_build() -> None:
+    driver = Mock()
+    driver.has_image.return_value = False
+
+    engine(args(coinjoin_infrastructure_local_build=True), driver).prepare_image("some-other-image")
+
+    driver.pull.assert_called_once_with("registry/some-other-image")
+    driver.build.assert_not_called()
+
+
 @patch("manager.engine.engine_base.BtcNode")
 def test_btc_folder_and_node_arguments_reach_the_driver(node_class: Mock, tmp_path: Path) -> None:
     driver = Mock()

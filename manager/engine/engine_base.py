@@ -20,7 +20,14 @@ from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 DISTRIBUTOR_UTXOS = 200
 BATCH_SIZE = 5  # smaller batches avoid UTXO race conditions
 BTC = 100_000_000
-INFRASTRUCTURE_IMAGES = ("btc-node", "joinmarket-client-server", "irc-server")
+INFRASTRUCTURE_IMAGES = (
+    "btc-node",
+    "joinmarket-client-server",
+    "irc-server",
+    "wasabi-client",
+    "wasabi-backend",
+    "wasabi-coordinator",
+)
 
 
 def positive_int_env(name):
@@ -81,7 +88,7 @@ class EngineBase:
         return override or f"{self.args.image_prefix}{name}"
 
     def local_build_requested(self, name: str) -> bool:
-        return name in INFRASTRUCTURE_IMAGES and bool(
+        return name.split(":", 1)[0] in INFRASTRUCTURE_IMAGES and bool(
             getattr(self.args, "coinjoin_infrastructure_local_build", False)
         )
 

@@ -243,7 +243,7 @@ def build_parser():
     build_subparser.add_argument("--irc-server-image", type=str, default="", help="exact irc-server image")
     build_subparser.add_argument(
         "--coinjoin-infrastructure-local-build", action="store_true", default=False,
-        help="build btc-node, joinmarket-client-server and irc-server from ./containers",
+        help="build emulator infrastructure images, including versioned Wasabi images, from local sources",
     )
 
     run_subparser = subparsers.add_parser("run", help="run simulation")
@@ -260,7 +260,7 @@ def build_parser():
     run_subparser.add_argument("--irc-server-image", type=str, default="", help="exact irc-server image")
     run_subparser.add_argument(
         "--coinjoin-infrastructure-local-build", action="store_true", default=False,
-        help="build btc-node, joinmarket-client-server and irc-server from ./containers",
+        help="build emulator infrastructure images, including versioned Wasabi images, from local sources",
     )
     run_subparser.add_argument(
         "--scenario", type=str, help="scenario specification file"
