@@ -129,8 +129,28 @@ class JoinmarketEngine(EngineBase):
     def prepare_images(self):
         print("Preparing images")
         self.prepare_image("btc-node")
+        self.prepare_joinmarket_base_image()
         self.prepare_image("joinmarket-client-server")
         self.prepare_image("irc-server")
+
+    def prepare_joinmarket_base_image(self):
+        """Build the JoinMarket runtime the client image starts FROM.
+
+        Only for a local build: the client Dockerfile's FROM points at
+        ghcr.io/ondrejman/joinmarket-base, which is not published from this
+        source, so a local build otherwise picks up whatever stale copy the
+        daemon happens to cache — and fails on verification steps that only
+        exist in the vendored checkout.
+        """
+        if not self.local_build_requested("joinmarket-client-server"):
+            return
+        base_path = "./vendor/joinmarket-clientserver"
+        if not os.path.isdir(base_path):
+            print(f"- vendored JoinMarket source missing at {base_path}; using the published base")
+            return
+        base_image = f"{self.args.image_prefix}joinmarket-base:latest"
+        self.driver.build(base_image, base_path)
+        print(f"- image built {base_image}")
 
 
     @staticmethod

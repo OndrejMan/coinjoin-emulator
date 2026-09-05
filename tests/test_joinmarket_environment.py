@@ -27,6 +27,29 @@ def test_container_environment_selects_the_watch_only_wallet() -> None:
     }
 
 
+def test_local_build_creates_the_vendored_base_before_the_client(monkeypatch) -> None:
+    instance = engine()
+    instance.args = SimpleNamespace(image_prefix="registry/")
+    instance.driver = Mock()
+    instance.local_build_requested = Mock(return_value=True)
+    calls = []
+    instance.prepare_image = Mock(side_effect=calls.append)
+    instance.driver.build.side_effect = lambda image, path: calls.append((image, path))
+    monkeypatch.setattr(
+        "manager.engine.joinmarket_engine.os.path.isdir",
+        lambda path: path == "./vendor/joinmarket-clientserver",
+    )
+
+    instance.prepare_images()
+
+    assert calls == [
+        "btc-node",
+        ("registry/joinmarket-base:latest", "./vendor/joinmarket-clientserver"),
+        "joinmarket-client-server",
+        "irc-server",
+    ]
+
+
 def test_core_wallet_creation_does_not_import_funding_descriptors() -> None:
     instance = engine()
     instance.node = Mock()
