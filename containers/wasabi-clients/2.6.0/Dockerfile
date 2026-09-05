@@ -9,8 +9,8 @@ USER 1000:1000
 # get wasabi from the github repo and checkout to the desired branch
 RUN mkdir -p /home/wasabi/wasabi-src
 WORKDIR /home/wasabi/wasabi-src
-RUN git clone https://github.com/WalletWasabi/WalletWasabi.git .
-RUN git checkout v2.6.0
+# Fetch only the v2.6.0 source snapshot, without the full repository history.
+RUN git clone --depth 1 --branch v2.6.0 https://github.com/WalletWasabi/WalletWasabi.git .
 
 
 COPY global.patch /home/wasabi/wasabi-src/global.patch
