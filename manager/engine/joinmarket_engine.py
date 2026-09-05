@@ -4,6 +4,7 @@ import os
 import random
 import shutil
 import sys
+import threading
 from collections.abc import Iterator
 from time import sleep, time
 from typing import cast
@@ -34,6 +35,7 @@ class JoinmarketEngine(EngineBase):
         self.async_updates = getattr(args, 'async_updates', True)
         self.loop = None
         self.last_resource_check = 0  # Track when we last checked resources
+        self._core_wallet_lock = threading.Lock()
 
     def default_scenario(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -129,11 +131,29 @@ class JoinmarketEngine(EngineBase):
         self.prepare_image("irc-server")
 
 
+    @staticmethod
+    def core_wallet_name(client_name):
+        """Bitcoin Core wallet owned by a single JoinMarket container."""
+        return f"jm_wallet_{client_name}"
+
+    def joinmarket_container_env(self, rpc_wallet_file):
+        return {"JM_RPC_WALLET_FILE": rpc_wallet_file}
+
+    def create_core_wallet(self, client_name):
+        """Create the container's own Bitcoin Core wallet and return its name."""
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        wallet_name = self.core_wallet_name(client_name)
+        # Clients are started in parallel, and Core rejects concurrent
+        # createwallet calls on the same node.
+        with self._core_wallet_lock:
+            self.node.create_wallet(wallet_name, disable_private_keys=True)
+        print(f"- created {wallet_name} in BitcoinCore")
+        return wallet_name
+
     def start_engine_infrastructure(self):
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
-        self.node.create_wallet("jm_wallet", disable_private_keys=True)
-        print("- created jm_wallet in BitcoinCore")
 
         self.start_irc_server()
         print("- started irc-server")
@@ -169,11 +189,12 @@ class JoinmarketEngine(EngineBase):
     def start_distributor(self):
         name = "joinmarket-distributor"
         port = 28183  # Use a specific port for the distributor
+        core_wallet = self.create_core_wallet(name)
         try:
             ip, distributor_node_ports, route = self.driver.run(
                 name,
                 f"{self.args.image_prefix}joinmarket-client-server",
-                env={},  # Add any necessary environment variables
+                env=self.joinmarket_container_env(core_wallet),
                 ports={28183: port},
                 cpu=1,
                 memory=1024,
@@ -388,12 +409,13 @@ class JoinmarketEngine(EngineBase):
     def start_client(self, idx: int, wallet: WalletConfig | None = None):
         name = f"jcs-{idx:03}"
         port = 28184 + idx
+        core_wallet = self.create_core_wallet(name)
         try:
             print(f"Starting joinmarket-client-server: {name}")
             ip, client_node_ports, route = self.driver.run(
                 name,
                 f"{self.args.image_prefix}joinmarket-client-server",
-                env={},
+                env=self.joinmarket_container_env(core_wallet),
                 ports={28183: port},
                 cpu=(0.05),
                 memory=(64),
