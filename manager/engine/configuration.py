@@ -112,12 +112,17 @@ class ScenarioConfig:
             else:
                 funds.append(fund)  # fallback
         
-        wasabi_config = None
+        legacy_wasabi_fields = {"anon_score_target", "redcoin_isolation", "skip_rounds"}
+        if legacy_wasabi_fields.intersection(wallet_data):
+            raise ValueError("flat Wasabi wallet settings are unsupported; use the wasabi object")
+
+        nested_wasabi = wallet_data.get("wasabi") or {}
         wasabi_fields = {
-            "anon_score_target": wallet_data.get("anon_score_target"),
-            "redcoin_isolation": wallet_data.get("redcoin_isolation"),
-            "skip_rounds": wallet_data.get("skip_rounds")
+            "anon_score_target": nested_wasabi.get("anon_score_target"),
+            "redcoin_isolation": nested_wasabi.get("redcoin_isolation"),
+            "skip_rounds": nested_wasabi.get("skip_rounds"),
         }
+        wasabi_config = None
         if any(v is not None for v in wasabi_fields.values()):
             wasabi_config = WasabiConfig(**wasabi_fields)
         
