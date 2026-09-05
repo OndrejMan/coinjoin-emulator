@@ -130,25 +130,27 @@ class JoinMarketConfigGenerator:
 
         wallet: Dict[str, Any] = {
             "funds": self.generate_utxos(total_btc, num_utxos),
-            "type": "taker",
-            "tumbler_options": {
-                "addrcount": self.tumbler_options.addrcount,
-                "minmakercount": self.tumbler_options.minmakercount,
-                "makercountrange": self.tumbler_options.makercountrange.copy(),
-                "mixdepthcount": self.tumbler_options.mixdepthcount,
-                "mintxcount": self.tumbler_options.mintxcount,
-                "txcountparams": self.tumbler_options.txcountparams.copy(),
-                "timelambda": self.tumbler_options.timelambda,
-                "stage1_timelambda_increase": self.tumbler_options.stage1_timelambda_increase,
-                "liquiditywait": self.tumbler_options.liquiditywait,
-                "waittime": self.tumbler_options.waittime,
-                "mixdepthsrc": self.tumbler_options.mixdepthsrc,
-                "restart": self.tumbler_options.restart,
-                "schedulefile": self.tumbler_options.schedulefile,
-                "mincjamount": self.tumbler_options.mincjamount,
-                "amtmixdepths": self.tumbler_options.amtmixdepths,
-                "rounding_chance": self.tumbler_options.rounding_chance,
-                "rounding_sigfig_weights": self.tumbler_options.rounding_sigfig_weights.copy()
+            "joinmarket": {
+                "role": "taker",
+                "tumbler_options": {
+                    "addrcount": self.tumbler_options.addrcount,
+                    "minmakercount": self.tumbler_options.minmakercount,
+                    "makercountrange": self.tumbler_options.makercountrange.copy(),
+                    "mixdepthcount": self.tumbler_options.mixdepthcount,
+                    "mintxcount": self.tumbler_options.mintxcount,
+                    "txcountparams": self.tumbler_options.txcountparams.copy(),
+                    "timelambda": self.tumbler_options.timelambda,
+                    "stage1_timelambda_increase": self.tumbler_options.stage1_timelambda_increase,
+                    "liquiditywait": self.tumbler_options.liquiditywait,
+                    "waittime": self.tumbler_options.waittime,
+                    "mixdepthsrc": self.tumbler_options.mixdepthsrc,
+                    "restart": self.tumbler_options.restart,
+                    "schedulefile": self.tumbler_options.schedulefile,
+                    "mincjamount": self.tumbler_options.mincjamount,
+                    "amtmixdepths": self.tumbler_options.amtmixdepths,
+                    "rounding_chance": self.tumbler_options.rounding_chance,
+                    "rounding_sigfig_weights": self.tumbler_options.rounding_sigfig_weights.copy(),
+                },
             }
         }
 
@@ -185,8 +187,7 @@ class JoinMarketConfigGenerator:
 
         return {
             "funds": funds,
-            "type": "maker",
-            "offers": [offer]
+            "joinmarket": {"role": "maker", "offers": [offer]},
         }
 
     def generate_config(self,
@@ -590,20 +591,22 @@ def handler(args):
         funds = random_partition(total_sats, n_utxos)
         wallet = {
             "funds": funds,
-            "type": "taker",
-            "offers": [
-                {
-                    "mixdepth": 0,
-                    "amount_sats": 0,  # 0 means sweep (use all available)
-                    "counterparties": 4
-                }
-            ]
+            "joinmarket": {
+                "role": "taker",
+                "offers": [
+                    {
+                        "mixdepth": 0,
+                        "amount_sats": 0,  # 0 means sweep (use all available)
+                        "counterparties": 4,
+                    }
+                ],
+            },
         }
         delay = taker_delays[idx] if idx < len(taker_delays) else 0
         if delay:
             wallet["delay_blocks"] = delay
         if args.taker_max_coinjoins > 0:
-            wallet["max_coinjoins"] = args.taker_max_coinjoins
+            wallet["joinmarket"]["max_coinjoins"] = args.taker_max_coinjoins
         scenario["wallets"].append(wallet)
     # TUMBLER TAKERS
     tumbler_taker_delays = parse_delays(args.tumbler_taker_delays, args.tumbler_taker_count)
@@ -619,8 +622,7 @@ def handler(args):
         funds = random_partition(total_sats, n_utxos)
         wallet = {
             "funds": funds,
-            "type": "taker",
-            "tumbler_options": default_tumbler_options()
+            "joinmarket": {"role": "taker", "tumbler_options": default_tumbler_options()},
         }
         delay = tumbler_taker_delays[idx] if idx < len(tumbler_taker_delays) else 0
         if delay:
@@ -675,17 +677,19 @@ def handler(args):
         funds = random_partition(total_sats, n_utxos)
         wallet = {
             "funds": funds,
-            "type": "maker",
-            "offers": [
-                {
-                    "txfee": 0,
-                    "cjfee_a": cjfee_a,
-                    "cjfee_r": 0,
-                    "ordertype": "sw0absoffer",
-                    "minsize": args.wallet_min_utxo_size,
-                    "maxsize": int(sum(funds) * 0.9)
-                }
-            ]
+            "joinmarket": {
+                "role": "maker",
+                "offers": [
+                    {
+                        "txfee": 0,
+                        "cjfee_a": cjfee_a,
+                        "cjfee_r": 0,
+                        "ordertype": "sw0absoffer",
+                        "minsize": args.wallet_min_utxo_size,
+                        "maxsize": int(sum(funds) * 0.9),
+                    }
+                ],
+            },
         }
 
         # Add fidelity bond configuration if this maker is selected for bonds
@@ -695,7 +699,7 @@ def handler(args):
             else:
                 bond_config_obj = generate_fidelity_bond_config(args)
             if bond_config_obj:
-                wallet["fidelity_bond"] = bond_config_obj
+                wallet["joinmarket"]["fidelity_bond"] = bond_config_obj
 
         scenario["wallets"].append(wallet)
     for idx in range(args.relative_makers):
@@ -723,17 +727,19 @@ def handler(args):
         funds = random_partition(total_sats, n_utxos)
         wallet = {
             "funds": funds,
-            "type": "maker",
-            "offers": [
-                {
-                    "txfee": 0,
-                    "cjfee_a": 0,
-                    "cjfee_r": cjfee_r,
-                    "ordertype": "sw0reloffer",
-                    "minsize": args.wallet_min_utxo_size,
-                    "maxsize": int(sum(funds) * 0.9)
-                }
-            ]
+            "joinmarket": {
+                "role": "maker",
+                "offers": [
+                    {
+                        "txfee": 0,
+                        "cjfee_a": 0,
+                        "cjfee_r": cjfee_r,
+                        "ordertype": "sw0reloffer",
+                        "minsize": args.wallet_min_utxo_size,
+                        "maxsize": int(sum(funds) * 0.9),
+                    }
+                ],
+            },
         }
 
         # Add fidelity bond configuration if this maker is selected for bonds
@@ -743,18 +749,23 @@ def handler(args):
             else:
                 bond_config_obj = generate_fidelity_bond_config(args)
             if bond_config_obj:
-                wallet["fidelity_bond"] = bond_config_obj
+                wallet["joinmarket"]["fidelity_bond"] = bond_config_obj
 
         scenario["wallets"].append(wallet)
 
     # Calculate and display bond statistics
-    wallets_with_bonds = [w for w in scenario["wallets"] if w.get("fidelity_bond", {}).get("enabled", False)]
-    total_bond_amount = sum(w["fidelity_bond"]["amount"] for w in wallets_with_bonds)
+    wallets_with_bonds = [
+        wallet
+        for wallet in scenario["wallets"]
+        if wallet["joinmarket"].get("fidelity_bond", {}).get("enabled", False)
+    ]
+    total_bond_amount = sum(wallet["joinmarket"]["fidelity_bond"]["amount"] for wallet in wallets_with_bonds)
     total_wallet_funds = sum(sum(w["funds"]) for w in scenario["wallets"])
 
     print(f"- requires {(total_wallet_funds / 100_000_000):0.8f} BTC for wallet funds")
     if wallets_with_bonds:
-        print(f"- created {len(wallets_with_bonds)} fidelity bonds ({len(wallets_with_bonds)/len([w for w in scenario['wallets'] if w['type'] == 'maker'])*100:.1f}% of makers)")
+        maker_count = sum(wallet["joinmarket"]["role"] == "maker" for wallet in scenario["wallets"])
+        print(f"- created {len(wallets_with_bonds)} fidelity bonds ({len(wallets_with_bonds) / maker_count * 100:.1f}% of makers)")
         print(f"- requires {(total_bond_amount / 100_000_000):0.8f} BTC for fidelity bonds")
         print(f"- total funding requirement: {((total_wallet_funds + total_bond_amount) / 100_000_000):0.8f} BTC")
     import os
