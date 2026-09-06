@@ -16,8 +16,6 @@ from zipfile import ZipFile
 
 import pytest
 
-from manager.engine.configuration import ScenarioConfig
-
 DEFAULT_TESTING_DATA_DIR = Path(__file__).resolve().parents[2] / "testing_data"
 WALLET_ARTIFACTS = ("coins.json", "unspent_coins.json", "keys.json")
 
@@ -65,7 +63,7 @@ def _require_archives() -> list[Path]:
     return archives
 
 
-def test_historical_run_archives_follow_the_emulator_artifact_contract(tmp_path: Path) -> None:
+def test_historical_run_archives_follow_the_emulator_artifact_contract() -> None:
     """Validate external emulator output without rerunning the emulator."""
     for archive_path in _require_archives():
         with ZipFile(archive_path) as archive:
@@ -74,13 +72,15 @@ def test_historical_run_archives_follow_the_emulator_artifact_contract(tmp_path:
             scenario_name = f"{root}/scenario.json"
             assert scenario_name in names, f"{archive_path.name}: missing scenario.json"
 
-            scenario_path = tmp_path / f"{archive_path.stem}-scenario.json"
-            scenario_path.write_bytes(archive.read(scenario_name))
-            scenario = ScenarioConfig.from_json_config(scenario_path)
-            assert root.endswith(f"_{scenario.name}"), (
+            # Archived scenarios predate the nested wasabi object, so they are
+            # read as plain JSON rather than through the runtime parser.
+            scenario = _load_json(archive, scenario_name)
+            assert isinstance(scenario, dict), f"{archive_path.name}: scenario.json is not an object"
+            assert root.endswith(f"_{scenario.get('name')}"), (
                 f"{archive_path.name}: archive root does not end with the scenario name"
             )
-            assert scenario.wallets, f"{archive_path.name}: scenario has no wallets"
+            wallets = scenario.get("wallets")
+            assert isinstance(wallets, list) and wallets, f"{archive_path.name}: scenario has no wallets"
 
             blocks = _block_names(names, root)
             assert blocks, f"{archive_path.name}: no exported block JSON files"
@@ -102,8 +102,8 @@ def test_historical_run_archives_follow_the_emulator_artifact_contract(tmp_path:
                 previous_hash = block["hash"]
 
             clients = _client_paths(names, root)
-            assert len(clients) == len(scenario.wallets), (
-                f"{archive_path.name}: expected {len(scenario.wallets)} wallet outputs, found {len(clients)}"
+            assert len(clients) == len(wallets), (
+                f"{archive_path.name}: expected {len(wallets)} wallet outputs, found {len(clients)}"
             )
             for client_path in clients:
                 for artifact in WALLET_ARTIFACTS:
