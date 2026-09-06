@@ -47,6 +47,7 @@ override-dependencies = [
 ]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 markers = [
     "integration: runs the emulator against Docker and may take several minutes",
 ]
