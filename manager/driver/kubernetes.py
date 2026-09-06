@@ -19,6 +19,7 @@ from . import Driver
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
+RUN_ID_LABEL = "coinjoin.run-id"
 
 
 def _host_path_volumes(volumes):
@@ -123,8 +124,15 @@ class KubernetesDriver(Driver):
         """Label every resource so cleanup can find exactly this emulator's own."""
         labels = {"app": name, MANAGED_BY_LABEL: MANAGED_BY_VALUE}
         if self.run_id:
-            labels["coinjoin.run-id"] = self.run_id
+            labels[RUN_ID_LABEL] = self.run_id
         return labels
+
+    def cleanup_selector(self):
+        """Select this run's own resources, or every managed one when no run ID is set."""
+        selector = f"{MANAGED_BY_LABEL}={MANAGED_BY_VALUE}"
+        if self.run_id:
+            selector += f",{RUN_ID_LABEL}={self.run_id}"
+        return selector
 
     def build_pod_manifest(self, name, image, env, ports, cpu, memory,
                             user_id=None, volumes=None, command=None, group_id=None):
@@ -482,7 +490,7 @@ class KubernetesDriver(Driver):
         # self.client = fresh_client
         # return
 
-        managed = f"{MANAGED_BY_LABEL}={MANAGED_BY_VALUE}"
+        managed = self.cleanup_selector()
         try:
             pods = self.client.list_namespaced_pod(namespace=self._namespace, label_selector=managed)
         except ApiException as e:
