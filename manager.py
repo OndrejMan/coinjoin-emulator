@@ -272,6 +272,10 @@ def build_parser():
         default="",
         help="Write this marker when the emulation or artifact collection fails.",
     )
+    run_subparser.add_argument(
+        "--disable-port-forward", action="store_true", default=False,
+        help="Accepted for pipeline compatibility; the driver manages connectivity directly.",
+    )
     run_subparser.add_argument("--proxy", type=str, default="")
     run_subparser.add_argument("--namespace", type=str, default="coinjoin")
     run_subparser.add_argument("--reuse-namespace", action="store_true", default=False)
