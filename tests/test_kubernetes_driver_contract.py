@@ -89,6 +89,18 @@ def test_cleanup_only_touches_resources_this_emulator_created() -> None:
     )
 
 
+def test_cleanup_leaves_a_concurrent_run_in_the_same_namespace_alone() -> None:
+    instance = driver(run_id="run-42")
+    instance.client.list_namespaced_pod.return_value = SimpleNamespace(items=[])
+    instance.client.list_namespaced_service.return_value = SimpleNamespace(items=[])
+
+    instance.cleanup()
+
+    selector = f"{MANAGED_BY_LABEL}={MANAGED_BY_VALUE},coinjoin.run-id=run-42"
+    assert instance.client.list_namespaced_pod.call_args.kwargs["label_selector"] == selector
+    assert instance.client.list_namespaced_service.call_args.kwargs["label_selector"] == selector
+
+
 def test_a_quota_rejection_is_reported_as_a_quota_error() -> None:
     instance = driver()
     rejection = ApiException(status=403)
