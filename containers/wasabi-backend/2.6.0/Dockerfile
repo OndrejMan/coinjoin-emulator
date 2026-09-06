@@ -4,14 +4,16 @@ RUN apt update && apt install -y patch
 
 RUN mkdir -p /wasabi-src
 WORKDIR /wasabi-src
-RUN git clone https://github.com/zkSNACKs/WalletWasabi.git .
-RUN git checkout v2.6.0
+# Fetch only the v2.6.0 source snapshot, without the full repository history.
+RUN git clone --depth 1 --branch v2.6.0 https://github.com/WalletWasabi/WalletWasabi.git .
 
 COPY logger.patch /wasabi-src/logger.patch
 RUN patch --binary -p1 < logger.patch
 
 WORKDIR /wasabi-src/WalletWasabi.Backend
-RUN dotnet build -c Release
+# NuGet Audit flags NU1903 for a transitive dependency pinned by this
+# release and warnings are errors here, so an unchanged rebuild fails.
+RUN dotnet build -c Release -p:NuGetAudit=false
 
 # FROM mcr.microsoft.com/dotnet/runtime:8.0 # Missing ASP.NET Core
 FROM mcr.microsoft.com/dotnet/aspnet:8.0

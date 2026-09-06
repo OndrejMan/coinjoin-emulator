@@ -1,6 +1,12 @@
 from abc import ABC, abstractmethod
 from multiprocessing.pool import ThreadPool
 
+# The Wasabi backend, coordinator and clients bind fixed ports inside the
+# default ephemeral range, where the kernel can hand the same port to an
+# outgoing connection first and make the bind fail.
+RESERVED_PORT_RANGE = "37127-37260"
+RESERVED_PORTS_SYSCTL = "net.ipv4.ip_local_reserved_ports"
+
 
 class Driver(ABC):
     @abstractmethod
@@ -45,8 +51,20 @@ class Driver(ABC):
         pass
 
     @abstractmethod
+    def logs(self, name):
+        """Return the container's combined stdout and stderr."""
+
     def upload(self, name, src_path, dst_path):
         pass
+
+    def get_pod_resource_usage(self, name):
+        """Return memory usage for a running container, or None when unknown.
+
+        The engine samples this during a run; a driver that cannot report usage
+        answers None instead of raising, so the sampling degrades to a no-op
+        rather than logging a failure on every check.
+        """
+        return None
 
     @abstractmethod
     def cleanup(self, image_prefix=""):

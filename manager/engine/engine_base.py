@@ -1,21 +1,48 @@
-import time
-
-from manager.btc_node import BtcNode
-from manager import utils
-from manager.engine.configuration import ScenarioConfig, WalletConfig, FundConfig
-from time import sleep
-import random
-import os
+import datetime
 import json
+import math
 import multiprocessing
 import multiprocessing.pool
-import math
+import os
+import random
 import shutil
-import datetime
+import time
+from time import sleep
+from zoneinfo import ZoneInfo
+
+from manager.btc_node import BtcNode
+from manager.engine.base.manifest import write_producer_label_manifest
+from manager.engine.configuration import FundConfig, ScenarioConfig, WalletConfig
+from manager.exceptions import RpcError
+from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 
 DISTRIBUTOR_UTXOS = 200
 BATCH_SIZE = 5  # smaller batches avoid UTXO race conditions
 BTC = 100_000_000
+INFRASTRUCTURE_IMAGES = (
+    "btc-node",
+    "joinmarket-client-server",
+    "irc-server",
+    "wasabi-client",
+    "wasabi-backend",
+    "wasabi-coordinator",
+)
+
+
+def positive_int_env(name):
+    """Read a positive integer id from the environment, ignoring unusable values.
+
+    Root (0) is skipped on purpose: pods declare runAsNonRoot, and a root caller
+    can read the shared datadir whatever owns it.
+    """
+    raw = os.environ.get(name, "").strip()
+    return int(raw) if raw.isdigit() and int(raw) > 0 else None
+
+
+def _has_fidelity_bond(wallet):
+    """True when the wallet asks for a fidelity bond (typed scenario model)."""
+    bond = (wallet.joinmarket.fidelity_bond if wallet.joinmarket else None) or {}
+    return bool(bond.get("enabled", False))
 
 
 class EngineBase:
@@ -39,6 +66,8 @@ class EngineBase:
         if self.args.command == "run" and self.args.scenario:
             self.scenario = ScenarioConfig.from_json_config(self.args.scenario)
 
+        self.scenario.validate_for_engine(getattr(self.args, "engine", "wasabi"))
+
         self.versions.add(self.scenario.default_version)
         if self.scenario.distributor_version is not None:
             self.versions.add(self.scenario.distributor_version)
@@ -49,24 +78,53 @@ class EngineBase:
     def prepare_images(self):
         raise NotImplementedError
 
+    def image_override(self, name: str) -> str:
+        return getattr(self.args, f"{name.replace('-', '_')}_image", "")
+
+    def image_ref(self, name: str) -> str:
+        """Resolve an exact infrastructure image override before the prefix default."""
+        override = self.image_override(name)
+        return override or f"{self.args.image_prefix}{name}"
+
+    def local_build_requested(self, name: str) -> bool:
+        return name.split(":", 1)[0] in INFRASTRUCTURE_IMAGES and bool(
+            getattr(self.args, "coinjoin_infrastructure_local_build", False)
+        )
+
     def prepare_image(self, name: str, path=None):
-        prefixed_name = self.args.image_prefix + name
-        if self.driver.has_image(prefixed_name):
+        image_name = self.image_ref(name)
+        has_override = bool(self.image_override(name))
+        if self.local_build_requested(name):
+            self.driver.build(image_name, f"./containers/{name}" if path is None else path)
+            print(f"- image built {image_name}")
+        elif self.driver.has_image(image_name):
             if self.args.force_rebuild:
-                if self.args.image_prefix:
-                    self.driver.pull(prefixed_name)
-                    print(f"- image pulled {prefixed_name}")
+                if self.args.image_prefix or has_override:
+                    self.driver.pull(image_name)
+                    print(f"- image pulled {image_name}")
                 else:
                     self.driver.build(name, f"./containers/{name}" if path is None else path)
-                    print(f"- image rebuilt {prefixed_name}")
+                    print(f"- image rebuilt {image_name}")
             else:
-                print(f"- image reused {prefixed_name}")
-        elif self.args.image_prefix:
-            self.driver.pull(prefixed_name)
-            print(f"- image pulled {prefixed_name}")
+                print(f"- image reused {image_name}")
+        elif self.args.image_prefix or has_override:
+            self.driver.pull(image_name)
+            print(f"- image pulled {image_name}")
         else:
             self.driver.build(name, f"./containers/{name}" if path is None else path)
-            print(f"- image built {prefixed_name}")
+            print(f"- image built {image_name}")
+
+    def service_endpoint(self, ip, container_port, ports, route=None):
+        """Resolve a driver endpoint for local, proxied, in-cluster and routed runs."""
+        if self.args.proxy:
+            return ip, container_port
+        if self.args.in_cluster or getattr(self.driver, "in_cluster", False):
+            # The Kubernetes driver returns a Service DNS name, which is reached
+            # on the Service port; that may differ from the container port.
+            return ip, ports.get(container_port, container_port)
+        if route:
+            return str(route), 443
+        return self.args.control_ip, ports[container_port]
 
     def start_infrastructure(self):
         print("Starting infrastructure")
@@ -75,19 +133,41 @@ class EngineBase:
         self.start_distributor()
 
     def start_btc_node(self):
-        btc_node_ip, btc_node_ports, _ = self.driver.run(
+        node_volumes = None
+        # bitcoind creates <datadir>/regtest with mode 0700, so the image's own
+        # user would leave a shared datadir unreadable for whoever runs the
+        # analysis afterwards. Run the node as the caller's storage identity.
+        storage_uid = None
+        storage_gid = None
+        if self.args.btcFolder:
+            node_volumes = {os.path.abspath(self.args.btcFolder): {"bind": "/home/bitcoin/data", "mode": "rw"}}
+            storage_uid = positive_int_env("KUBERNETES_STORAGE_UID")
+            storage_gid = positive_int_env("KUBERNETES_STORAGE_GID") if storage_uid else None
+        command = ["./run.sh", *self.args.btc_node_arg] if self.args.btc_node_arg else None
+        btc_node_env = {}
+        initial_block_count = os.environ.get("COINJOIN_BTC_NODE_INITIAL_BLOCK_COUNT")
+        if initial_block_count:
+            btc_node_env["COINJOIN_INITIAL_BLOCK_COUNT"] = initial_block_count
+
+        btc_node_ip, btc_node_ports, route = self.driver.run(
             "btc-node",
-            f"{self.args.image_prefix}btc-node",
+            self.image_ref("btc-node"),
             ports={18443: 18443, 18444: 18444},
             cpu=2.0,
             memory=2048,
             service_account="btc-node",
+            env=btc_node_env or None,
+            volumes=node_volumes,
+            command=command,
+            run_as_user=storage_uid,
+            run_as_group=storage_gid,
         )
 
         print(btc_node_ip, btc_node_ports)
+        node_host, node_port = self.service_endpoint(btc_node_ip, 18443, btc_node_ports, route)
         self.node = BtcNode(
-            host=btc_node_ip if self.args.proxy or self.args.in_cluster else self.args.control_ip,
-            port=18443 if self.args.proxy else btc_node_ports[18443],
+            host=node_host,
+            port=node_port,
             internal_ip=btc_node_ip,
             proxy=self.args.proxy,
         )
@@ -123,7 +203,7 @@ class EngineBase:
         fb_wallets = []
 
         for idx, wallet in wallet_list:
-            if wallet.get("fidelity_bond", {}).get("enabled", False):
+            if _has_fidelity_bond(wallet):
                 fb_wallets.append((idx, wallet))
             else:
                 regular_wallets.append((idx, wallet))
@@ -163,7 +243,7 @@ class EngineBase:
         wallet_list = [(idx, wallet) for idx, wallet in enumerate(wallets, start=len(self.clients))]
 
         # Count wallet types for logging
-        fb_count = sum(1 for _, w in wallet_list if w.get("fidelity_bond", {}).get("enabled", False))
+        fb_count = sum(1 for _, w in wallet_list if _has_fidelity_bond(w))
         print(f"- {len(wallet_list) - fb_count} regular wallets, {fb_count} fidelity bond wallets")
 
         with multiprocessing.pool.ThreadPool() as pool:
@@ -182,7 +262,7 @@ class EngineBase:
             for retry_attempt in range(3):
                 failed_indices = [
                     idx for idx, client in enumerate(new_clients, start=len(self.clients))
-                    if client is None
+                    if client is None or not self._client_is_healthy(client)
                 ]
 
                 if not failed_indices:
@@ -201,12 +281,52 @@ class EngineBase:
                 retry_results = self._start_classified_wallets(pool, retry_wallet_list, fb_batch_size, fb_batch_delay)
                 for idx, client in retry_results.items():
                     new_clients[idx - len(self.clients)] = client
-            else:
-                # After 3 retries, filter out None values
-                new_clients = list(filter(lambda x: x is not None, new_clients))
-                print(f"- failed to start {len(wallets) - len(new_clients)} clients; continuing ...")
+
+            failed_count = sum(client is None for client in new_clients)
+            if failed_count:
+                raise RuntimeError(
+                    f"Failed to start {failed_count} clients after retries; aborting experiment"
+                )
 
         self.clients.extend(new_clients)
+
+    @staticmethod
+    def _client_health_error(client):
+        """Probe an already-created wallet without mutating it.
+
+        wait_wallet() is not read-only for JoinMarket: it creates the wallet
+        again and can loop on "Wallet already unlocked" until the timeout.
+        """
+        try:
+            client.get_balance()
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            return str(error)
+        return None
+
+    @classmethod
+    def _client_is_healthy(cls, client):
+        return cls._client_health_error(client) is None
+
+    def validate_clients(self):
+        """Require every declared wallet to answer before funding begins."""
+        expected = len(self.scenario.wallets)
+        actual = len(self.clients)
+        if actual != expected:
+            raise RuntimeError(f"Expected {expected} clients, but only {actual} started")
+
+        def healthcheck(client):
+            detail = self._client_health_error(client)
+            return client.name, detail is None, detail
+
+        with multiprocessing.pool.ThreadPool() as pool:
+            results = pool.map(healthcheck, self.clients)
+        failed = [
+            f"{name} ({detail or 'RPC health-check failed'})"
+            for name, healthy, detail in results
+            if not healthy
+        ]
+        if failed:
+            raise RuntimeError("Client RPC health-check failed before funding: " + ", ".join(failed))
 
     def fund_distributor(self, btc_amount):
         print("Funding distributor")
@@ -215,10 +335,15 @@ class EngineBase:
         if self.distributor is None:
             raise RuntimeError("Distributor is not initialized")
 
+        # Round each UTXO up to a whole satoshi so the total meets the target
+        # even when the amount does not divide evenly. Integer-dividing by BTC
+        # here would fund every address with 0 BTC for any total below 200 BTC.
+        per_utxo_sats = math.ceil(btc_amount * BTC / DISTRIBUTOR_UTXOS)
         for _ in range(DISTRIBUTOR_UTXOS):
             self.node.fund_address(
                 self.distributor.get_new_address(),
-                math.ceil(btc_amount * BTC / DISTRIBUTOR_UTXOS) // BTC,
+                # Bitcoin Core rejects scientific notation, so keep 8 decimals.
+                float(f"{per_utxo_sats / BTC:.8f}"),
             )
 
         while (balance := self.distributor.get_balance()) < btc_amount * BTC:
@@ -252,13 +377,29 @@ class EngineBase:
         try:
             self.driver.download(client.name, self.log_src_path, client_path)
             print(f"- stored {client.name} logs, {self.log_src_path}, {client_path}")
-        except:
+        except Exception:
             print(f"- could not store {client.name} logs")
+
+    def log_run_path(self):
+        requested_run_id = getattr(self.args, "run_id", "")
+        if requested_run_id:
+            return f"./logs/{requested_run_id}"
+        run_timezone = getattr(self.args, "run_timezone", DEFAULT_RUN_TIMEZONE)
+        timestamp = datetime.datetime.now(ZoneInfo(run_timezone)).strftime("%Y-%m-%d_%H-%M")
+        return f"./logs/{timestamp}_{self.scenario.name}"
+
+    def ensure_log_run_path_available(self) -> None:
+        # The pipeline launcher may pre-create the run directory to place its
+        # host manifest there; only a directory that already holds emulator
+        # artifacts marks a genuine earlier run.
+        run_path = self.log_run_path()
+        if os.path.exists(os.path.join(run_path, "coinjoin_emulator_data")):
+            raise RuntimeError(f"Run log directory already exists: {run_path}")
 
     def store_logs(self):
         print("Storing logs")
-        time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
-        experiment_path = f"./logs/{time}_{self.scenario.name}"
+        run_path = self.log_run_path()
+        experiment_path = os.path.join(run_path, "coinjoin_emulator_data")
         data_path = os.path.join(experiment_path, "data")
         os.makedirs(data_path)
 
@@ -272,30 +413,35 @@ class EngineBase:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         try:
-            while stored_blocks < self.node.get_block_count():  # type: ignore
+            block_count = self.node.get_block_count()
+        except (TypeError, RpcError) as error:
+            # Only the block count is optional: without it there is nothing to export.
+            print(f"Failed to get block count: {error}")
+        else:
+            while stored_blocks <= block_count:
                 block_hash = self.node.get_block_hash(stored_blocks)
                 block = self.node.get_block_info(block_hash)
                 with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
                     json.dump(block, f, indent=2)
                 stored_blocks += 1
-        except TypeError:
-            print("Failed to get block count")
 
         print(f"- stored {stored_blocks} blocks")
 
         print("- storing engine logs")
-        print(f"{self.store_engine_logs}")
-        self.store_engine_logs(data_path)
-        print("- finished storing engine logs")
+        producer_label_evidence = self.store_engine_logs(data_path)
+        write_producer_label_manifest(data_path, producer_label_evidence)
+        print("- finished storing engine logs, stored producer-label manifest")
 
         print(f"- storing logs for {len(self.clients)} clients in parallel")
         with multiprocessing.pool.ThreadPool() as pool:
             pool.starmap(self.store_client_logs, [(client, data_path) for client in self.clients])
 
-        shutil.make_archive(experiment_path, "zip", *os.path.split(experiment_path))
+        archive_base = os.path.join(run_path, ".emulation_logs")
+        archive_path = shutil.make_archive(archive_base, "zip", run_path, "coinjoin_emulator_data")
+        os.replace(archive_path, os.path.join(experiment_path, "emulation_logs.zip"))
         print("- zip archive created")
 
-    def store_engine_logs(self, data_path):
+    def store_engine_logs(self, data_path: str) -> dict[str, object] | None:
         print("Storing engine logs / NOT IMPLEMENTED")
         raise NotImplementedError
 
@@ -319,10 +465,16 @@ class EngineBase:
         success_count = sum(1 for r in results if r)
         print(f"- stopped mixing for {success_count}/{len(self.clients)} clients")
 
+    def shutdown_engine(self):
+        """Release engine-specific local resources after the clients have stopped."""
+
     def update_invoice_payments(self):
         due = list(filter(lambda x: x[0] <= self.current_block and x[1] <= self.current_round, self.invoices.keys()))
-        for i in due:
-            self.pay_invoices(self.invoices.pop(i, []))
+        for schedule in due:
+            # Keep the invoices scheduled until payment succeeds. A transient
+            # RPC failure must not silently erase wallet funding.
+            self.pay_invoices(self.invoices[schedule])
+            del self.invoices[schedule]
 
     def prepare_invoices(self, wallets: list[WalletConfig]):
         print("Preparing invoices")
@@ -338,6 +490,8 @@ class EngineBase:
                     value = fund.value
                     block = fund.delay_blocks or 0
                     round = fund.delay_rounds or 0
+                else:
+                    raise TypeError(f"unsupported fund entry for {client.name}: {fund!r}")
                 addressed_invoice = (client.get_new_address(), value)
                 if (block, round) not in self.invoices:
                     self.invoices[(block, round)] = [addressed_invoice]
@@ -354,7 +508,8 @@ class EngineBase:
             f"- paying {len(addressed_invoices)} invoices (batch size {BATCH_SIZE}, block {self.current_block}, round {self.current_round})"
         )
         try:
-            for batch in utils.batched(addressed_invoices, BATCH_SIZE):
+            while addressed_invoices:
+                batch = addressed_invoices[:BATCH_SIZE]
                 for _ in range(3):
                     try:
                         if self.distributor is None:
@@ -363,6 +518,8 @@ class EngineBase:
                         if str(result) == "timeout":
                             print("- transaction timeout")
                             continue
+                        # Retain only unpaid batches if a later send fails.
+                        del addressed_invoices[:len(batch)]
                         break
                     except Exception as e:
                         # https://github.com/zkSNACKs/WalletWasabi/issues/12764
@@ -390,10 +547,13 @@ class EngineBase:
     
     def run(self):
         print(f"=== Scenario {self.scenario.name} ===")
+        if not getattr(self.args, "no_logs", False):
+            self.ensure_log_run_path_available()
         self.prepare_images()
         self.start_infrastructure()
         self.fund_distributor(5000)
         self.start_clients(self.scenario.wallets)
+        self.validate_clients()
         time.sleep(60)
         self.prepare_invoices(self.scenario.wallets)
 

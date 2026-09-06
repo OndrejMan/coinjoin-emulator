@@ -1,11 +1,11 @@
-from functools import cached_property
-from io import BytesIO
 import os
 import tarfile
+from functools import cached_property
+from io import BytesIO
 
-from docker.models.containers import Container
-from . import Driver
 import docker
+
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 
 
 class DockerDriver(Driver):
@@ -40,41 +40,49 @@ class DockerDriver(Driver):
         memory=None,
         **kwargs
     ):
-        container = self.client.containers.run(
+        self.client.containers.run(
             image,
             detach=True,
-            auto_remove=True,
+            # Keep the container after it exits so its artifacts and logs stay
+            # readable while the run is being collected.
+            auto_remove=False,
             name=name,
             hostname=name,
             network=self.network.id,
             ports=ports or {},
             environment=env or {},
+            volumes=kwargs.get("volumes"),
+            command=kwargs.get("command"),
+            sysctls={RESERVED_PORTS_SYSCTL: RESERVED_PORT_RANGE},
         )
-        container_ip = container.attrs['NetworkSettings']['IPAddress']
-        
-        # Normalize port mapping to match Kubernetes format
-        # Docker format: {'8080/tcp': [{'HostIp': '', 'HostPort': '8080'}]}
-        # Kubernetes format: {8080: 8080}
-        raw_port_mapping = container.attrs['NetworkSettings']['Ports']
-        port_mapping = {}
-        
-        if ports:
-            for internal_port in ports.keys():
-                # For Docker networking, internal container port maps to itself
-                port_mapping[internal_port] = internal_port
-        
-        return container_ip, port_mapping, None
+        # Containers on the user-defined bridge network resolve each other by
+        # name. That is stable across Docker API versions, unlike the legacy
+        # top-level NetworkSettings.IPAddress field, which is empty for them.
+        # The requested host port mapping is also what callers must connect to.
+        return name, dict(ports or {}), None
 
     def stop(self, name):
         try:
-            self.client.containers.get(name).stop()
+            container = self.client.containers.get(name)
+            container.stop()
+            container.remove(force=True, v=True)
             print(f"- stopped {name}")
         except docker.errors.NotFound:
             pass
 
     def download(self, name, src_path, dst_path):
+        container = None
+        paused = False
         try:
-            stream, _ = self.client.containers.get(name).get_archive(src_path)
+            container = self.client.containers.get(name)
+            container.reload()
+            if container.status == "running":
+                # Docker builds the archive while reading the live filesystem;
+                # a growing log otherwise invalidates the tar stream with
+                # "archive/tar: write too long".
+                container.pause()
+                paused = True
+            stream, _ = container.get_archive(src_path)
 
             fo = BytesIO()
             for d in stream:
@@ -82,8 +90,11 @@ class DockerDriver(Driver):
             fo.seek(0)
             with tarfile.open(fileobj=fo) as tar:
                 tar.extractall(dst_path)
-        except:
-            pass
+        except (docker.errors.APIError, docker.errors.NotFound, tarfile.TarError, OSError) as error:
+            raise RuntimeError(f"Failed to download {name}:{src_path} to {dst_path}: {error}") from error
+        finally:
+            if paused and container is not None:
+                container.unpause()
 
     def peek(self, name, path):
         stream, _ = self.client.containers.get(name).get_archive(path)
@@ -95,6 +106,36 @@ class DockerDriver(Driver):
         with tarfile.open(fileobj=fo) as tar:
             return tar.extractfile(os.path.basename(path)).read().decode()
 
+    def get_pod_resource_usage(self, name):
+        """Memory usage of a container, mirroring the Kubernetes driver's shape.
+
+        Without this the engine's resource sampling failed on every check with
+        "'DockerDriver' object has no attribute 'get_pod_resource_usage'", so
+        Docker runs silently had no resource monitoring at all.
+        """
+        try:
+            container = self.client.containers.get(name)
+            stats = container.stats(stream=False)
+        except (docker.errors.NotFound, docker.errors.APIError, OSError):
+            return None
+
+        memory = stats.get("memory_stats") or {}
+        usage = memory.get("usage")
+        limit = memory.get("limit")
+        if not usage or not limit:
+            return None
+
+        memory_mb = usage / (1024 * 1024)
+        memory_limit_mb = limit / (1024 * 1024)
+        return {
+            "memory_mb": memory_mb,
+            "memory_limit_mb": memory_limit_mb,
+            "memory_percent": (memory_mb / memory_limit_mb) * 100 if memory_limit_mb else 0.0,
+        }
+
+    def logs(self, name):
+        return self.client.containers.get(name).logs(stdout=True, stderr=True).decode(errors="replace")
+
     def upload(self, name, src_path, dst_path):
         fo = BytesIO()
         with tarfile.open(fileobj=fo, mode="w") as tar:
@@ -104,7 +145,7 @@ class DockerDriver(Driver):
 
     def cleanup(self, image_prefix=""):
         containers = []
-        for container in self.client.containers.list():
+        for container in self.client.containers.list(all=True):
             if any(
                 x in container.attrs["Config"]["Image"]
                 for x in (

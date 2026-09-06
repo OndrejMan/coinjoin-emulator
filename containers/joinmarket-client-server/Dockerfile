@@ -1,4 +1,5 @@
-FROM joinmarket-latest:taker-logs
+ARG JOINMARKET_BASE_IMAGE=ghcr.io/ondrejman/joinmarket-base:latest
+FROM ${JOINMARKET_BASE_IMAGE}
 
 
 # Copy the config file to the right place
@@ -10,6 +11,13 @@ RUN apt-get update -qq && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         socat ca-certificates iproute2 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Both integration changes and their checks live in the pinned fork.
+RUN python3 /jm/clientserver/test/jmclient/test_wallet_displayall.py
+
+RUN python3 /jm/clientserver/test/jmclient/test_regtest_mining.py
+
+RUN python3 /jm/clientserver/test/jmclient/test_config_overrides.py
 
 RUN useradd -ms /bin/sh joinmarket
 USER 1000:1000

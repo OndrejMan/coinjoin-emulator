@@ -1,8 +1,12 @@
-import requests
 import json
-from time import sleep
+
+import requests
+
+from .bitcoin_readiness import wait_for_node_ready
+from .exceptions import RpcError
 
 WALLET = "wallet"
+FUNDING_WALLET_TX_FEE = 0.0001
 
 
 class BtcNode:
@@ -17,28 +21,33 @@ class BtcNode:
     def _rpc(self, request, wallet=None):
         request["jsonrpc"] = "1.0"
         request["id"] = "1"
-        try:
-            response = requests.post(
-                f"http://{self.host}:{self.port}" + ("/wallet/" + WALLET if wallet else ""),
-                data=json.dumps(request),
-                auth=("user", "password"),
-                proxies=dict(http=self.proxy),
-                timeout=5,
-            )
-        except requests.exceptions.Timeout as e:
-            print("Request timeout")
-            print(e)
-            return "timeout"
-        if response.json()["error"] is not None:
-            raise Exception(response.json()["error"])
-        return response.json()["result"]
+        response = requests.post(
+            f"http://{self.host}:{self.port}" + (f"/wallet/{wallet}" if wallet else ""),
+            data=json.dumps(request),
+            auth=("user", "password"),
+            proxies=dict(http=self.proxy),
+            timeout=5,
+        )
+        body = response.json()
+        if body["error"] is not None:
+            raise RpcError(body["error"])
+        return body["result"]
 
     def get_block_count(self):
         request = {
             "method": "getblockcount",
             "params": [],
         }
-        return self._rpc(request)
+        result = self._rpc(request)
+        if not isinstance(result, int):
+            raise RpcError(f"btc-node returned no block count: {result!r}")
+        return result
+
+    def get_blockchain_info(self):
+        return self._rpc({"method": "getblockchaininfo", "params": []})
+
+    def estimate_smart_fee(self):
+        return self._rpc({"method": "estimatesmartfee", "params": [6]})
 
     def get_block_hash(self, height):
         request = {
@@ -78,31 +87,77 @@ class BtcNode:
         }
         self._rpc(request, WALLET)
 
-    def wait_ready(self):
-        while True:
+    def wait_ready(self, timeout=600):
+        """Wait until this node is ready for the emulator engines."""
+        wait_for_node_ready(self, timeout)
+
+    def ensure_funding_wallet_ready(self):
+        """Load the shared funding wallet and set the fee the distributor pays."""
+        if WALLET not in self._rpc({"method": "listwallets", "params": []}):
             try:
-                block_count = self.get_block_count()
-                if block_count == "timeout":
-                    print("Btc node not ready, timeout")
-                    continue
-                if block_count > 200:
-                    break
-            except Exception as e:
-                print(f"Btc node not ready: {e}")
-                pass
-            sleep(10)
+                self._rpc({"method": "loadwallet", "params": [WALLET]})
+            except RpcError as error:
+                if "already loaded" in str(error):
+                    pass
+                elif self._is_wallet_missing_error(error):
+                    self.create_wallet(WALLET)
+                else:
+                    raise
+        self._rpc({"method": "getwalletinfo", "params": []}, WALLET)
+        self._rpc({"method": "settxfee", "params": [FUNDING_WALLET_TX_FEE]}, WALLET)
 
-        # wait for the fee-building transactions
-        sleep(20)
+    @staticmethod
+    def _is_wallet_missing_error(error):
+        message = str(error)
+        return any(
+            marker in message
+            for marker in (
+                "Path does not exist",
+                "not found",
+                "No such file or directory",
+                "Wallet file verification failed",
+            )
+        )
 
-    def create_wallet(self, wallet):
+    def create_wallet(self, wallet, disable_private_keys=False, allow_descriptor_fallback=True):
+        body = self._create_wallet(wallet, descriptors=False, disable_private_keys=disable_private_keys)
+        error = body.get("error")
+        if error is not None and allow_descriptor_fallback and self._is_bdb_wallet_creation_error(error):
+            # Core 26+ rejects legacy BDB wallet creation by default:
+            # https://bitcoincore.org/en/releases/26.0/#wallet
+            # Core 29.1 defaults WITH_BDB to OFF, and the project's Alpine
+            # image does not enable it:
+            # https://github.com/bitcoin/bitcoin/blob/v29.1/CMakeLists.txt#L119-L124
+            # https://github.com/willcl-ark/bitcoin-core-docker/blob/f340c3f16fe039a3305b70f5f850befe3b5163e3/deprecated/29.1/alpine/Dockerfile
+            # The resulting createwallet error is implemented here:
+            # https://github.com/bitcoin/bitcoin/blob/v29.1/src/wallet/rpc/wallet.cpp#L405-L427
+            # Therefore retry with a descriptor wallet.
+            body = self._create_wallet(wallet, descriptors=True, disable_private_keys=disable_private_keys)
+            error = body.get("error")
+        if error is not None and self._is_wallet_database_exists_error(error):
+            # A wallet left behind by an earlier run only needs loading.
+            try:
+                self._rpc({"method": "loadwallet", "params": [wallet]})
+            except RpcError as load_error:
+                if "already loaded" not in str(load_error):
+                    raise
+            self._rpc({"method": "getwalletinfo", "params": []}, wallet)
+            return
+        if error is not None:
+            raise RpcError(str(error))
+
+    def _create_wallet(self, wallet: str, descriptors: bool, disable_private_keys: bool) -> dict:
         request = {
+            "jsonrpc": "2.0",
+            "id": "1",
             "method": "createwallet",
-            "params": {"wallet_name": "jm_wallet", "descriptors": False},
+            "params": {
+                "wallet_name": wallet,
+                "descriptors": descriptors,
+                "disable_private_keys": disable_private_keys,
+            },
         }
 
-        request["jsonrpc"] = "2.0"
-        request["id"] = "1"
         try:
             response = requests.post(
                 f"http://{self.host}:{self.port}",
@@ -111,9 +166,24 @@ class BtcNode:
                 proxies=dict(http=self.proxy),
                 timeout=5,
             )
-        except requests.exceptions.Timeout:
-            print("timeout")
-        if response.json()["error"] is not None:
-            print(response.json())
-            raise Exception(response.json()["error"])
-        print(response.json())
+        except requests.exceptions.Timeout as e:
+            raise TimeoutError(f"btc-node RPC timed out creating wallet {wallet}") from e
+        body = response.json()
+        if not isinstance(body, dict) or ("error" not in body and "result" not in body):
+            raise RpcError(f"Unexpected btc-node response creating wallet {wallet}: {body!r}")
+        return body
+
+    @staticmethod
+    def _is_bdb_wallet_creation_error(error: object) -> bool:
+        message = str(error.get("message", "")) if isinstance(error, dict) else ""
+        return isinstance(error, dict) and error.get("code") == -4 and (
+            "BDB wallet creation is deprecated" in message or "Compiled without bdb support" in message
+        )
+
+    @staticmethod
+    def _is_wallet_database_exists_error(error: object) -> bool:
+        return (
+            isinstance(error, dict)
+            and error.get("code") == -4
+            and "Database already exists" in str(error.get("message", ""))
+        )

@@ -1,7 +1,6 @@
-from time import time, sleep
-from traceback import print_exception
+from time import sleep, time
 
-from .wasabi_client_base import WALLET_NAME, WasabiClientBase
+from .wasabi_client_base import WasabiClientBase
 
 
 class WasabiClientV26(WasabiClientBase):
@@ -20,17 +19,16 @@ class WasabiClientV26(WasabiClientBase):
 
     def wait_wallet(self, timeout=None):
         start = time()
-        counter = 0
         while timeout is None or time() - start < timeout:
             try:
                 self._create_wallet()
-            except Exception as e:
+            except Exception:
                 pass
 
             try:
                 self.get_balance(timeout=5)
                 return True
-            except Exception as e:
+            except Exception:
                 pass
 
             sleep(1)

@@ -4,10 +4,10 @@ A container-based setup for the emulation of CoinJoin transactions on RegTest ne
 
 ## Usage
 
-1. Install [Docker](https://docker.com/) and [Python](http://python.org/).
+1. Install [Docker](https://docker.com/), [Python](http://python.org/), and [uv](https://docs.astral.sh/uv/).
 2. Clone the repository `git clone --recurse-submodules https://github.com/crocs-muni/coinjoin-emulator`.
-3. Install dependencies: `pip install -r requirements.txt`.
-4. Run the default scenario with the default driver: `python manager.py run`.
+3. Install dependencies: `uv sync`.
+4. Run the default scenario with the default driver: `uv run python manager.py run`.
    - [Scenario](#scenarios) definition file can be specified using the `--scenario` option.
 
 For more complex setups see section [Advanced usage](#advanced-usage).
@@ -36,8 +36,8 @@ Scenario definition files can be passed to the simulation script using the `--sc
         {"funds": [1000000, 50000], "delay_rounds": 3},
         {"funds": [100000, {"value": 200000, "delay_rounds": 5}]},
         {"funds": [200000], "version": "2.0.3"},
-        {"funds": [4000000], "anon_score_target": "25"},
-        {"funds": [3500000], "redcoin_isolation": true},
+        {"funds": [4000000], "wasabi": {"anon_score_target": "25"}},
+        {"funds": [3500000], "wasabi": {"redcoin_isolation": true}},
         ...
     ],
 }
@@ -62,8 +62,10 @@ The fields are as follows:
   - `stop_blocks` is the number of blocks after which the wallet will stop participating.
   - `stop_rounds` is the number of rounds after which the wallet will stop participating.
   - `version` is the string representation of wallet wasabi version used for client running this wallet.
-  - `anon_score_target` is the target anon score of the wallet.
-  - `redcoin_isolation` is a boolean value indicating whether the wallet should use redcoin isolation.
+  - `wasabi` is an optional object with Wasabi-specific wallet settings:
+    - `anon_score_target` is the target anon score of the wallet.
+    - `redcoin_isolation` is a boolean value indicating whether the wallet should use redcoin isolation.
+    - `skip_rounds` is a list of round numbers the wallet skips.
 
 ## Engine
 You can run the simulation with different CoinJoin protocols. Currently, Wasabi and Joinmarket are supported. 
@@ -80,6 +82,19 @@ The simulation script enables advanced configuration for running on different co
 #### Docker
 
 The default driver is `docker`. Running `docker` requires [Docker](https://www.docker.com/) installed locally and running.
+
+The emulator creates a watch-only Core monitoring wallet for each JoinMarket
+client. The [JoinMarket fork](https://github.com/OndrejMan/joinmarket-clientserver)
+in the `vendor/joinmarket-clientserver` submodule defers mining-address creation
+until JoinMarket actually requests mining; no funding descriptor is imported
+into client wallets. The emulator controls mining through btc-node and the
+manager. Initialize the pinned source with `git submodule update --init` before
+building the JoinMarket base image. The fork's display API accepts
+`displayall=true` for complete address exports.
+
+JoinMarket tumbler scenarios using a round limit must also set `blocks` to a
+positive limit. Tumblers do not export confirmed per-round events, so their
+completion cannot advance the round counter; the block limit bounds the run.
 
 #### Podman
 

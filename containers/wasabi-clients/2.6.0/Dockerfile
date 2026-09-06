@@ -9,15 +9,20 @@ USER 1000:1000
 # get wasabi from the github repo and checkout to the desired branch
 RUN mkdir -p /home/wasabi/wasabi-src
 WORKDIR /home/wasabi/wasabi-src
-RUN git clone https://github.com/zkSNACKs/WalletWasabi.git .
-RUN git checkout v2.6.0
+# Fetch only the v2.6.0 source snapshot, without the full repository history.
+RUN git clone --depth 1 --branch v2.6.0 https://github.com/WalletWasabi/WalletWasabi.git .
 
 
 COPY global.patch /home/wasabi/wasabi-src/global.patch
 RUN patch --binary -p1 < global.patch
 
 WORKDIR /home/wasabi/wasabi-src/WalletWasabi.Daemon
-RUN dotnet build 
+# NuGet Audit flags NU1903 for a transitive dependency pinned by this release and
+# warnings are errors here, so an unchanged rebuild fails. run.sh calls `dotnet
+# run`, which rebuilds at container start, so the property has to hold at runtime
+# too — MSBuild reads this environment variable as a default property.
+ENV NuGetAudit=false
+RUN dotnet build
 
 COPY --chown=wasabi:wasabi run.sh /home/wasabi/wasabi-src/WalletWasabi.Daemon
 WORKDIR /home/wasabi/wasabi-src/WalletWasabi.Daemon

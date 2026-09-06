@@ -1,7 +1,10 @@
 import json
 import random
+from time import monotonic, sleep, time
+
 import requests
-from time import sleep, time
+
+from manager.exceptions import RpcError
 
 WALLET_NAME = "wallet"
 
@@ -32,6 +35,7 @@ class WasabiClientBase:
         if self.version < "2.0.4":
             wallet = False
 
+        last_error = None
         for _ in range(repeat):
             try:
                 response = requests.post(
@@ -40,14 +44,17 @@ class WasabiClientBase:
                     proxies=dict(http=self.proxy),
                     timeout=timeout,
                 )
-            except requests.exceptions.Timeout:
+            except requests.exceptions.Timeout as error:
+                last_error = error
                 continue
             if "error" in response.json():
-                raise Exception(response.json()["error"])
+                raise RpcError(response.json()["error"])
             if "result" in response.json():
                 return response.json()["result"]
             return None
-        return "timeout"
+        if last_error is not None:
+            raise last_error
+        raise RpcError(f"no answer from {self.host}:{self.port} after {repeat} attempts")
 
     def get_status(self):
         request = {
@@ -81,13 +88,13 @@ class WasabiClientBase:
         while timeout is None or time() - start < timeout:
             try:
                 self._create_wallet()
-            except:
+            except Exception:
                 pass
 
             try:
                 self.get_balance(timeout=5)
                 return True
-            except:
+            except Exception:
                 pass
 
             sleep(0.1)
@@ -157,11 +164,13 @@ class WasabiClientBase:
         }
         return self._rpc(request, timeout=10, repeat=3)
 
-    def wait_ready(self):
-        while True:
+    def wait_ready(self, timeout=120):
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
             try:
                 self.get_status()
-                break
-            except:
+                return
+            except Exception:
                 pass
             sleep(0.1)
+        raise TimeoutError(f"{self.__class__.__name__} at {self.host}:{self.port} was not ready after {timeout}s")

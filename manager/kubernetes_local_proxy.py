@@ -1,11 +1,13 @@
 import json
-import time
-import subprocess
-import tempfile
 import os
+import shlex
+import subprocess
+import time
 import uuid
 
 import backoff
+
+from manager.exceptions import CoinjoinEmulatorError
 
 # File transfer settings
 CHUNK_SIZE_MB = 10
@@ -27,8 +29,8 @@ class KubernetesLocalProxy:
         self.simulation_id = str(uuid.uuid4())[:8]
         self._kubectl_base_cmd = self._build_kubectl_cmd()
 
-        if auto_deploy:
-            self.deploy_manager(image_prefix=image_prefix)
+        if auto_deploy and not self.deploy_manager(image_prefix=image_prefix):
+            raise CoinjoinEmulatorError("Could not deploy the orchestrator")
 
         # Test connection to orchestrator
         self._test_connection()
@@ -103,6 +105,7 @@ class KubernetesLocalProxy:
             "--namespace", self.namespace,
             "--image-prefix", image_prefix,
             "--cleanup-wait", str(cleanup_wait),
+            "--engine", engine,
             "--in-cluster"  # New flag we'll add
         ]
 
@@ -148,6 +151,11 @@ class KubernetesLocalProxy:
             "--image-prefix", image_prefix,
             "--scenario", scenario_path  # This is the path INSIDE the container
         ]
+        # get_status() reads exit_status to tell a finished run from a failed
+        # one, so the manager's exit code has to be recorded when it ends.
+        completion_wrapper = shlex.quote(
+            f'{shlex.join(manager_cmd)}; code=$?; echo "$code" > "$1/exit_status"; exit "$code"'
+        )
 
         background_cmd = self._kubectl_base_cmd + [
             "exec", "-n", self.namespace,
@@ -156,9 +164,10 @@ class KubernetesLocalProxy:
             f"""
                 SIM_DIR=/tmp/simulations/{self.simulation_id}
                 mkdir -p $SIM_DIR
-                nohup {' '.join(manager_cmd)} > $SIM_DIR/output.log 2>&1 &
+                nohup sh -c {completion_wrapper} \
+                    sh "$SIM_DIR" > "$SIM_DIR/output.log" 2>&1 &
                 echo $! > $SIM_DIR/pid
-                echo '{{"status": "running", "pid": "'$!'"", "start_time": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "scenario": "{scenario_path}"}}' > $SIM_DIR/status.json
+                echo '{{"status": "running", "pid": "'$!'", "start_time": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "scenario": "{scenario_path}"}}' > $SIM_DIR/status.json
             """
         ]
         print(f"Running command: {' '.join(background_cmd)}")
@@ -808,6 +817,7 @@ class KubernetesLocalProxy:
             return self.orchestrator_pod
 
 
+    # The stop is not awaited: the caller polls get_status() for the outcome.
     def stop_simulation(self, simulation_id=None, timeout=30):
         """Stop a running simulation gracefully"""
         sim_id = simulation_id or self.simulation_id
@@ -839,6 +849,8 @@ class KubernetesLocalProxy:
 
         result = subprocess.run(stop_cmd, capture_output=True, text=True, check=True)
         print(f"Stop command result: {result.stdout}")
+
+        return {"status": "stopped", "simulation_id": sim_id}
 
     def download_logs(self, local_destination="./logs", all_logs=False, last_n=None):
         """
@@ -994,7 +1006,6 @@ class KubernetesLocalProxy:
         Returns:
             bool: True if deployment successful
         """
-        deployment_name = "emulation-manager"
         manager_image = f"{image_prefix}emulator-manager"
 
         # # Check if deployment already exists
@@ -1026,20 +1037,6 @@ class KubernetesLocalProxy:
             # Use pre-created manifests
             print("Using pre-created manifests from containers/emulator-manager/...")
 
-            # Update the image in deployment.yaml if needed
-            if image_prefix:
-                import yaml
-                with open(deployment_file, 'r') as f:
-                    deployment = yaml.safe_load(f)
-
-                # Update image
-                deployment['spec']['template']['spec']['containers'][0]['image'] = manager_image
-                deployment['spec']['template']['spec']['containers'][0]['imagePullPolicy'] = 'Always'
-
-                # Save updated deployment
-                with open(deployment_file, 'w') as f:
-                    yaml.dump(deployment, f, default_flow_style=False)
-
             # Apply all manifests
             manifest_files = [
                 "role.yaml",
@@ -1058,3 +1055,36 @@ class KubernetesLocalProxy:
                     subprocess.run(apply_cmd, check=True)
                 else:
                     print(f"Warning: {manifest} not found in {manifest_dir}")
+
+            # The image override is applied to the running deployment; rewriting
+            # the manifest in the repository would leave a dirty working tree.
+            if image_prefix:
+                patch = json.dumps({
+                    "spec": {"template": {"spec": {"containers": [
+                        {"name": "manager", "image": manager_image, "imagePullPolicy": "Always"}
+                    ]}}}
+                })
+                subprocess.run(
+                    self._kubectl_base_cmd
+                    + ["patch", "deployment", "emulation-manager", "-n", self.namespace, "-p", patch],
+                    check=True,
+                )
+
+        if wait_ready:
+            # rollout status only understands controllers; a bare pod reference
+            # has to be waited for with `kubectl wait`.
+            if self.orchestrator_pod.startswith("deployment/"):
+                ready_cmd = ["rollout", "status", self.orchestrator_pod, "--timeout=300s"]
+            else:
+                ready_cmd = [
+                    "wait", "--for=condition=Ready", f"pod/{self.orchestrator_pod}", "--timeout=300s"
+                ]
+            result = subprocess.run(
+                self._kubectl_base_cmd + ready_cmd + ["-n", self.namespace],
+                capture_output=True, text=True, check=False,
+            )
+            if result.returncode != 0:
+                print(f"Orchestrator did not become ready: {result.stderr.strip()}")
+                return False
+
+        return True

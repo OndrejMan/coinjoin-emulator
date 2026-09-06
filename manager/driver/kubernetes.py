@@ -1,24 +1,75 @@
 import base64
+import os
+import re
+import shlex
+import tarfile
+import time
 import traceback
+import uuid
 from functools import cached_property
 from io import BytesIO
-import os
-import tarfile
+from threading import RLock
 from time import sleep
-from . import Driver
-from kubernetes import client, config
-from kubernetes.stream import stream
-from kubernetes.client.exceptions import ApiException
+
 import backoff
+from kubernetes import client, config
+from kubernetes.client.exceptions import ApiException
+from kubernetes.stream import stream
+
+from manager.exceptions import KubernetesResourceQuotaError, StartupError
+
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
+
+POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
+DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
+UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_UPLOAD_TIMEOUT", "120"))
+UPLOAD_COMMAND_CHUNK_SIZE = 16 * 1024
+BENIGN_TAR_WARNING_RE = re.compile(
+    r"^tar: .*: (file changed as we read it|socket ignored)$"
+    r"|^tar: Removing leading [`'\"]?/[`'\"]? from (member names|hard link targets)$"
+)
+MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
+MANAGED_BY_VALUE = "coinjoin-emulator"
+
+
+def _strip_reserved_ports_sysctl(pod_manifest):
+    """Remove the reserved-port sysctl when a cluster does not allow it."""
+    spec = pod_manifest.get("spec") or {}
+    security_context = spec.get("securityContext") or {}
+    sysctls = security_context.get("sysctls") or []
+    remaining = [sysctl for sysctl in sysctls if sysctl.get("name") != RESERVED_PORTS_SYSCTL]
+    if len(remaining) == len(sysctls):
+        return False
+    if remaining:
+        security_context["sysctls"] = remaining
+    else:
+        spec.pop("securityContext", None)
+    return True
+
+
+def _is_sysctl_rejection(error):
+    return getattr(error, "status", None) in {400, 403, 422} and "sysctl" in str(
+        getattr(error, "body", "") or error
+    ).lower()
+
+
+def _split_tar_diagnostics(stderr):
+    """Separate warnings that leave a complete archive from real tar errors."""
+    benign, fatal = [], []
+    for line in stderr.splitlines():
+        if line.strip():
+            (benign if BENIGN_TAR_WARNING_RE.match(line.strip()) else fatal).append(line.strip())
+    return benign, fatal
 
 
 class KubernetesDriver(Driver):
-    def __init__(self, namespace="coinjoin", reuse_namespace=False, pull_secret_path=None, in_cluster=False):
+    def __init__(self, namespace="coinjoin", reuse_namespace=False, pull_secret_path=None, in_cluster=False,
+                 run_id=None):
 
         if in_cluster:
             try:
                 config.load_incluster_config()
-            except Exception as e:
+            except Exception:
                 config.load_kube_config()
         else:
             config.load_kube_config()
@@ -28,6 +79,17 @@ class KubernetesDriver(Driver):
         self.reuse_namespace = reuse_namespace
         self.pull_secret_path = pull_secret_path
         self.in_cluster = in_cluster
+        self.run_id = run_id
+
+    @cached_property
+    def _exec_lock(self):
+        """Serialize exec calls that temporarily swap the shared ApiClient request method.
+
+        kubernetes.stream.stream mutates the API client while a connection is
+        open, so concurrent artifact downloads otherwise cross their websocket
+        streams and corrupt the archive payload.
+        """
+        return RLock()
 
     def _create_image_pull_secret(self):
         secret_name = "regcred"
@@ -91,12 +153,33 @@ class KubernetesDriver(Driver):
     def pull(self, name):
         pass
 
+    def resource_labels(self, name):
+        """Label every resource so cleanup can find exactly this emulator's own."""
+        labels = {"app": name, MANAGED_BY_LABEL: MANAGED_BY_VALUE}
+        if self.run_id:
+            labels["coinjoin.run-id"] = self.run_id
+        return labels
+
     def build_pod_manifest(self, name, image, env, ports, cpu, memory,
-                            user_id=None):
+                            user_id=None, volumes=None, command=None, group_id=None):
         if ports is None:
             ports = {}
         if env is None:
             env = {}
+
+        volume_mounts = []
+        pod_volumes = []
+        for index, (host_path, mount) in enumerate((volumes or {}).items()):
+            volume_name = f"host-volume-{index}"
+            volume_mounts.append({
+                "name": volume_name,
+                "mountPath": mount["bind"],
+                "readOnly": mount.get("mode") == "ro",
+            })
+            pod_volumes.append({
+                "name": volume_name,
+                "hostPath": {"path": host_path, "type": "DirectoryOrCreate"},
+            })
 
         security_context = {
                             "allowPrivilegeEscalation": False,
@@ -109,19 +192,22 @@ class KubernetesDriver(Driver):
                             "runAsNonRoot": True,
                             "seccompProfile": {"type": "RuntimeDefault"},
                             "runAsUser": user_id,
-                            "runAsGroup": user_id,
+                            "runAsGroup": user_id if group_id is None else group_id,
                         }
 
         return {
             "apiVersion": "v1",
             "kind": "Pod",
-            "metadata": {"name": name, "labels": {"app": name}},
+            "metadata": {"name": name, "labels": self.resource_labels(name)},
             "spec": {
                 "restartPolicy": "Never",
                 "containers": [
                     {
                         "image": image,
-                        "imagePullPolicy": "Always",
+                        # CI pulls immutable registry images. A local k3d test imports an
+                        # explicitly named image and opts into IfNotPresent so Kubernetes
+                        # does not replace it with the registry tag.
+                        "imagePullPolicy": os.environ.get("KUBERNETES_IMAGE_PULL_POLICY", "Always"),
                         "name": name,
                         "ports": [
                             {"containerPort": container_port}
@@ -131,13 +217,20 @@ class KubernetesDriver(Driver):
                             {"name": k, "value": v}
                             for k, v in env.items()
                         ],
+                        "volumeMounts": volume_mounts,
                         "securityContext": security_context,
                         "resources": {
                             "limits": {"cpu": cpu*1.5, "memory": f"{memory*1.5}Mi"},
                             "requests": {"cpu": cpu, "memory": f"{memory}Mi"},
                         },
+                        # Keep the image ENTRYPOINT unless the caller overrides it
+                        **({"command": command} if command is not None else {}),
                     }
                 ],
+                "volumes": pod_volumes,
+                "securityContext": {
+                    "sysctls": [{"name": RESERVED_PORTS_SYSCTL, "value": RESERVED_PORT_RANGE}]
+                },
                 # Add imagePullSecrets if pull_secret_path is set
                 **({"imagePullSecrets": [{"name": "regcred"}]} if self.pull_secret_path else {}),
             },
@@ -154,16 +247,23 @@ class KubernetesDriver(Driver):
         run_as_user=None,
         **kwargs
     ):
-        pod_manifest = self.build_pod_manifest(name, image, env, ports, cpu, memory, run_as_user)
-        resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+        pod_manifest = self.build_pod_manifest(
+            name, image, env, ports, cpu, memory, run_as_user,
+            kwargs.get("volumes"), kwargs.get("command"), kwargs.get("run_as_group"),
+        )
+        self._create_pod(name, pod_manifest)
 
-        pod_ip = None
         try:
-            while pod_ip is None:
-                pod_ip = self.client.read_namespaced_pod_status(
-                    name=name, namespace=self.namespace
-                ).status.pod_ip
-                sleep(1)
+            pod_ip = self._wait_for_pod_ip(name)
+        except StartupError as error:
+            # Not every kubelet allows the reserved-port sysctl; the run is
+            # still valid without it, only more exposed to a port collision.
+            if "SysctlForbidden" not in str(error) or not _strip_reserved_ports_sysctl(pod_manifest):
+                raise
+            print(f"[WARNING] kubelet forbade {RESERVED_PORTS_SYSCTL} for pod {name}; recreating it without it")
+            self.stop(name)
+            self._create_pod(name, pod_manifest)
+            pod_ip = self._wait_for_pod_ip(name)
         except Exception as e:
             print(f"Failed to get pod IP: {e}")
             raise
@@ -171,7 +271,7 @@ class KubernetesDriver(Driver):
         service_manifest = {
             "apiVersion": "v1",
             "kind": "Service",
-            "metadata": {"name": f"{name}"},
+            "metadata": {"name": f"{name}", "labels": self.resource_labels(name)},
             "spec": {
                 "type": "NodePort",
                 "selector": {"app": name},
@@ -206,126 +306,125 @@ class KubernetesDriver(Driver):
             )
             return pod_ip or "", port_mapping, None
 
+    def _create_pod(self, name, pod_manifest):
+        try:
+            self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+            return
+        except ApiException as error:
+            details = str(getattr(error, "body", "") or error)
+            if error.status == 403 and "exceeded quota" in details.lower():
+                raise KubernetesResourceQuotaError(
+                    f"Kubernetes quota rejected pod {name} in namespace {self.namespace}: {details}"
+                ) from error
+            if not _is_sysctl_rejection(error) or not _strip_reserved_ports_sysctl(pod_manifest):
+                raise
+            print(f"[WARNING] cluster rejected {RESERVED_PORTS_SYSCTL} for pod {name}; starting it without it")
+        self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+
+    def _wait_for_pod_ip(self, name):
+        """Wait for a scheduled pod's IP, giving up on a terminal pod or a deadline."""
+        deadline = time.monotonic() + POD_IP_WAIT_TIMEOUT_SECONDS
+        while True:
+            status = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace).status
+            if status.pod_ip:
+                return status.pod_ip
+            if status.phase in {"Failed", "Succeeded"}:
+                detail = " ".join(
+                    str(value) for value in (status.reason, status.message) if value
+                )
+                raise StartupError(
+                    f"Pod {name} entered terminal phase {status.phase} before receiving an IP"
+                    + (f": {detail}" if detail else "")
+                )
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Pod {name} did not receive an IP within {POD_IP_WAIT_TIMEOUT_SECONDS}s "
+                    f"(last phase: {status.phase})"
+                )
+            sleep(1)
+
     def stop(self, name):
         try:
             self.client.delete_namespaced_pod(name=name, namespace=self.namespace)
             self.client.delete_namespaced_service(
                 name, namespace=self.namespace
             )
-        except:
+        except Exception:
             pass
 
     def download(self, name, src_path, dst_path):
+        self._require_exec_ready(name)
         if src_path[-1] == "/":
             src_path = src_path[:-1]
         src_parent, src_target = os.path.split(src_path)
-        # Use rsync-like approach with tar to handle files being written to
-        # The --warning=no-file-changed flag helps handle files that change during reading
-        # The --ignore-failed-read flag ensures the process continues even if some files can't be read
+        # The websocket carries text frames that may split at any byte, so the
+        # archive is transported as one uninterrupted base64 stream (GNU base64
+        # wraps its output by default) and decoded strictly below.
         exec_command = [
-            "tar", "cf", "-",
-            "--warning=no-file-changed",
-            "--ignore-failed-read",
-            "-C", src_parent, src_target
+            "sh",
+            "-c",
+            f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64 | tr -d '\\n'",
         ]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
-        print("Opening connection")
+        encoded_chunks = []
+        stderr_chunks = []
+        deadline = time.monotonic() + DOWNLOAD_TIMEOUT_SECONDS
+        with self._exec_lock:
+            resp = self._exec_stream(name, exec_command, f"download {src_path}")
+            while resp.is_open():
+                if time.monotonic() >= deadline:
+                    resp.close()
+                    raise TimeoutError(f"Timed out downloading {name}:{src_path}")
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    encoded_chunks.append(resp.read_stdout())
+                if resp.peek_stderr():
+                    stderr_chunks.append(resp.read_stderr())
+            resp.close()
 
-        fo = BytesIO()
-        while resp.is_open():
-            print("Updating stream")
-            resp.update(timeout=10)
-            if resp.peek_stdout():
-                fo.write(resp.read_stdout().encode())
-        print("")
-        fo.seek(0)
-        print("Closing connection")
-        resp.close()
-
-        with tarfile.open(fileobj=fo) as tar:
-            print("Extracting")
+        benign_warnings, fatal_errors = _split_tar_diagnostics("".join(stderr_chunks))
+        if fatal_errors:
+            raise RuntimeError("download command wrote stderr: " + "\n".join(fatal_errors))
+        encoded = "".join(encoded_chunks)
+        if not encoded.strip():
+            detail = "; ".join(benign_warnings) or "no output"
+            raise RuntimeError(f"download of {name}:{src_path} produced an empty archive: {detail}")
+        if benign_warnings:
+            print(
+                f"[WARNING] {name}:{src_path} changed while it was archived; "
+                f"keeping the completed archive: {'; '.join(benign_warnings)}"
+            )
+        try:
+            payload = base64.b64decode(encoded, validate=True)
+        except ValueError as error:
+            raise RuntimeError(f"download of {name}:{src_path} returned invalid base64") from error
+        with tarfile.open(fileobj=BytesIO(payload)) as tar:
             tar.extractall(dst_path)
 
-        # Wait for required files to appear in dst_path
-        import glob
-        import time
-        start_time = time.time()
-        timeout = 120  # 2 minutes
-        found = False
-        waited = False
-        while True:
-            tumble_log = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.log"))
-            tumble_schedule = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.schedule*"))
-            j_logs = glob.glob(os.path.join(dst_path, "logs/J*.log"))
-            yifen = os.path.exists(os.path.join(dst_path, "logs/yigen-statement.csv"))
-
-            cond1 = tumble_log and tumble_schedule and len(j_logs) > 0
-            cond2 = len(j_logs) > 0 and yifen
-
-            print(f"Debug: tumble_log={tumble_log}, tumble_schedule={tumble_schedule}, j_logs={j_logs}, yigen={yifen}")
-
-            if cond1 or cond2:
-                print(f"All required log files found in {dst_path} after {time.time() - start_time} seconds")
-                print(f"Waiting for file transfer to complete...")
-                time.sleep(10)
-                if found:
-                    print("All required log files still found in {} after {} seconds".format(dst_path, time.time() - start_time))
-                    time.sleep(1)
-                    break
-                found = True
-
-            if time.time() - start_time > timeout:
-                print("Timeout waiting for required log files in {}".format(dst_path))
-                break
-
-            if not waited:
-                print("Waiting for required log files to appear in {}...".format(dst_path))
-                waited = True
-            time.sleep(2)
-
-        # sleep(60)
-
     def peek(self, name, path):
-        exec_command = ["cat", path]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
-
+        self._require_exec_ready(name)
         output = ""
-        while resp.is_open():
-            resp.update(timeout=1)
-            if resp.peek_stdout():
-                output += resp.read_stdout()
-        resp.close()
+        with self._exec_lock:
+            resp = self._exec_stream(name, ["cat", path], f"read {path}")
+            while resp.is_open():
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    output += resp.read_stdout()
+            resp.close()
         return output
 
-    def get_pod_resource_usage(self, name):
-        """
-        Get memory usage of a pod by reading /proc/self/status.
-        Returns dict with memory_mb and memory_limit_mb, or None if failed.
-        """
+    def _require_exec_ready(self, name):
+        """Reject a pod whose container cannot service a Kubernetes exec request."""
+        pod = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace)
+        if not getattr(getattr(pod, "spec", None), "node_name", None):
+            raise RuntimeError(f"pod {name} was never scheduled onto a node, so nothing can be read from it")
+        phase = getattr(getattr(pod, "status", None), "phase", None)
+        if phase != "Running":
+            raise RuntimeError(f"pod {name} is in phase {phase}, so its container is gone")
+
+    def _exec_stream(self, name, exec_command, action):
+        """Open an exec stream and turn a Kubernetes API failure into a clear error."""
         try:
-            # Read process memory info from /proc
-            exec_command = ["cat", "/proc/self/status"]
-            resp = stream(
+            return stream(
                 self.client.connect_get_namespaced_pod_exec,
                 name,
                 self.namespace,
@@ -336,13 +435,27 @@ class KubernetesDriver(Driver):
                 tty=False,
                 _preload_content=False,
             )
+        except ApiException as error:
+            raise RuntimeError(f"could not {action} on pod {name}: {error}") from error
 
+    def logs(self, name):
+        return str(self.client.read_namespaced_pod_log(name=name, namespace=self.namespace))
+
+    def get_pod_resource_usage(self, name):
+        """
+        Get memory usage of a pod by reading /proc/self/status.
+        Returns dict with memory_mb and memory_limit_mb, or None if failed.
+        """
+        try:
+            # Read process memory info from /proc
             output = ""
-            while resp.is_open():
-                resp.update(timeout=1)
-                if resp.peek_stdout():
-                    output += resp.read_stdout()
-            resp.close()
+            with self._exec_lock:
+                resp = self._exec_stream(name, ["cat", "/proc/self/status"], "read /proc/self/status")
+                while resp.is_open():
+                    resp.update(timeout=1)
+                    if resp.peek_stdout():
+                        output += resp.read_stdout()
+                resp.close()
 
             # Parse VmRSS (Resident Set Size - actual RAM used)
             memory_kb = None
@@ -368,7 +481,7 @@ class KubernetesDriver(Driver):
                 'memory_limit_mb': memory_limit_mb,
                 'memory_percent': (memory_kb / 1024 / memory_limit_mb * 100) if memory_limit_mb > 0 else 0
             }
-        except Exception as e:
+        except Exception:
             # Silently fail - pod might be terminating
             return None
 
@@ -376,33 +489,55 @@ class KubernetesDriver(Driver):
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:tar") as tar:
             tar.add(src_path, arcname=dst_path)
-        commands = [buf.getvalue()]
+        # write_stdin() truncated the archive whenever it exceeded a websocket
+        # frame, and the loop exited before the remote tar had finished, so the
+        # payload is staged in text chunks and unpacked with a checked command.
+        payload = base64.b64encode(buf.getvalue()).decode("ascii")
+        remote_payload = f"/tmp/coinjoin-emulator-upload-{uuid.uuid4().hex}.b64"
+        deadline = time.monotonic() + UPLOAD_TIMEOUT_SECONDS
 
-        exec_command = ["tar", "xf", "-", "-C", "/"]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
+        try:
+            for offset in range(0, len(payload), UPLOAD_COMMAND_CHUNK_SIZE):
+                chunk = payload[offset:offset + UPLOAD_COMMAND_CHUNK_SIZE]
+                redirect = ">" if offset == 0 else ">>"
+                self._exec_checked(
+                    name, dst_path, deadline,
+                    ["sh", "-c", f'printf "%s" "$1" {redirect} "$2"', "sh", chunk, remote_payload],
+                )
+            self._exec_checked(
+                name, dst_path, deadline,
+                [
+                    "sh", "-c",
+                    'base64 -d "$1" | tar xf - -C /; status=$?; rm -f -- "$1"; exit "$status"',
+                    "sh", remote_payload,
+                ],
+            )
+        except Exception:
+            try:
+                self._exec_checked(name, dst_path, deadline, ["rm", "-f", "--", remote_payload])
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass
+            raise
 
-        while resp.is_open():
-            resp.update(timeout=1)
-            if resp.peek_stdout():
-                print(f"STDOUT: {resp.read_stdout()}")
-            if resp.peek_stderr():
-                print(f"STDERR: {resp.read_stderr()}")
-            if commands:
-                c = commands.pop(0)
-                resp.write_stdin(c)
-            else:
-                break
-        resp.close()
+    def _exec_checked(self, name, dst_path, deadline, exec_command):
+        """Run one upload command and fail if it wrote to stderr or exited non-zero."""
+        stderr_chunks = []
+        with self._exec_lock:
+            resp = self._exec_stream(name, exec_command, f"upload to {dst_path}")
+            while resp.is_open():
+                if time.monotonic() >= deadline:
+                    resp.close()
+                    raise TimeoutError(f"Timed out uploading to {name}:{dst_path}")
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    resp.read_stdout()
+                if resp.peek_stderr():
+                    stderr_chunks.append(resp.read_stderr())
+            returncode = getattr(resp, "returncode", None)
+            resp.close()
+        stderr = "".join(stderr_chunks).strip()
+        if returncode not in (None, 0) or stderr:
+            raise RuntimeError(f"upload to {name}:{dst_path} failed" + (f": {stderr}" if stderr else ""))
 
 
     def cleanup(self, image_prefix=""):
@@ -413,8 +548,12 @@ class KubernetesDriver(Driver):
         # self.client = fresh_client
         # return
 
+        # Match on the label the driver stamps instead of guessing from names:
+        # the name list missed pods and could delete a resource this run does
+        # not own in a shared namespace.
+        managed = f"{MANAGED_BY_LABEL}={MANAGED_BY_VALUE}"
         try:
-            pods = self.client.list_namespaced_pod(namespace=self._namespace)
+            pods = self.client.list_namespaced_pod(namespace=self._namespace, label_selector=managed)
         except ApiException as e:
             print("Error listing pods:", e)
             traceback.print_exc()
@@ -422,34 +561,18 @@ class KubernetesDriver(Driver):
             return
 
         for pod in pods.items:
-            if any(
-                    x in pod.metadata.name
-                    for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-coordinator", "wasabi-client",
-                              "joinmarket-client-server", "joinmarket-distributor", "jcs", "joinmarket-obwatch")
-            ):
-                try:
-                    print(f"Deleting pod {pod.metadata.name}")
-                    self.client.delete_namespaced_pod(
-                        name=pod.metadata.name, namespace=self._namespace
-                    )
-                    print(f"Deleted pod {pod.metadata.name}")
-                except ApiException:
-                    pass
-        services = self.client.list_namespaced_service(namespace=self._namespace)
+            try:
+                print(f"Deleting pod {pod.metadata.name}")
+                self.client.delete_namespaced_pod(name=pod.metadata.name, namespace=self._namespace)
+            except ApiException:
+                pass
+        services = self.client.list_namespaced_service(namespace=self._namespace, label_selector=managed)
         for service in services.items:
-            if any(
-                    x in service.metadata.name
-                    for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-coordinator", "wasabi-client",
-                              "joinmarket-client-server", "joinmarket-distributor", "jcs", "joinmarket-obwatch")
-            ):
-                try:
-                    print("Deleting service", service.metadata.name)
-                    self.client.delete_namespaced_service(
-                        name=service.metadata.name, namespace=self._namespace
-                    )
-                    print("Deleted service", service.metadata.name)
-                except ApiException:
-                    pass
+            try:
+                print("Deleting service", service.metadata.name)
+                self.client.delete_namespaced_service(name=service.metadata.name, namespace=self._namespace)
+            except ApiException:
+                pass
 
         if not self.reuse_namespace:
             try:
