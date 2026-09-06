@@ -114,6 +114,9 @@ exclude = [
     "__pycache__",
     "build",
     "dist",
+    # Upstream JoinMarket source: `lint` runs `ruff --fix`, which would rewrite
+    # the whole submodule and leave it dirty against its own remote.
+    "vendor",
 ]
 line-length = 120
 
