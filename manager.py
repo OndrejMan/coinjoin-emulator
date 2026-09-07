@@ -329,7 +329,8 @@ if __name__ == "__main__":
             driver = KubernetesDriver(args.namespace,
                                       args.reuse_namespace,
                                       k8s_pull_secret,
-                                      in_cluster=args.in_cluster)
+                                      in_cluster=args.in_cluster,
+                                      run_id=getattr(args, "run_id", None))
         case "openshift":
             from manager.driver.openshift import OpenshiftDriver
             k8s_pull_secret = args.k8s_pull_secret or os.environ.get("K8S_PULL_SECRET")
