@@ -3,7 +3,11 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+from kubernetes.client.exceptions import ApiException
+
 from manager.driver.kubernetes import MANAGED_BY_LABEL, MANAGED_BY_VALUE, KubernetesDriver
+from manager.exceptions import KubernetesResourceQuotaError
 
 
 def driver(**overrides: object) -> KubernetesDriver:
@@ -68,3 +72,13 @@ def test_cleanup_only_touches_resources_this_emulator_created() -> None:
     instance.client.delete_namespaced_pod.assert_called_once_with(
         name="btc-node", namespace="coinjoin"
     )
+
+
+def test_a_quota_rejection_is_reported_as_a_quota_error() -> None:
+    instance = driver()
+    rejection = ApiException(status=403)
+    rejection.body = 'pods "btc-node" is forbidden: exceeded quota: cpu'
+    instance.client.create_namespaced_pod.side_effect = rejection
+
+    with pytest.raises(KubernetesResourceQuotaError):
+        instance.run("btc-node", "btc-node:latest", ports={18443: 18443}, cpu=1.0, memory=512)
