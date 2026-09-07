@@ -11,6 +11,8 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from kubernetes.stream import stream
 
+from manager.exceptions import KubernetesResourceQuotaError
+
 from . import Driver
 
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
@@ -195,7 +197,15 @@ class KubernetesDriver(Driver):
             name, image, env, ports, cpu, memory, run_as_user,
             kwargs.get("volumes"), kwargs.get("command"),
         )
-        resp = self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+        try:
+            self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+        except ApiException as error:
+            details = str(getattr(error, "body", "") or error)
+            if error.status == 403 and "exceeded quota" in details.lower():
+                raise KubernetesResourceQuotaError(
+                    f"Kubernetes quota rejected pod {name} in namespace {self.namespace}: {details}"
+                ) from error
+            raise
 
         pod_ip = None
         try:
