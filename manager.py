@@ -326,6 +326,9 @@ if __name__ == "__main__":
 
             # Support for k8s image pull secret
             k8s_pull_secret = args.k8s_pull_secret or os.environ.get("K8S_PULL_SECRET")
+            if getattr(args, "disable_port_forward", False) and not args.proxy and not args.in_cluster:
+                print("--disable-port-forward requires --proxy or --in-cluster")
+                sys.exit(1)
             driver = KubernetesDriver(args.namespace,
                                       args.reuse_namespace,
                                       k8s_pull_secret,
