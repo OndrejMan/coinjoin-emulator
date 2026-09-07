@@ -1,6 +1,7 @@
 import base64
 import os
 import tarfile
+import time
 import traceback
 from functools import cached_property
 from io import BytesIO
@@ -11,10 +12,11 @@ from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
 from kubernetes.stream import stream
 
-from manager.exceptions import KubernetesResourceQuotaError
+from manager.exceptions import KubernetesResourceQuotaError, StartupError
 
 from . import Driver
 
+POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
 
@@ -207,13 +209,8 @@ class KubernetesDriver(Driver):
                 ) from error
             raise
 
-        pod_ip = None
         try:
-            while pod_ip is None:
-                pod_ip = self.client.read_namespaced_pod_status(
-                    name=name, namespace=self.namespace
-                ).status.pod_ip
-                sleep(1)
+            pod_ip = self._wait_for_pod_ip(name)
         except Exception as e:
             print(f"Failed to get pod IP: {e}")
             raise
@@ -255,6 +252,28 @@ class KubernetesDriver(Driver):
                 map(lambda x: (x.target_port, x.node_port), resp.spec.ports)
             )
             return pod_ip or "", port_mapping, None
+
+    def _wait_for_pod_ip(self, name):
+        """Wait for a scheduled pod's IP, giving up on a terminal pod or a deadline."""
+        deadline = time.monotonic() + POD_IP_WAIT_TIMEOUT_SECONDS
+        while True:
+            status = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace).status
+            if status.pod_ip:
+                return status.pod_ip
+            if status.phase in {"Failed", "Succeeded"}:
+                detail = " ".join(
+                    str(value) for value in (status.reason, status.message) if value
+                )
+                raise StartupError(
+                    f"Pod {name} entered terminal phase {status.phase} before receiving an IP"
+                    + (f": {detail}" if detail else "")
+                )
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Pod {name} did not receive an IP within {POD_IP_WAIT_TIMEOUT_SECONDS}s "
+                    f"(last phase: {status.phase})"
+                )
+            sleep(1)
 
     def stop(self, name):
         try:
