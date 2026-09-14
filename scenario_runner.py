@@ -203,6 +203,7 @@ class ScenarioRunner:
 
     def save_results(self):
         """Save run results to file"""
+        os.makedirs("logs", exist_ok=True)
         results_file = os.path.join('logs', f"run_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
 
         with open(results_file, 'w') as f:
