@@ -292,7 +292,7 @@ def test_a_reused_destination_makes_labels_incomplete(tmp_path):
     evidence = engine.store_engine_logs(str(tmp_path))
 
     label = json.loads((tmp_path / "joinmarket_round_events.json").read_text(encoding="utf-8"))[0]
-    assert label["status"] == "ambiguous"
+    assert label["status"] == "multiple_matches"
     assert label["destination_matches"] == [
         {"txid": "a" * 64, "block_height": 7},
         {"txid": "b" * 64, "block_height": 8},

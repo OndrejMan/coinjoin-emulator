@@ -12,7 +12,8 @@ class DestinationMatch(TypedDict):
     block_height: int
 
 EVENT_STATUS_CONFIRMED = "confirmed"
-EVENT_STATUS_AMBIGUOUS = "ambiguous"
+EVENT_STATUS_MULTIPLE_MATCHES = "multiple_matches"
+EVENT_STATUS_DUPLICATE_DESTINATION = "duplicate_destination"
 MATCH_SOURCE_DESTINATION_OUTPUT = "destination_output"
 
 
@@ -67,14 +68,23 @@ class RoundEventRecord:
         taker = self._data.get("taker")
         return taker if isinstance(taker, str) else ""
 
+    def mark_duplicate_destination(self) -> None:
+        """Record a shared destination; this status takes precedence over match counts."""
+        self._data["status"] = EVENT_STATUS_DUPLICATE_DESTINATION
+
     def add_destination_match(self, txid: str, block_height: int) -> None:
         """Record one exported transaction and update the reconciliation status."""
         matches = self._destination_matches()
         candidate: DestinationMatch = {"txid": txid, "block_height": block_height}
         if candidate not in matches:
             matches.append(candidate)
-        self._data["status"] = EVENT_STATUS_CONFIRMED if len(matches) == 1 else EVENT_STATUS_AMBIGUOUS
         self._data["match_source"] = MATCH_SOURCE_DESTINATION_OUTPUT
+        if self.status == EVENT_STATUS_DUPLICATE_DESTINATION:
+            return
+        if len(matches) == 1:
+            self._data["status"] = EVENT_STATUS_CONFIRMED
+        else:
+            self._data["status"] = EVENT_STATUS_MULTIPLE_MATCHES
 
     def confirmed_destination_txid(self) -> str | None:
         """Return the sole reconciled transaction ID, if this record is unambiguous."""
