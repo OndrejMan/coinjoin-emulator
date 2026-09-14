@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from manager.driver import MANAGED_IMAGE_MARKERS
 from manager.driver.docker import DockerDriver
 
 
@@ -66,3 +67,26 @@ def test_stopped_containers_are_still_found_during_cleanup() -> None:
     instance.cleanup()
 
     assert instance.client.containers.list.call_args.kwargs == {"all": True}
+
+
+def test_cleanup_selects_every_shared_emulator_image_marker() -> None:
+    instance = driver()
+    instance.client.containers.list.return_value = [
+        SimpleNamespace(
+            name=marker,
+            attrs={"Config": {"Image": f"registry/{marker}:latest"}},
+        )
+        for marker in MANAGED_IMAGE_MARKERS
+    ] + [
+        SimpleNamespace(
+            name="unrelated",
+            attrs={"Config": {"Image": "postgres:latest"}},
+        )
+    ]
+    instance.client.networks.list.return_value = []
+    selected = []
+    instance.stop_many = lambda names: selected.extend(names)
+
+    instance.cleanup()
+
+    assert selected == list(MANAGED_IMAGE_MARKERS)

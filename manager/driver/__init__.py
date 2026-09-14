@@ -1,6 +1,15 @@
 from abc import ABC, abstractmethod
 from multiprocessing.pool import ThreadPool
 
+MANAGED_IMAGE_MARKERS = (
+    "irc-server",
+    "btc-node",
+    "wasabi-backend",
+    "wasabi-client",
+    "wasabi-coordinator",
+    "joinmarket-client-server",
+)
+
 
 class Driver(ABC):
     @abstractmethod
