@@ -83,8 +83,8 @@ class DockerDriver(Driver):
             fo.seek(0)
             with tarfile.open(fileobj=fo) as tar:
                 tar.extractall(dst_path)
-        except Exception:
-            pass
+        except (docker.errors.APIError, docker.errors.NotFound, tarfile.TarError, OSError) as error:
+            raise RuntimeError(f"Failed to download {name}:{src_path} to {dst_path}: {error}") from error
         finally:
             if paused and container is not None:
                 container.unpause()
