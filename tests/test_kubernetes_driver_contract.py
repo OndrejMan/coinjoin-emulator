@@ -1,5 +1,6 @@
 """Kubernetes driver contracts that keep a shared namespace usable."""
 
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -103,3 +104,55 @@ def test_waiting_for_a_pod_ip_has_a_deadline() -> None:
     with patch("manager.driver.kubernetes.time.monotonic", side_effect=[0.0, 10_000.0]):
         with pytest.raises(TimeoutError, match="did not receive an IP"):
             instance._wait_for_pod_ip("btc-node")  # pylint: disable=protected-access
+
+
+class FakeStream:
+    """Exec output delivered in text chunks, followed by a closed connection."""
+
+    def __init__(self, stdout: str = "", stderr: str = "", chunks=()) -> None:
+        self.stdout = stdout
+        self.stderr = stderr
+        self.chunks = iter(chunks)
+        self.open = True
+
+    def is_open(self) -> bool:
+        return self.open
+
+    def update(self, timeout: int) -> None:
+        if not self.stdout and not self.stderr:
+            self.stdout = next(self.chunks, "")
+            self.open = bool(self.stdout)
+
+    def peek_stdout(self) -> bool:
+        return bool(self.stdout)
+
+    def read_stdout(self) -> str:
+        stdout, self.stdout = self.stdout, ""
+        return stdout
+
+    def peek_stderr(self) -> bool:
+        return bool(self.stderr)
+
+    def read_stderr(self) -> str:
+        stderr, self.stderr = self.stderr, ""
+        return stderr
+
+    def close(self) -> None:
+        self.open = False
+
+
+def test_download_preserves_binary_files_across_text_chunks(tmp_path) -> None:
+    instance = driver()
+    source = tmp_path / "directory with 'quotes'" / "logs"
+    source.mkdir(parents=True)
+    contents = bytes(range(256))
+    (source / "binary.dat").write_bytes(contents)
+
+    def run_command(api, name, namespace, command, **kwargs):
+        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=2)
+        return FakeStream(chunks=[result.stdout[i:i + 73] for i in range(0, len(result.stdout), 73)])
+
+    with patch("manager.driver.kubernetes.stream", side_effect=run_command):
+        instance.download("jcs-000", str(source) + "/", str(tmp_path / "dst"))
+
+    assert (tmp_path / "dst/logs/binary.dat").read_bytes() == contents
