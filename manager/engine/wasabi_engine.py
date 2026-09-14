@@ -403,7 +403,7 @@ class WasabiEngine(EngineBase):
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         initial_block = self.node.get_block_count()
-        while (self.scenario.rounds == 0 or self.current_round <= self.scenario.rounds) and (
+        while (self.scenario.rounds == 0 or self.current_round < self.scenario.rounds) and (
             self.scenario.blocks == 0 or self.current_block < self.scenario.blocks
         ):
             for _ in range(3):
