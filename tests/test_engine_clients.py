@@ -96,3 +96,21 @@ def test_validate_clients_rejects_an_unhealthy_client() -> None:
 
     with pytest.raises(RuntimeError, match="client-0 .wallet is not responding"):
         harness.validate_clients()
+
+
+def test_funding_retry_does_not_repeat_successful_batches() -> None:
+    harness = ClientsHarness()
+    invoices = [(f"address-{i}", 1000) for i in range(6)]
+    harness.invoices = {(0, 0): invoices.copy()}
+    harness.distributor = Mock()
+    harness.distributor.send.side_effect = ["txid-1", *[RuntimeError("RPC failed") for _ in range(3)], "txid-2"]
+
+    with pytest.raises(Exception, match="Invoice payment failed"):
+        harness.update_invoice_payments()
+
+    assert harness.invoices == {(0, 0): invoices[5:]}
+    harness.update_invoice_payments()
+
+    assert harness.invoices == {}
+    assert harness.distributor.send.call_args_list[0].args == (invoices[:5],)
+    assert all(call.args == (invoices[5:],) for call in harness.distributor.send.call_args_list[1:])
