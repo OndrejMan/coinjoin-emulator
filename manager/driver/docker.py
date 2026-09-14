@@ -55,6 +55,14 @@ class DockerDriver(Driver):
         )
         return name, dict(ports or {}), None
 
+    def container_state(self, name):
+        try:
+            return self.client.containers.get(name).status
+        except docker.errors.NotFound:
+            return "gone"
+        except docker.errors.APIError:
+            return None
+
     def stop(self, name):
         try:
             container = self.client.containers.get(name)
