@@ -7,6 +7,8 @@ import docker
 
 from . import MANAGED_IMAGE_MARKERS, RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 
+BYTES_IN_MEGABYTE = 1024 * 1024
+
 
 class DockerDriver(Driver):
     def __init__(self, namespace="coinjoin"):
@@ -109,6 +111,28 @@ class DockerDriver(Driver):
         fo.seek(0)
         with tarfile.open(fileobj=fo) as tar:
             return tar.extractfile(os.path.basename(path)).read().decode()
+
+    def get_pod_resource_usage(self, name):
+        """Memory usage of a container, mirroring the Kubernetes driver's shape."""
+        try:
+            container = self.client.containers.get(name)
+            stats = container.stats(stream=False)
+        except (docker.errors.NotFound, docker.errors.APIError, OSError):
+            return None
+
+        memory = stats.get("memory_stats") or {}
+        usage = memory.get("usage")
+        limit = memory.get("limit")
+        if not usage or not limit:
+            return None
+
+        memory_mb = usage / BYTES_IN_MEGABYTE
+        memory_limit_mb = limit / BYTES_IN_MEGABYTE
+        return {
+            "memory_mb": memory_mb,
+            "memory_limit_mb": memory_limit_mb,
+            "memory_percent": (memory_mb / memory_limit_mb) * 100 if memory_limit_mb else 0.0,
+        }
 
     def logs(self, name):
         return self.client.containers.get(name).logs(stdout=True, stderr=True).decode(errors="replace")
