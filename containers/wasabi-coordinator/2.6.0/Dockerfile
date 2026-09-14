@@ -4,7 +4,7 @@ RUN apt update && apt install -y patch
 
 RUN mkdir -p /wasabi-src
 WORKDIR /wasabi-src
-RUN git clone https://github.com/zkSNACKs/WalletWasabi.git .
+RUN git clone https://github.com/WalletWasabi/WalletWasabi.git .
 RUN git checkout v2.6.0
 
 COPY logger.patch /wasabi-src/logger.patch
