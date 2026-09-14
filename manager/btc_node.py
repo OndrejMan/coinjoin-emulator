@@ -8,6 +8,9 @@ from .exceptions import RpcError
 WALLET = "wallet"
 FUNDING_WALLET_TX_FEE = 0.0001
 
+RPC_TIMEOUT_SECONDS = 5
+WRITE_RPC_TIMEOUT_SECONDS = 120
+
 
 class BtcNode:
     def __init__(self, host="localhost", port=18443, internal_ip="", proxy=""):
@@ -18,7 +21,7 @@ class BtcNode:
 
         print(f"Started btc-node with ip: {self.host} and ports: {self.port}")
 
-    def _rpc(self, request, wallet=None):
+    def _rpc(self, request, wallet=None, timeout=RPC_TIMEOUT_SECONDS):
         request["jsonrpc"] = "1.0"
         request["id"] = "1"
         response = requests.post(
@@ -26,7 +29,7 @@ class BtcNode:
             data=json.dumps(request),
             auth=("user", "password"),
             proxies=dict(http=self.proxy),
-            timeout=5,
+            timeout=timeout,
         )
         body = response.json()
         if body["error"] is not None:
@@ -76,7 +79,7 @@ class BtcNode:
             "method": "generatetoaddress",
             "params": [count, address],
         }
-        self._rpc(request)
+        self._rpc(request, timeout=WRITE_RPC_TIMEOUT_SECONDS)
 
         return self.get_block_count() - initial_block_count == count
 
@@ -85,7 +88,7 @@ class BtcNode:
             "method": "sendtoaddress",
             "params": [address, amount],
         }
-        self._rpc(request, WALLET)
+        self._rpc(request, WALLET, timeout=WRITE_RPC_TIMEOUT_SECONDS)
 
     def wait_ready(self, timeout=600):
         """Wait until this node is ready for the emulator engines."""
