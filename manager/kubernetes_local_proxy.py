@@ -6,6 +6,9 @@ import time
 import uuid
 
 import backoff
+import yaml
+
+from manager.exceptions import CoinjoinEmulatorError
 
 # File transfer settings
 CHUNK_SIZE_MB = 10
@@ -1035,20 +1038,6 @@ class KubernetesLocalProxy:
             # Use pre-created manifests
             print("Using pre-created manifests from containers/emulator-manager/...")
 
-            # Update the image in deployment.yaml if needed
-            if image_prefix:
-                import yaml
-                with open(deployment_file, 'r') as f:
-                    deployment = yaml.safe_load(f)
-
-                # Update image
-                deployment['spec']['template']['spec']['containers'][0]['image'] = manager_image
-                deployment['spec']['template']['spec']['containers'][0]['imagePullPolicy'] = 'Always'
-
-                # Save updated deployment
-                with open(deployment_file, 'w') as f:
-                    yaml.dump(deployment, f, default_flow_style=False)
-
             # Apply all manifests
             manifest_files = [
                 "role.yaml",
@@ -1060,6 +1049,26 @@ class KubernetesLocalProxy:
             for manifest in manifest_files:
                 manifest_path = os.path.join(manifest_dir, manifest)
                 if os.path.exists(manifest_path):
+                    if manifest == "deployment.yaml" and image_prefix:
+                        with open(manifest_path, encoding="utf-8") as source:
+                            deployment = yaml.safe_load(source)
+                        for container in deployment["spec"]["template"]["spec"]["containers"]:
+                            if container["name"] == "manager":
+                                container["image"] = manager_image
+                                break
+                        else:
+                            raise CoinjoinEmulatorError(
+                                f"Container 'manager' not found in {manifest_path}"
+                            )
+                        subprocess.run(
+                            self._kubectl_base_cmd
+                            + ["apply", "-f", "-", "-n", self.namespace],
+                            input=yaml.safe_dump(deployment),
+                            text=True,
+                            check=True,
+                        )
+                        continue
+
                     apply_cmd = self._kubectl_base_cmd + [
                         "apply", "-f", manifest_path,
                         "-n", self.namespace
