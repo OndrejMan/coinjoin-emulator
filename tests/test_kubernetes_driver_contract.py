@@ -156,3 +156,9 @@ def test_download_preserves_binary_files_across_text_chunks(tmp_path) -> None:
         instance.download("jcs-000", str(source) + "/", str(tmp_path / "dst"))
 
     assert (tmp_path / "dst/logs/binary.dat").read_bytes() == contents
+
+
+def test_download_rejects_invalid_base64(tmp_path) -> None:
+    with patch("manager.driver.kubernetes.stream", return_value=FakeStream(stdout="broken!")):
+        with pytest.raises(RuntimeError, match="invalid base64"):
+            driver().download("jcs-000", "/logs/", str(tmp_path))

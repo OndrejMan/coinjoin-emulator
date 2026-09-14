@@ -1,5 +1,6 @@
 import base64
 import os
+import shlex
 import tarfile
 import time
 import traceback
@@ -288,14 +289,11 @@ class KubernetesDriver(Driver):
         if src_path[-1] == "/":
             src_path = src_path[:-1]
         src_parent, src_target = os.path.split(src_path)
-        # Use rsync-like approach with tar to handle files being written to
-        # The --warning=no-file-changed flag helps handle files that change during reading
-        # The --ignore-failed-read flag ensures the process continues even if some files can't be read
+        # Exec reads stdout as UTF-8 text; encode the binary archive before transfer.
         exec_command = [
-            "tar", "cf", "-",
-            "--warning=no-file-changed",
-            "--ignore-failed-read",
-            "-C", src_parent, src_target
+            "sh", "-c",
+            f"tar cf - --warning=no-file-changed --ignore-failed-read "
+            f"-C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64 | tr -d '\\n'",
         ]
         resp = stream(
             self.client.connect_get_namespaced_pod_exec,
@@ -308,21 +306,18 @@ class KubernetesDriver(Driver):
             tty=False,
             _preload_content=False,
         )
-        print("Opening connection")
-
-        fo = BytesIO()
+        encoded_chunks = []
         while resp.is_open():
-            print("Updating stream")
             resp.update(timeout=10)
             if resp.peek_stdout():
-                fo.write(resp.read_stdout().encode())
-        print("")
-        fo.seek(0)
-        print("Closing connection")
+                encoded_chunks.append(resp.read_stdout())
         resp.close()
 
-        with tarfile.open(fileobj=fo) as tar:
-            print("Extracting")
+        try:
+            payload = base64.b64decode("".join(encoded_chunks), validate=True)
+        except ValueError as error:
+            raise RuntimeError(f"download of {name}:{src_path} returned invalid base64") from error
+        with tarfile.open(fileobj=BytesIO(payload)) as tar:
             tar.extractall(dst_path)
 
     def peek(self, name, path):
