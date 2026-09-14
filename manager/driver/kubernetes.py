@@ -251,6 +251,13 @@ class KubernetesDriver(Driver):
 
         try:
             pod_ip = self._wait_for_pod_ip(name)
+        except StartupError as error:
+            if "SysctlForbidden" not in str(error) or not _strip_reserved_ports_sysctl(pod_manifest):
+                raise
+            print(f"[WARNING] kubelet forbade {RESERVED_PORTS_SYSCTL} for pod {name}; recreating it without it")
+            self.stop(name)
+            self._create_pod(name, pod_manifest)
+            pod_ip = self._wait_for_pod_ip(name)
         except Exception as e:
             print(f"Failed to get pod IP: {e}")
             raise
