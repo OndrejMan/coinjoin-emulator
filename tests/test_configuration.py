@@ -92,3 +92,20 @@ def test_joinmarket_engine_requires_explicit_roles(tmp_path: Path) -> None:
     config.validate_for_engine("wasabi")
     with pytest.raises(ValueError, match="explicit maker/taker role"):
         config.validate_for_engine("joinmarket")
+
+
+def test_round_limited_tumbler_requires_a_block_limit(tmp_path: Path) -> None:
+    settings = {"tumbler_options": {"mixdepthcount": 3}}
+    wallet = {"joinmarket": {"role": "taker", **settings}}
+    config = load_scenario(tmp_path, base_scenario({"funds": [1000], **wallet}))
+
+    with pytest.raises(ValueError, match="require blocks > 0"):
+        config.validate_for_engine("joinmarket")
+
+    config.blocks = 30
+    config.validate_for_engine("joinmarket")
+
+
+def test_regular_taker_can_still_use_only_a_round_limit(tmp_path: Path) -> None:
+    config = load_scenario(tmp_path, base_scenario({"funds": [1000], "joinmarket": {"role": "taker"}}))
+    config.validate_for_engine("joinmarket")
