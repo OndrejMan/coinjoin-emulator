@@ -98,6 +98,9 @@ The simulation script enables advanced configuration for running on different co
 
 The default driver is `docker`. Running `docker` requires [Docker](https://www.docker.com/) installed locally and running.
 
+JoinMarket tumbler scenarios using a round limit must also set `blocks` to a
+positive limit, which bounds the run.
+
 #### Podman
 
 *Podman support will be likely **removed** in the future versions.*
