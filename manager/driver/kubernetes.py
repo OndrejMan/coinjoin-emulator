@@ -247,18 +247,7 @@ class KubernetesDriver(Driver):
             name, image, env, ports, cpu, memory, run_as_user,
             kwargs.get("volumes"), kwargs.get("command"), kwargs.get("run_as_group"),
         )
-        try:
-            self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
-        except ApiException as error:
-            details = str(getattr(error, "body", "") or error)
-            if error.status == 403 and "exceeded quota" in details.lower():
-                raise KubernetesResourceQuotaError(
-                    f"Kubernetes quota rejected pod {name} in namespace {self.namespace}: {details}"
-                ) from error
-            if not _is_sysctl_rejection(error) or not _strip_reserved_ports_sysctl(pod_manifest):
-                raise
-            print(f"[WARNING] API server rejected {RESERVED_PORTS_SYSCTL} for pod {name}; starting it without it")
-            self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+        self._create_pod(name, pod_manifest)
 
         try:
             pod_ip = self._wait_for_pod_ip(name)
@@ -303,6 +292,21 @@ class KubernetesDriver(Driver):
                 map(lambda x: (x.target_port, x.node_port), resp.spec.ports)
             )
             return pod_ip or "", port_mapping, None
+
+    def _create_pod(self, name, pod_manifest):
+        try:
+            self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
+            return
+        except ApiException as error:
+            details = str(getattr(error, "body", "") or error)
+            if error.status == 403 and "exceeded quota" in details.lower():
+                raise KubernetesResourceQuotaError(
+                    f"Kubernetes quota rejected pod {name} in namespace {self.namespace}: {details}"
+                ) from error
+            if not _is_sysctl_rejection(error) or not _strip_reserved_ports_sysctl(pod_manifest):
+                raise
+            print(f"[WARNING] API server rejected {RESERVED_PORTS_SYSCTL} for pod {name}; starting it without it")
+        self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
 
     def _wait_for_pod_ip(self, name):
         """Wait for a scheduled pod's IP, giving up on a terminal pod or a deadline."""
