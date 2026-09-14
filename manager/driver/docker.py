@@ -24,8 +24,10 @@ class DockerDriver(Driver):
         except docker.errors.ImageNotFound:
             return False
 
-    def build(self, name, path):
-        self.client.images.build(path=path, tag=name, rm=True, nocache=True)
+    def build(self, name, path, build_args=None):
+        self.client.images.build(
+            path=path, tag=name, rm=True, nocache=True, buildargs=build_args or None
+        )
 
     def pull(self, name):
         self.client.images.pull(name)

@@ -20,6 +20,23 @@ def driver_and_client():
         yield PodmanDriver(), client_class.return_value
 
 
+def test_build_forwards_dockerfile_build_arguments(driver_and_client) -> None:
+    driver, client = driver_and_client
+    driver.build(
+        "joinmarket-client-server",
+        "/source",
+        build_args={"JOINMARKET_BASE_IMAGE": "registry/joinmarket-base:latest"},
+    )
+
+    client.images.build.assert_called_once_with(
+        path="/source",
+        tag="joinmarket-client-server",
+        rm=True,
+        nocache=True,
+        buildargs={"JOINMARKET_BASE_IMAGE": "registry/joinmarket-base:latest"},
+    )
+
+
 def test_image_queries_use_the_podman_client_only(driver_and_client) -> None:
     driver, client = driver_and_client
     client.images.get.side_effect = [None, podman.errors.ImageNotFound("missing")]

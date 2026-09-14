@@ -158,7 +158,7 @@ class KubernetesDriver(Driver):
     def has_image(self, name):
         return True
 
-    def build(self, name, path):
+    def build(self, name, path, build_args=None):
         pass
 
     def pull(self, name):

@@ -30,8 +30,14 @@ class PodmanDriver(Driver):
         except podman.errors.ImageNotFound:
             return False
 
-    def build(self, name, path):
-        self.client.images.build(path=path, tag=name, rm=True, nocache=True)
+    def build(self, name: str, path: str, build_args=None) -> None:
+        self.client.images.build(
+            path=path,
+            tag=name,
+            rm=True,
+            nocache=True,
+            buildargs=build_args or {},
+        )
 
     def pull(self, name):
         self.client.images.pull(name)

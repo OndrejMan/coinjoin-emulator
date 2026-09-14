@@ -17,6 +17,24 @@ def driver() -> DockerDriver:
     return instance
 
 
+def test_build_forwards_dockerfile_build_arguments() -> None:
+    instance = driver()
+
+    instance.build(
+        "joinmarket-client-server",
+        "/source",
+        build_args={"JOINMARKET_BASE_IMAGE": "registry/joinmarket-base:latest"},
+    )
+
+    instance.client.images.build.assert_called_once_with(
+        path="/source",
+        tag="joinmarket-client-server",
+        rm=True,
+        nocache=True,
+        buildargs={"JOINMARKET_BASE_IMAGE": "registry/joinmarket-base:latest"},
+    )
+
+
 def test_containers_are_addressed_by_name_on_the_bridge_network() -> None:
     instance = driver()
 

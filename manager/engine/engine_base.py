@@ -92,11 +92,16 @@ class EngineBase:
             getattr(self.args, "coinjoin_infrastructure_local_build", False)
         )
 
-    def prepare_image(self, name: str, path=None):
+    def prepare_image(self, name: str, path=None, build_args=None):
         image_name = self.image_ref(name)
         has_override = bool(self.image_override(name))
+        # Only forward the argument when there is one, so the common build keeps
+        # the plain two-argument driver call every driver already implements.
+        extra = {"build_args": build_args} if build_args else {}
         if self.local_build_requested(name):
-            self.driver.build(image_name, f"./containers/{name}" if path is None else path)
+            self.driver.build(
+                image_name, f"./containers/{name}" if path is None else path, **extra
+            )
             print(f"- image built {image_name}")
         elif self.driver.has_image(image_name):
             if self.args.force_rebuild:
@@ -104,7 +109,9 @@ class EngineBase:
                     self.driver.pull(image_name)
                     print(f"- image pulled {image_name}")
                 else:
-                    self.driver.build(name, f"./containers/{name}" if path is None else path)
+                    self.driver.build(
+                        name, f"./containers/{name}" if path is None else path, **extra
+                    )
                     print(f"- image rebuilt {image_name}")
             else:
                 print(f"- image reused {image_name}")
@@ -112,7 +119,9 @@ class EngineBase:
             self.driver.pull(image_name)
             print(f"- image pulled {image_name}")
         else:
-            self.driver.build(name, f"./containers/{name}" if path is None else path)
+            self.driver.build(
+                name, f"./containers/{name}" if path is None else path, **extra
+            )
             print(f"- image built {image_name}")
 
     def service_endpoint(self, ip, container_port, ports, route=None, *, tls=False):

@@ -57,6 +57,21 @@ def test_local_build_wins_over_a_remote_image() -> None:
     driver.has_image.assert_not_called()
 
 
+def test_local_build_forwards_dockerfile_build_arguments() -> None:
+    driver = Mock()
+
+    engine(args(coinjoin_infrastructure_local_build=True), driver).prepare_image(
+        "joinmarket-client-server",
+        build_args={"JOINMARKET_BASE_IMAGE": "registry/joinmarket-base:latest"},
+    )
+
+    driver.build.assert_called_once_with(
+        "registry/joinmarket-client-server",
+        "./containers/joinmarket-client-server",
+        build_args={"JOINMARKET_BASE_IMAGE": "registry/joinmarket-base:latest"},
+    )
+
+
 def test_versioned_wasabi_images_are_built_locally_too() -> None:
     """Wasabi images carry this project's container definitions, like btc-node.
 
