@@ -43,6 +43,10 @@ class Driver(ABC):
     ):
         pass
 
+    def container_state(self, _name):  # pylint: disable=useless-return
+        """Return a human-readable container state, if available."""
+        return None
+
     @abstractmethod
     def stop(self, name):
         pass
