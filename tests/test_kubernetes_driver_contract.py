@@ -1,6 +1,9 @@
 """Kubernetes driver contracts that keep a shared namespace usable."""
 
+import base64
+import io
 import subprocess
+import tarfile
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -161,4 +164,43 @@ def test_download_preserves_binary_files_across_text_chunks(tmp_path) -> None:
 def test_download_rejects_invalid_base64(tmp_path) -> None:
     with patch("manager.driver.kubernetes.stream", return_value=FakeStream(stdout="broken!")):
         with pytest.raises(RuntimeError, match="invalid base64"):
+            driver().download("jcs-000", "/logs/", str(tmp_path))
+
+
+def archive() -> str:
+    payload = io.BytesIO()
+    contents = b"hello"
+    with tarfile.open(fileobj=payload, mode="w") as tar:
+        entry = tarfile.TarInfo("logs/run.log")
+        entry.size = len(contents)
+        tar.addfile(entry, io.BytesIO(contents))
+    return base64.b64encode(payload.getvalue()).decode("ascii")
+
+
+@pytest.mark.parametrize("warning", [
+    "tar: logs/run.log: file changed as we read it",
+    "tar: logs/rpc.sock: socket ignored",
+    "tar: Removing leading `/' from member names",
+    "tar: Removing leading `/' from hard link targets",
+])
+def test_download_keeps_an_archive_with_a_benign_tar_warning(tmp_path, warning) -> None:
+    response = FakeStream(stdout=archive(), stderr=warning + "\n")
+    with patch("manager.driver.kubernetes.stream", return_value=response):
+        driver().download("jcs-000", "/logs/", str(tmp_path))
+
+    assert (tmp_path / "logs/run.log").read_text() == "hello"
+
+
+def test_download_reports_tar_errors_even_with_a_valid_archive(tmp_path) -> None:
+    diagnostics = "tar: logs/run.log: file changed as we read it\ntar: logs: Cannot open\n"
+    with patch("manager.driver.kubernetes.stream", return_value=FakeStream(stdout=archive(), stderr=diagnostics)):
+        with pytest.raises(RuntimeError, match="Cannot open"):
+            driver().download("jcs-000", "/logs/", str(tmp_path))
+
+    assert not (tmp_path / "logs").exists()
+
+
+def test_download_rejects_empty_output(tmp_path) -> None:
+    with patch("manager.driver.kubernetes.stream", return_value=FakeStream()):
+        with pytest.raises(RuntimeError, match="empty archive"):
             driver().download("jcs-000", "/logs/", str(tmp_path))

@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 import shlex
 import tarfile
 import time
@@ -18,6 +19,22 @@ from manager.exceptions import KubernetesResourceQuotaError, StartupError
 from . import Driver
 
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
+BENIGN_TAR_WARNING_RE = re.compile(
+    r"^tar: .*: (file changed as we read it|socket ignored)$"
+    r"|^tar: Removing leading [`'\"]?/[`'\"]? from (member names|hard link targets)$"
+)
+
+
+def _check_tar_stderr(name, src_path, stderr):
+    for raw_line in stderr.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if not BENIGN_TAR_WARNING_RE.fullmatch(line):
+            raise RuntimeError(f"download of {name}:{src_path} failed: {line}")
+        print(f"[WARNING] {name}:{src_path}: {line}")
+
+
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
 
@@ -292,8 +309,7 @@ class KubernetesDriver(Driver):
         # Exec reads stdout as UTF-8 text; encode the binary archive before transfer.
         exec_command = [
             "sh", "-c",
-            f"tar cf - --warning=no-file-changed --ignore-failed-read "
-            f"-C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64 | tr -d '\\n'",
+            f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64 | tr -d '\\n'",
         ]
         resp = stream(
             self.client.connect_get_namespaced_pod_exec,
@@ -307,14 +323,21 @@ class KubernetesDriver(Driver):
             _preload_content=False,
         )
         encoded_chunks = []
+        stderr_chunks = []
         while resp.is_open():
             resp.update(timeout=10)
             if resp.peek_stdout():
                 encoded_chunks.append(resp.read_stdout())
+            if resp.peek_stderr():
+                stderr_chunks.append(resp.read_stderr())
         resp.close()
 
+        _check_tar_stderr(name, src_path, "".join(stderr_chunks))
+        encoded = "".join(encoded_chunks)
+        if not encoded.strip():
+            raise RuntimeError(f"download of {name}:{src_path} produced an empty archive")
         try:
-            payload = base64.b64decode("".join(encoded_chunks), validate=True)
+            payload = base64.b64decode(encoded, validate=True)
         except ValueError as error:
             raise RuntimeError(f"download of {name}:{src_path} returned invalid base64") from error
         with tarfile.open(fileobj=BytesIO(payload)) as tar:
