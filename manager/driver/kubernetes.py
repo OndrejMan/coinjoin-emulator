@@ -19,6 +19,7 @@ from manager.exceptions import KubernetesResourceQuotaError, StartupError
 from . import Driver
 
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
+DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
 BENIGN_TAR_WARNING_RE = re.compile(
     r"^tar: .*: (file changed as we read it|socket ignored)$"
     r"|^tar: Removing leading [`'\"]?/[`'\"]? from (member names|hard link targets)$"
@@ -324,13 +325,18 @@ class KubernetesDriver(Driver):
         )
         encoded_chunks = []
         stderr_chunks = []
-        while resp.is_open():
-            resp.update(timeout=10)
-            if resp.peek_stdout():
-                encoded_chunks.append(resp.read_stdout())
-            if resp.peek_stderr():
-                stderr_chunks.append(resp.read_stderr())
-        resp.close()
+        deadline = time.monotonic() + DOWNLOAD_TIMEOUT_SECONDS
+        try:
+            while resp.is_open():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Timed out downloading {name}:{src_path}")
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    encoded_chunks.append(resp.read_stdout())
+                if resp.peek_stderr():
+                    stderr_chunks.append(resp.read_stderr())
+        finally:
+            resp.close()
 
         _check_tar_stderr(name, src_path, "".join(stderr_chunks))
         encoded = "".join(encoded_chunks)

@@ -204,3 +204,23 @@ def test_download_rejects_empty_output(tmp_path) -> None:
     with patch("manager.driver.kubernetes.stream", return_value=FakeStream()):
         with pytest.raises(RuntimeError, match="empty archive"):
             driver().download("jcs-000", "/logs/", str(tmp_path))
+
+
+def test_download_timeout_closes_the_connection(tmp_path) -> None:
+    response = FakeStream()
+    with patch("manager.driver.kubernetes.stream", return_value=response):
+        with patch("manager.driver.kubernetes.time.monotonic", side_effect=[0.0, 10_000.0]):
+            with pytest.raises(TimeoutError, match="Timed out downloading"):
+                driver().download("jcs-000", "/logs/", str(tmp_path))
+
+    assert not response.is_open()
+
+
+def test_download_closes_the_connection_on_a_read_error(tmp_path) -> None:
+    response = FakeStream()
+    with patch.object(response, "update", side_effect=OSError("connection lost")):
+        with patch("manager.driver.kubernetes.stream", return_value=response):
+            with pytest.raises(OSError, match="connection lost"):
+                driver().download("jcs-000", "/logs/", str(tmp_path))
+
+    assert not response.is_open()
