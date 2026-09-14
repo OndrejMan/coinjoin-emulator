@@ -9,15 +9,12 @@ MODE=${MODE:-walletd}
 
 if [ "$MODE" = "obwatch" ]; then
   # ── Orderbook watcher mode ─────────────────────────────────────────────
- socat TCP-LISTEN:62601,fork,reuseaddr TCP:127.0.0.1:62602 &
-
-  # Launch the orderbook watcher on port 62601 (to the outside, 62602 locally)
-  # using a no-blockchain config
-  # Note: ob-watcher reads JoinMarket config from the default location.
-  exec python3 /jm/clientserver/scripts/obwatch/ob-watcher.py \
-       --blockchain-source no-blockchain \
-       -p 62602 \
-       2>&1 | tee -a /home/joinmarket/obwatch.log
+  # Launch the orderbook watcher on port 62601 (to the outside, 62602 locally).
+  socat TCP-LISTEN:62601,fork,reuseaddr TCP:127.0.0.1:62602 &
+  python3 /jm/clientserver/scripts/obwatch/ob-watcher.py \
+    --blockchain-source no-blockchain -p 62602 \
+    2>&1 | tee -a /home/joinmarket/obwatch.log
+  exit "${PIPESTATUS[0]}"
 else
   # ── Wallet daemon mode (default) ───────────────────────────────────────
   # Select the client's Core wallet for address and transaction monitoring.
