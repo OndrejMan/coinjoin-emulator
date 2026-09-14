@@ -11,6 +11,8 @@ from pathlib import Path
 from time import sleep, time
 from traceback import print_exception
 
+import requests
+
 from manager.engine.base.manifest import ProducerLabelEvidence
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
 from manager.engine.engine_base import EngineBase
@@ -406,9 +408,26 @@ class WasabiEngine(EngineBase):
             "sources": [os.path.relpath(path, data_path) for path in log_paths],
         }
 
+    def client_gone_message(self, client, error):
+        state = None
+        try:
+            state = self.driver.container_state(client.name)
+        except Exception:  # pylint: disable=broad-exception-caught
+            state = None
+        where = f"container state: {state}" if state else "container state unknown"
+        return (
+            f"client {client.name} is unreachable at {client.host}:{client.port} "
+            f"({where}). A Wasabi client that hits a fatal error exits 0 and looks "
+            f"\"Completed\", so check that client's own log for the last exception "
+            f"before it stopped. Underlying error: {error}"
+        )
+
     def start_coinjoin(self, client):
         sleep(random.random() / 10)
-        client.start_coinjoin()
+        try:
+            client.start_coinjoin()
+        except requests.exceptions.ConnectionError as error:
+            raise RuntimeError(self.client_gone_message(client, error)) from error
 
     def stop_coinjoin(self, client):
         sleep(random.random() / 10)
