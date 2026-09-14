@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from manager.btc_node import BtcNode
 from manager.engine.joinmarket_engine import JoinmarketEngine
 
@@ -120,7 +122,7 @@ class TestJoinMarketRoundEvents:
         assert harness.confirm_started_rounds() == 0
         assert event["status"] == "started"
 
-    def test_live_round_count_ignores_a_malformed_rpc_txid(self) -> None:
+    def test_live_round_count_rejects_a_malformed_rpc_txid(self) -> None:
         event = {"round_id": 1, "status": "started", "destination_address": "destination-address"}
         harness = EventHarness(EventClient("jcs-000", [event]))
         harness.node = cast(
@@ -140,8 +142,14 @@ class TestJoinMarketRoundEvents:
             ),
         )
 
-        assert harness.confirm_started_rounds() == 0
+        with pytest.raises(
+            ValueError,
+            match="exported transaction txid must be a non-empty string",
+        ):
+            harness.confirm_started_rounds()
+
         assert event["status"] == "started"
+        assert harness._round_scan_height == -1
 
     def test_round_event_is_matched_to_the_block_paying_its_destination(self, tmp_path: Path) -> None:
         write_block(tmp_path / "btc-node", 7, "coinjoin-txid", "destination-address")
