@@ -19,6 +19,7 @@ from manager.exceptions import KubernetesResourceQuotaError, StartupError
 def driver(**overrides: object) -> KubernetesDriver:
     instance = object.__new__(KubernetesDriver)
     instance.client = Mock()
+    instance.client.read_namespaced_pod_status.return_value = running_pod()
     instance._exec_lock = RLock()  # pylint: disable=protected-access
     instance._namespace = "coinjoin"  # pylint: disable=protected-access
     instance.reuse_namespace = True
@@ -110,6 +111,12 @@ def test_waiting_for_a_pod_ip_has_a_deadline() -> None:
     with patch("manager.driver.kubernetes.time.monotonic", side_effect=[0.0, 10_000.0]):
         with pytest.raises(TimeoutError, match="did not receive an IP"):
             instance._wait_for_pod_ip("btc-node")  # pylint: disable=protected-access
+
+
+def running_pod() -> SimpleNamespace:
+    return SimpleNamespace(
+        spec=SimpleNamespace(node_name="node-1"), status=SimpleNamespace(phase="Running")
+    )
 
 
 class FakeStream:
@@ -276,3 +283,23 @@ def test_exec_api_failure_includes_pod_and_action() -> None:
         with ThreadPoolExecutor(max_workers=1) as pool:
             response = pool.submit(instance._exec_stream, "next", ["cat", "/logs"], "read logs").result(timeout=2)
     assert response.is_open()
+
+
+@pytest.mark.parametrize("method", ["download", "peek"])
+@pytest.mark.parametrize("node,phase,message", [
+    (None, "Pending", "not scheduled"),
+    ("node-1", "Pending", "phase Pending"),
+    ("node-1", "Failed", "phase Failed"),
+    ("node-1", "Succeeded", "phase Succeeded"),
+])
+def test_reading_an_unavailable_pod_is_rejected_before_exec(tmp_path, method, node, phase, message) -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod_status.return_value = SimpleNamespace(
+        spec=SimpleNamespace(node_name=node), status=SimpleNamespace(phase=phase)
+    )
+    arguments = ("jcs-000", "/logs/", str(tmp_path)) if method == "download" else ("jcs-000", "/logs/run.log")
+    with patch("manager.driver.kubernetes.stream") as open_stream:
+        with pytest.raises(RuntimeError, match=message):
+            getattr(instance, method)(*arguments)
+
+    open_stream.assert_not_called()
