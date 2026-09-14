@@ -6,7 +6,6 @@ from typing import List
 import httpx
 import requests
 import urllib3
-from bip_utils import Bip32Slip10Secp256k1, Bip39SeedGenerator
 
 from manager.exceptions import RpcError
 
@@ -482,17 +481,21 @@ class JoinMarketClientServer:
             print(f"[TIMEOUT] Wallet {self.walletname} not ready after {int(time() - self._wait_wallet_start)}s on {self.host}:{self.port}")
             return False
 
-    def display_wallet(self):
+    def display_wallet(self, display_all=False):
         """Get detailed breakdown of wallet contents by account."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/display"
+        if display_all:
+            endpoint += "?displayall=true"
         response = self._rpc(method, endpoint)
         return response
 
-    async def display_wallet_async(self):
+    async def display_wallet_async(self, display_all=False):
         """Async get detailed breakdown of wallet contents by account."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/display"
+        if display_all:
+            endpoint += "?displayall=true"
         response = await self._rpc_async(method, endpoint)
         return response
 
@@ -973,34 +976,21 @@ class JoinMarketClientServer:
             list(self.coin_history.values()))
 
     def list_keys(self):
-        """List all keys in the wallet."""
-        seed_bytes = Bip39SeedGenerator(self.seedphrase).Generate()
-        coins = self.list_coins()
+        """List all addresses reported by JoinMarket's complete wallet display."""
+        walletinfo = self.display_wallet(display_all=True).get("walletinfo") or {}
         keys = []
-        for coin in coins:
-            key_path = coin.get("keyPath", "")
-
-            # Skip fidelity bond coins that have colons in their paths (e.g., "79:1785542400")
-            # These are not valid BIP32 paths and are handled differently in JoinMarket
-            if ":" in key_path:
-                print(f"Skipping fidelity bond coin with path: {key_path}")
-                continue
-
-            # Skip empty paths
-            if not key_path:
-                continue
-
-            key = {"full_key_path": key_path}
-            try:
-                bip32_ctx = Bip32Slip10Secp256k1.FromSeedAndPath(seed_bytes, str(key_path))
-                key["pubKey"] = bip32_ctx.PublicKey().RawUncompressed().ToHex()
-                key["internal"] = str(key_path).split("/")[-2] == "1"
-                key["address"] = coin.get("address", "")
-                keys.append(key)
-            except Exception as e:
-                print(f"Error processing key path '{key_path}': {e}")
-                continue
-
+        for account in walletinfo.get("accounts") or []:
+            for branch in account.get("branches") or []:
+                for entry in branch.get("entries") or []:
+                    if not entry.get("address"):
+                        continue
+                    keys.append({
+                        "address": str(entry["address"]),
+                        "path": str(entry.get("hd_path", "")),
+                        "account": str(account.get("account", "")),
+                        "status": str(entry.get("status", "")),
+                        "amount": str(entry.get("amount", "")),
+                    })
         return keys
 
     def get_offer(self, round=0):
