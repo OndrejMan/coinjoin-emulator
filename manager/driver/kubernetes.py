@@ -325,45 +325,6 @@ class KubernetesDriver(Driver):
             print("Extracting")
             tar.extractall(dst_path)
 
-        # Wait for required files to appear in dst_path
-        import glob
-        import time
-        start_time = time.time()
-        timeout = 120  # 2 minutes
-        found = False
-        waited = False
-        while True:
-            tumble_log = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.log"))
-            tumble_schedule = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.schedule*"))
-            j_logs = glob.glob(os.path.join(dst_path, "logs/J*.log"))
-            yifen = os.path.exists(os.path.join(dst_path, "logs/yigen-statement.csv"))
-
-            cond1 = tumble_log and tumble_schedule and len(j_logs) > 0
-            cond2 = len(j_logs) > 0 and yifen
-
-            print(f"Debug: tumble_log={tumble_log}, tumble_schedule={tumble_schedule}, j_logs={j_logs}, yigen={yifen}")
-
-            if cond1 or cond2:
-                print(f"All required log files found in {dst_path} after {time.time() - start_time} seconds")
-                print("Waiting for file transfer to complete...")
-                time.sleep(10)
-                if found:
-                    print("All required log files still found in {} after {} seconds".format(dst_path, time.time() - start_time))
-                    time.sleep(1)
-                    break
-                found = True
-
-            if time.time() - start_time > timeout:
-                print("Timeout waiting for required log files in {}".format(dst_path))
-                break
-
-            if not waited:
-                print("Waiting for required log files to appear in {}...".format(dst_path))
-                waited = True
-            time.sleep(2)
-
-        # sleep(60)
-
     def peek(self, name, path):
         exec_command = ["cat", path]
         resp = stream(
