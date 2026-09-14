@@ -2,8 +2,9 @@ import os
 import tarfile
 from io import BytesIO
 
-import docker
 import podman
+
+from manager.exceptions import CoinjoinEmulatorError
 
 from . import Driver
 
@@ -14,16 +15,16 @@ class PodmanDriver(Driver):
 
     def has_image(self, name):
         try:
-            docker.from_env().images.get(name)
+            self.client.images.get(name)
             return True
-        except docker.errors.ImageNotFound:
+        except podman.errors.ImageNotFound:
             return False
 
     def build(self, name, path):
-        docker.from_env().images.build(path=path, tag=name, rm=True, nocache=True)
+        self.client.images.build(path=path, tag=name, rm=True, nocache=True)
 
     def pull(self, name):
-        docker.from_env().images.pull(name)
+        self.client.images.pull(name)
 
     def run(
         self,
@@ -50,14 +51,14 @@ class PodmanDriver(Driver):
 
     def stop(self, name):
         try:
-            self.client.containers.get(name).stop()
+            self.client.containers.get(name).stop(ignore=True)
             print(f"- stopped {name}")
-        except docker.errors.NotFound:
+        except podman.errors.NotFound:
             pass
 
     def download(self, name, src_path, dst_path):
         try:
-            stream, _ = docker.from_env().containers.get(name).get_archive(src_path)
+            stream, _ = self.client.containers.get(name).get_archive(src_path)
 
             fo = BytesIO()
             for d in stream:
@@ -71,7 +72,7 @@ class PodmanDriver(Driver):
             print("- could not store backend logs")
 
     def peek(self, name, path):
-        stream, _ = docker.from_env().containers.get(name).get_archive(path)
+        stream, _ = self.client.containers.get(name).get_archive(path)
 
         fo = BytesIO()
         for d in stream:
@@ -85,15 +86,16 @@ class PodmanDriver(Driver):
         with tarfile.open(fileobj=fo, mode="w") as tar:
             tar.add(src_path, os.path.basename(dst_path))
         fo.seek(0)
-        docker.from_env().containers.get(name).put_archive(
-            os.path.dirname(dst_path), fo
-        )
+        if not self.client.containers.get(name).put_archive(
+            os.path.dirname(dst_path), fo.read()
+        ):
+            raise CoinjoinEmulatorError(f"Failed to copy {src_path} to {name}:{dst_path}")
 
     def cleanup(self, image_prefix=""):
         containers = []
-        for container in docker.from_env().containers.list():
+        for container in self.client.containers.list():
             if any(
-                x in container.attrs["Config"]["Image"]
+                x in container.attrs.get("Image", "")
                 for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-client", "joinmarket-client-server")
             ):
                 containers.append(container)
