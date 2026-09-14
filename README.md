@@ -72,6 +72,21 @@ You can run the simulation with different CoinJoin protocols. Currently, Wasabi 
 The default protocol is Wasabi. To run the simulation with Joinmarket, use the `--engine joinmarket` option.  
 
 
+### JoinMarket round-event statuses
+
+`data/joinmarket_round_events.json` records each round's `status`:
+
+- `started`: the attempt is waiting for a mined destination match.
+- `failed`: the attempt failed.
+- `confirmed`: the destination belongs to one round and matches one mined transaction.
+- `multiple_matches`: the destination matches several transactions.
+- `duplicate_destination`: several rounds share the same destination address.
+
+`duplicate_destination` takes precedence over the match count. Matching transactions
+remain in `destination_matches` for diagnostics, but cannot confirm such a round.
+Both conflict statuses make the producer-label manifest incomplete. The status is
+the sole classification; no duplicate-destination boolean is emitted.
+
 ## Advanced usage
 
 The simulation script enables advanced configuration for running on different container platforms with various networking setups. This section describes the advanced configuration and shows common examples.

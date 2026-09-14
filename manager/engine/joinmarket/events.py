@@ -5,10 +5,12 @@ from collections.abc import Iterable, Iterator
 from manager.engine.base.manifest import ProducerLabelEvidence
 from manager.engine.joinmarket.exported_block_record import ExportedBlock, ExportedBlockRecord
 from manager.engine.joinmarket.round_event_record import (
-    EVENT_STATUS_AMBIGUOUS,
+    EVENT_STATUS_DUPLICATE_DESTINATION,
+    EVENT_STATUS_MULTIPLE_MATCHES,
     RoundEvent,
     RoundEventRecord,
 )
+
 
 def collect_round_events(event_groups: Iterable[Iterable[RoundEvent]]) -> list[RoundEvent]:
     """Copy producer records once and assign stable global export identifiers."""
@@ -25,12 +27,21 @@ def reconcile_round_event_destinations(
     events: Iterable[RoundEvent],
     blocks: Iterable[tuple[int, ExportedBlock]],
 ) -> list[RoundEvent]:
-    """Match event destinations to block outputs and mutate the matching events."""
-    events_by_destination: dict[str, RoundEvent] = {}
+    """Match event destinations to block outputs and mutate the matching events.
+
+    Fresh wallet addresses should make destinations unique; rounds that still share
+    one get the duplicate_destination status. Keep every round and its matches
+    so the evidence records the fault without attributing the transaction to a round.
+    """
+    events_by_destination: dict[str, list[RoundEvent]] = {}
     for event in events:
         destination = RoundEventRecord.from_data(event).destination_address
         if destination is not None:
-            events_by_destination[destination] = event
+            events_by_destination.setdefault(destination, []).append(event)
+    for shared in events_by_destination.values():
+        if len(shared) > 1:
+            for event in shared:
+                RoundEventRecord.from_data(event).mark_duplicate_destination()
 
     for block_height, raw_block in blocks:
         for transaction in ExportedBlockRecord.from_data(raw_block).transactions:
@@ -39,11 +50,10 @@ def reconcile_round_event_destinations(
                 raise ValueError("exported transaction txid must be a non-empty string")
             for output in transaction.outputs:
                 address = output.address
-                matched_event = events_by_destination.get(address) if address is not None else None
-                if matched_event is not None:
+                for matched_event in events_by_destination.get(address, []) if address is not None else []:
                     RoundEventRecord.from_data(matched_event).add_destination_match(txid, block_height)
 
-    return list(events_by_destination.values())
+    return [event for shared in events_by_destination.values() for event in shared]
 
 
 def match_round_events_to_blocks(
@@ -68,20 +78,43 @@ def match_round_events_to_blocks(
     ]
 
 
+def _format_round_ids(records: Iterable[RoundEventRecord]) -> str:
+    """Format known round identifiers for a manifest reason."""
+    return ", ".join(str(record.round_id if record.round_id is not None else "?") for record in records)
+
+
+def _partition_destination_conflicts(
+    records: Iterable[RoundEventRecord],
+) -> tuple[list[RoundEventRecord], list[RoundEventRecord]]:
+    """Split records by the two destination-conflict statuses in one pass."""
+    duplicates: list[RoundEventRecord] = []
+    multiple_matches: list[RoundEventRecord] = []
+    for record in records:
+        match record.status:
+            case status if status == EVENT_STATUS_DUPLICATE_DESTINATION:
+                duplicates.append(record)
+            case status if status == EVENT_STATUS_MULTIPLE_MATCHES:
+                multiple_matches.append(record)
+    return duplicates, multiple_matches
+
+
 def producer_label_evidence(
     labels: Iterable[RoundEvent],
     unlabelled_takers: list[str],
 ) -> ProducerLabelEvidence:
     """Build manifest evidence from reconciled records and known omissions."""
     records = [RoundEventRecord.from_data(label) for label in labels]
-    ambiguous = [record for record in records if record.status == EVENT_STATUS_AMBIGUOUS]
+    duplicates, multiple_matches = _partition_destination_conflicts(records)
     incomplete_reasons: list[str] = []
     if unlabelled_takers:
         incomplete_reasons.append(
             f"tumbler takers produce no per-round labels: {', '.join(sorted(unlabelled_takers))}"
         )
-    if ambiguous:
-        rounds = ", ".join(str(record.round_id if record.round_id is not None else "?") for record in ambiguous)
+    if duplicates:
+        rounds = _format_round_ids(duplicates)
+        incomplete_reasons.append(f"destination address is shared by several rounds: {rounds}")
+    if multiple_matches:
+        rounds = _format_round_ids(multiple_matches)
         incomplete_reasons.append(
             f"destination output matches multiple exported transactions for rounds: {rounds}"
         )

@@ -177,7 +177,7 @@ class TestJoinMarketRoundEvents:
         assert event["status"] == "started"
         assert "destination_matches" not in event
 
-    def test_reconciliation_marks_reused_destinations_as_ambiguous(self, tmp_path: Path) -> None:
+    def test_reconciliation_marks_multiple_matches(self, tmp_path: Path) -> None:
         node_path = tmp_path / "btc-node"
         for height, txid in ((3, "first-match"), (4, "second-match")):
             write_block(node_path, height, txid, "reused-destination")
@@ -187,7 +187,7 @@ class TestJoinMarketRoundEvents:
 
         label = harness.match_joinmarket_rounds_to_blocks(str(tmp_path))[0]
 
-        assert label["status"] == "ambiguous"
+        assert label["status"] == "multiple_matches"
         assert label["destination_matches"] == [
             {"txid": "first-match", "block_height": 3},
             {"txid": "second-match", "block_height": 4},
@@ -264,7 +264,7 @@ class TestStoreRoundEvents:
         assert stored[0]["destination_matches"] == [{"txid": "coinjoin-txid", "block_height": 7}]
         assert stored[0]["status"] == "confirmed"
 
-    def test_ambiguous_destinations_make_the_evidence_incomplete(self, tmp_path: Path) -> None:
+    def test_multiple_matches_make_the_evidence_incomplete(self, tmp_path: Path) -> None:
         for height, txid in ((7, "first-match"), (8, "second-match")):
             write_block(tmp_path / "btc-node", height, txid, "reused-destination")
         harness = EventHarness(
