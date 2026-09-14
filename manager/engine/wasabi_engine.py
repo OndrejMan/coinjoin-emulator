@@ -31,6 +31,7 @@ SUCCESSFUL_BROADCAST_RE = re.compile(
     re.IGNORECASE,
 )
 WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
+WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
 
 
 def successful_broadcast_txids(log_texts: Iterable[str]) -> set[str]:
@@ -431,6 +432,17 @@ class WasabiEngine(EngineBase):
             sleep(1)
         print()
         print("- limit reached")
+        self.mine_settlement_blocks()
+
+    def mine_settlement_blocks(self):
+        """Mine the confirmations the last broadcast needs before artifacts are captured."""
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        print(f"- mining {WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT} settlement blocks")
+        if not self.node.mine_block(WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT):
+            raise RuntimeError(
+                f"Bitcoin node did not mine {WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT} settlement blocks"
+            )
 
     def _get_current_round(self) -> int:
         if self.backend_architecture == BackendArchitecture.SPLIT:
