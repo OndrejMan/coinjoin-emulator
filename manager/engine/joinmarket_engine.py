@@ -19,6 +19,11 @@ from manager.engine.joinmarket.events import (
     match_round_events_to_blocks,
     producer_label_evidence,
 )
+from manager.engine.joinmarket.round_confirmation import (
+    confirm_rounds_in_blocks,
+    count_confirmed_rounds,
+    mark_latest_started_round_failed,
+)
 from manager.engine.joinmarket.round_event_record import RoundEvent
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
@@ -36,6 +41,7 @@ class JoinmarketEngine(EngineBase):
         self.loop = None
         self.last_resource_check = 0  # Track when we last checked resources
         self._core_wallet_lock = threading.Lock()
+        self._round_scan_height = -1
 
     def default_scenario(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -337,6 +343,25 @@ class JoinmarketEngine(EngineBase):
             for client in self.clients
         ])
 
+    def live_round_events(self) -> list[RoundEvent]:
+        return [
+            event
+            for client in self.clients
+            for event in getattr(client, "round_events", [])
+        ]
+
+    def confirm_started_rounds(self) -> int:
+        """Count a round only once its unique destination appears in a mined block."""
+        if self.node is None:
+            return 0
+        events = self.live_round_events()
+        self._round_scan_height = confirm_rounds_in_blocks(events, self.node, self._round_scan_height)
+        self.current_round = count_confirmed_rounds(events)
+        return self.current_round
+
+    def _mark_taker_round_failed(self, taker_name: str, reason: str) -> None:
+        mark_latest_started_round_failed(self.live_round_events(), taker_name, reason, self.current_block)
+
     def match_joinmarket_rounds_to_blocks(self, data_path: str) -> list[RoundEvent]:
         """Reconcile copied client records with blocks exported under data_path."""
         node_path = os.path.join(data_path, "btc-node")
@@ -473,6 +498,7 @@ class JoinmarketEngine(EngineBase):
         print("- orderbook watcher is not running, skipping its updates for this run")
 
     def update_coinjoins_joinmarket(self):
+        self.confirm_started_rounds()
         for client in self.clients:
             try:
                 # Check if client just reached its limit
@@ -485,8 +511,10 @@ class JoinmarketEngine(EngineBase):
                     if hasattr(client, 'completed_coinjoins') and client.completed_coinjoins >= client.max_coinjoins:
                         print(f"✓ {client.name} reached max coinjoins limit ({client.max_coinjoins})")
 
-                # Apply any change in round count; alternatively, have the client trigger an event.
-                self.current_round += delta
+                # An RPC start is only an attempt; the round counter is owned by
+                # confirm_started_rounds(). A negative delta is a timed-out attempt.
+                if delta < 0:
+                    self._mark_taker_round_failed(client.name, "coinjoin attempt timed out")
             except Exception as e:
                 print(f"- could not update {client.name} ({e})")
 
@@ -503,6 +531,7 @@ class JoinmarketEngine(EngineBase):
         Async version: Update all clients in parallel using asyncio.gather()
         Adds jitter between task creation to prevent synchronized RPC storms
         """
+        self.confirm_started_rounds()
         # Create tasks for all client updates with jitter to desynchronize RPC calls
         client_tasks = []
         for client in self.clients:
@@ -527,9 +556,8 @@ class JoinmarketEngine(EngineBase):
             if isinstance(result, Exception):
                 client_name = self.clients[i].name if i < len(self.clients) else "unknown"
                 print(f"- could not update {client_name} ({result})")
-            else:
-                # Apply any change in round count
-                self.current_round += result
+            elif isinstance(result, int) and result < 0:
+                self._mark_taker_round_failed(self.clients[i].name, "coinjoin attempt timed out")
 
     async def _update_client_async(self, client):
         """Helper to update a single client asynchronously"""
