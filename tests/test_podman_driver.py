@@ -74,13 +74,16 @@ def test_stop_accepts_running_and_already_stopped_containers(driver_and_client, 
     response._content = b""
     api.post.return_value = response
     client.containers.get.return_value = Container(
-        attrs={"Id": "abc", "Name": "/btc-node"}, client=api
+        attrs={"Id": "abc", "Name": "/btc-node"}, client=api, collection=ContainersManager(client=api)
     )
 
     driver.stop("btc-node")
 
     api.post.assert_called_once_with(
         "/containers/abc/stop", params={"all": None, "timeout": None}
+    )
+    api.delete.assert_called_once_with(
+        "/containers/abc", params={"force": True, "v": None}
     )
 
 
@@ -90,6 +93,8 @@ def test_cleanup_reads_images_from_the_podman_list_response(driver_and_client) -
     api.get.return_value.json.return_value = [
         {"Id": "btc", "Names": ["btc-node"], "Image": "localhost/btc-node:latest", "State": "running"},
         {"Id": "other", "Names": ["unrelated"], "Image": "postgres:latest", "State": "running"},
+        {"Id": "jm", "Names": ["joinmarket-client"], "Image": "registry/joinmarket-client-server:latest", "State": "exited"},
+        {"Id": "wc", "Names": ["wasabi-coordinator"], "Image": "wasabi-coordinator:latest", "State": "exited"},
     ]
     client.containers = ContainersManager(client=api)
     selected = []
@@ -97,7 +102,10 @@ def test_cleanup_reads_images_from_the_podman_list_response(driver_and_client) -
 
     driver.cleanup()
 
-    assert selected == ["btc-node"]
+    assert selected == ["btc-node", "joinmarket-client", "wasabi-coordinator"]
+    assert api.get.call_args.kwargs["params"]["all"] is True
+    client.networks.get.assert_called_once_with("coinjoin")
+    client.networks.get.return_value.remove.assert_called_once_with()
 
 
 @pytest.mark.parametrize("container_port", [28183, "28183", "28183/tcp"])
@@ -133,7 +141,6 @@ def test_run_publishes_the_requested_ports_on_its_own_network(driver_and_client,
         "client:latest",
         command=["--flag"],
         detach=True,
-        auto_remove=True,
         name="client",
         hostname="client",
         network="coinjoin",
@@ -141,3 +148,26 @@ def test_run_publishes_the_requested_ports_on_its_own_network(driver_and_client,
         environment={"MODE": "walletd"},
         volumes={"/host/data": {"bind": "/container/data", "mode": "rw"}},
     )
+
+
+@pytest.mark.parametrize("exists", [False, True])
+def test_run_removes_an_existing_container_before_reusing_its_name(driver_and_client, exists) -> None:
+    driver, client = driver_and_client
+    old_container = Mock()
+    if exists:
+        client.containers.get.return_value = old_container
+    else:
+        client.containers.get.side_effect = podman.errors.NotFound("client")
+    client.containers.run.return_value.inspect.return_value = {
+        "NetworkSettings": {"Networks": {"coinjoin": {"IPAddress": "10.88.0.7"}}}
+    }
+
+    def check_removal(image, **kwargs):
+        if exists:
+            old_container.remove.assert_called_once_with(force=True)
+        assert not kwargs.get("auto_remove", False)
+        return client.containers.run.return_value
+
+    client.containers.run.side_effect = check_removal
+    driver.run("client", "client:latest")
+    client.containers.get.assert_called_once_with("client")
