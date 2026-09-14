@@ -50,10 +50,8 @@ def test_mining_blocks_waits_far_longer_than_a_poll() -> None:
     with patch(
         "manager.btc_node.requests.post",
         side_effect=[
-            response({"error": None, "result": 1014}),
             response({"error": None, "result": "bcrt1qminer"}),
             response({"error": None, "result": ["hash"]}),
-            response({"error": None, "result": 1015}),
         ],
     ) as post:
         node().mine_block()
@@ -64,3 +62,28 @@ def test_mining_blocks_waits_far_longer_than_a_poll() -> None:
     ]
     assert generate, "expected a generatetoaddress call"
     assert generate[0].kwargs["timeout"] == WRITE_RPC_TIMEOUT_SECONDS
+
+
+def test_mining_is_judged_by_the_hashes_generatetoaddress_returned() -> None:
+    """The periodic miner in btc-node may add a block of its own meanwhile."""
+    with patch(
+        "manager.btc_node.requests.post",
+        side_effect=[
+            response({"error": None, "result": "bcrt1qminer"}),
+            response({"error": None, "result": ["h101", "h102", "h103"]}),
+        ],
+    ) as post:
+        assert node().mine_block(3) is True
+
+    assert not any(b"getblockcount" in call.kwargs["data"].encode() for call in post.call_args_list)
+
+
+def test_mining_fewer_blocks_than_requested_is_a_failure() -> None:
+    with patch(
+        "manager.btc_node.requests.post",
+        side_effect=[
+            response({"error": None, "result": "bcrt1qminer"}),
+            response({"error": None, "result": ["h101"]}),
+        ],
+    ):
+        assert node().mine_block(3) is False

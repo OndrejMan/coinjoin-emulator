@@ -67,8 +67,11 @@ class BtcNode:
         return self._rpc(request)
 
     def mine_block(self, count=1):
-        initial_block_count = self.get_block_count()
+        """Mine ``count`` blocks; True when generatetoaddress returned that many block hashes.
 
+        The node's periodic miner can add its own block at any time, so the
+        chain height before and after is not a measure of what this call mined.
+        """
         request = {
             "method": "getnewaddress",
             "params": [],
@@ -79,9 +82,9 @@ class BtcNode:
             "method": "generatetoaddress",
             "params": [count, address],
         }
-        self._rpc(request, timeout=WRITE_RPC_TIMEOUT_SECONDS)
+        mined = self._rpc(request, timeout=WRITE_RPC_TIMEOUT_SECONDS)
 
-        return self.get_block_count() - initial_block_count == count
+        return isinstance(mined, list) and len(mined) == count
 
     def fund_address(self, address, amount):
         request = {
