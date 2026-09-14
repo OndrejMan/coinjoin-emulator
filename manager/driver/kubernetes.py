@@ -7,6 +7,7 @@ import time
 import traceback
 from functools import cached_property
 from io import BytesIO
+from threading import RLock
 from time import sleep
 
 import backoff
@@ -70,6 +71,7 @@ class KubernetesDriver(Driver):
             config.load_kube_config()
 
         self.client = client.CoreV1Api()
+        self._exec_lock = RLock()
         self._namespace = namespace
         self.reuse_namespace = reuse_namespace
         self.pull_secret_path = pull_secret_path
@@ -312,7 +314,7 @@ class KubernetesDriver(Driver):
             "sh", "-c",
             f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64 | tr -d '\\n'",
         ]
-        resp = self._exec_stream(name, exec_command)
+        resp = self._exec_stream(name, exec_command, f"download {src_path}")
         encoded_chunks = []
         stderr_chunks = []
         deadline = time.monotonic() + DOWNLOAD_TIMEOUT_SECONDS
@@ -340,7 +342,7 @@ class KubernetesDriver(Driver):
             tar.extractall(dst_path)
 
     def peek(self, name, path):
-        resp = self._exec_stream(name, ["cat", path])
+        resp = self._exec_stream(name, ["cat", path], f"read {path}")
         output = ""
         while resp.is_open():
             resp.update(timeout=1)
@@ -349,18 +351,23 @@ class KubernetesDriver(Driver):
         resp.close()
         return output
 
-    def _exec_stream(self, name, exec_command):
-        return stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
+    def _exec_stream(self, name, exec_command, action):
+        # stream() swaps ApiClient.request only until the connection is opened.
+        with self._exec_lock:
+            try:
+                return stream(
+                    self.client.connect_get_namespaced_pod_exec,
+                    name,
+                    self.namespace,
+                    command=exec_command,
+                    stderr=True,
+                    stdin=True,
+                    stdout=True,
+                    tty=False,
+                    _preload_content=False,
+                )
+            except ApiException as error:
+                raise RuntimeError(f"could not {action} on pod {name}: {error}") from error
 
     def get_pod_resource_usage(self, name):
         """
@@ -369,7 +376,7 @@ class KubernetesDriver(Driver):
         """
         try:
             # Read process memory info from /proc
-            resp = self._exec_stream(name, ["cat", "/proc/self/status"])
+            resp = self._exec_stream(name, ["cat", "/proc/self/status"], "read /proc/self/status")
 
             output = ""
             while resp.is_open():
@@ -413,7 +420,7 @@ class KubernetesDriver(Driver):
         commands = [buf.getvalue()]
 
         exec_command = ["tar", "xf", "-", "-C", "/"]
-        resp = self._exec_stream(name, exec_command)
+        resp = self._exec_stream(name, exec_command, f"upload to {dst_path}")
 
         while resp.is_open():
             resp.update(timeout=1)

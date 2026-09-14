@@ -4,6 +4,8 @@ import base64
 import io
 import subprocess
 import tarfile
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, RLock
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -17,6 +19,7 @@ from manager.exceptions import KubernetesResourceQuotaError, StartupError
 def driver(**overrides: object) -> KubernetesDriver:
     instance = object.__new__(KubernetesDriver)
     instance.client = Mock()
+    instance._exec_lock = RLock()  # pylint: disable=protected-access
     instance._namespace = "coinjoin"  # pylint: disable=protected-access
     instance.reuse_namespace = True
     instance.pull_secret_path = None
@@ -224,3 +227,52 @@ def test_download_closes_the_connection_on_a_read_error(tmp_path) -> None:
                 driver().download("jcs-000", "/logs/", str(tmp_path))
 
     assert not response.is_open()
+
+
+def test_exec_opens_connections_serially_but_keeps_streams_independent() -> None:
+    instance = driver()
+    opening_first = Event()
+    attempting_second = Event()
+    opening_second = Event()
+    release_first = Event()
+
+    def open_stream(api, name, namespace, **kwargs):
+        if name == "first":
+            opening_first.set()
+            assert release_first.wait(2)
+        else:
+            opening_second.set()
+        return FakeStream()
+
+    def open_second():
+        attempting_second.set()
+        return instance._exec_stream("second", ["cat", "/logs"], "read logs")
+
+    with patch("manager.driver.kubernetes.stream", side_effect=open_stream):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(instance._exec_stream, "first", ["cat", "/logs"], "read logs")
+            try:
+                assert opening_first.wait(2)
+                second = pool.submit(open_second)
+                assert attempting_second.wait(2)
+                assert not opening_second.wait(0.05)
+            finally:
+                release_first.set()
+            first_stream = first.result(timeout=2)
+            second_stream = second.result(timeout=2)
+
+    assert opening_second.is_set()
+    assert first_stream is not second_stream
+    assert first_stream.is_open() and second_stream.is_open()
+
+
+def test_exec_api_failure_includes_pod_and_action() -> None:
+    instance = driver()
+    with patch("manager.driver.kubernetes.stream", side_effect=ApiException(status=404)):
+        with pytest.raises(RuntimeError, match="could not read logs on pod missing"):
+            instance._exec_stream("missing", ["cat", "/logs"], "read logs")
+
+    with patch("manager.driver.kubernetes.stream", return_value=FakeStream()):
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            response = pool.submit(instance._exec_stream, "next", ["cat", "/logs"], "read logs").result(timeout=2)
+    assert response.is_open()
