@@ -46,11 +46,11 @@ class PodmanDriver(Driver):
         memory=None,
         **kwargs
     ):
+        self._remove_container(name)
         container = self.client.containers.run(
             image,
             command=kwargs.get("command"),
             detach=True,
-            auto_remove=True,
             name=name,
             hostname=name,
             network=self.network,
@@ -67,8 +67,16 @@ class PodmanDriver(Driver):
 
     def stop(self, name):
         try:
-            self.client.containers.get(name).stop(ignore=True)
+            container = self.client.containers.get(name)
+            container.stop(ignore=True)
+            container.remove(force=True)
             print(f"- stopped {name}")
+        except podman.errors.NotFound:
+            pass
+
+    def _remove_container(self, name):
+        try:
+            self.client.containers.get(name).remove(force=True)
         except podman.errors.NotFound:
             pass
 
@@ -109,11 +117,15 @@ class PodmanDriver(Driver):
 
     def cleanup(self, image_prefix=""):
         containers = []
-        for container in self.client.containers.list():
+        for container in self.client.containers.list(all=True):
             if any(
                 x in container.attrs.get("Image", "")
-                for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-client", "joinmarket-client-server")
+                for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-client", "wasabi-coordinator", "joinmarket-client-server")
             ):
                 containers.append(container)
-                
+
         self.stop_many(map(lambda x: x.name, containers))
+        try:
+            self.client.networks.get(self._namespace).remove()
+        except podman.errors.NotFound:
+            pass
