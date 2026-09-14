@@ -7,7 +7,7 @@ import podman
 
 from manager.exceptions import CoinjoinEmulatorError
 
-from . import Driver
+from . import MANAGED_IMAGE_MARKERS, Driver
 
 
 class PodmanDriver(Driver):
@@ -120,7 +120,7 @@ class PodmanDriver(Driver):
         for container in self.client.containers.list(all=True):
             if any(
                 x in container.attrs.get("Image", "")
-                for x in ("irc-server", "btc-node", "wasabi-backend", "wasabi-client", "wasabi-coordinator", "joinmarket-client-server")
+                for x in MANAGED_IMAGE_MARKERS
             ):
                 containers.append(container)
 
