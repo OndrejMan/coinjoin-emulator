@@ -312,17 +312,7 @@ class KubernetesDriver(Driver):
             "sh", "-c",
             f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64 | tr -d '\\n'",
         ]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
+        resp = self._exec_stream(name, exec_command)
         encoded_chunks = []
         stderr_chunks = []
         deadline = time.monotonic() + DOWNLOAD_TIMEOUT_SECONDS
@@ -350,8 +340,17 @@ class KubernetesDriver(Driver):
             tar.extractall(dst_path)
 
     def peek(self, name, path):
-        exec_command = ["cat", path]
-        resp = stream(
+        resp = self._exec_stream(name, ["cat", path])
+        output = ""
+        while resp.is_open():
+            resp.update(timeout=1)
+            if resp.peek_stdout():
+                output += resp.read_stdout()
+        resp.close()
+        return output
+
+    def _exec_stream(self, name, exec_command):
+        return stream(
             self.client.connect_get_namespaced_pod_exec,
             name,
             self.namespace,
@@ -363,14 +362,6 @@ class KubernetesDriver(Driver):
             _preload_content=False,
         )
 
-        output = ""
-        while resp.is_open():
-            resp.update(timeout=1)
-            if resp.peek_stdout():
-                output += resp.read_stdout()
-        resp.close()
-        return output
-
     def get_pod_resource_usage(self, name):
         """
         Get memory usage of a pod by reading /proc/self/status.
@@ -378,18 +369,7 @@ class KubernetesDriver(Driver):
         """
         try:
             # Read process memory info from /proc
-            exec_command = ["cat", "/proc/self/status"]
-            resp = stream(
-                self.client.connect_get_namespaced_pod_exec,
-                name,
-                self.namespace,
-                command=exec_command,
-                stderr=True,
-                stdin=True,
-                stdout=True,
-                tty=False,
-                _preload_content=False,
-            )
+            resp = self._exec_stream(name, ["cat", "/proc/self/status"])
 
             output = ""
             while resp.is_open():
@@ -433,17 +413,7 @@ class KubernetesDriver(Driver):
         commands = [buf.getvalue()]
 
         exec_command = ["tar", "xf", "-", "-C", "/"]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
+        resp = self._exec_stream(name, exec_command)
 
         while resp.is_open():
             resp.update(timeout=1)
