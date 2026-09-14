@@ -374,8 +374,18 @@ class WasabiEngine(EngineBase):
         sleep(random.random() / 10)
         client.stop_coinjoin()
 
+    def _run_limit_reached(self) -> bool:
+        """Return whether the refreshed round or block count reached its scenario limit."""
+        return (
+            self.scenario.rounds > 0 and self.current_round >= self.scenario.rounds
+        ) or (
+            self.scenario.blocks > 0 and self.current_block >= self.scenario.blocks
+        )
+
     def update_coinjoins(self):
         def start_condition(client):
+            if self._run_limit_reached():
+                return False
             if client.stop[0] > 0 and self.current_block >= client.stop[0]:
                 return False
             if client.stop[1] > 0 and self.current_round >= client.stop[1]:
@@ -404,9 +414,7 @@ class WasabiEngine(EngineBase):
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         initial_block = self.node.get_block_count()
-        while (self.scenario.rounds == 0 or self.current_round < self.scenario.rounds) and (
-            self.scenario.blocks == 0 or self.current_block < self.scenario.blocks
-        ):
+        while not self._run_limit_reached():
             for _ in range(3):
                 try:
                     self.current_round = self._get_current_round()
