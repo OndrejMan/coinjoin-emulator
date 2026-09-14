@@ -22,6 +22,30 @@ def test_containers_are_addressed_by_name_on_the_bridge_network() -> None:
     assert endpoint == ("jcs-000", {28183: 28185}, None)
 
 
+def test_a_running_container_is_paused_while_it_is_archived(tmp_path) -> None:
+    instance = driver()
+    container = instance.client.containers.get.return_value
+    container.status = "running"
+    container.get_archive.return_value = (iter([tar_bytes()]), {})
+
+    instance.download("jcs-000", "/logs", str(tmp_path))
+
+    container.pause.assert_called_once_with()
+    container.unpause.assert_called_once_with()
+
+
+def tar_bytes() -> bytes:
+    import io
+    import tarfile
+
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w") as tar:
+        info = tarfile.TarInfo("logs")
+        info.type = tarfile.DIRTYPE
+        tar.addfile(info)
+    return payload.getvalue()
+
+
 def test_stopped_containers_are_still_found_during_cleanup() -> None:
     instance = driver()
     instance.client.containers.list.return_value = []
