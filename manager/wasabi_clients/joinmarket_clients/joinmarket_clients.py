@@ -80,6 +80,18 @@ class TakerClient(JoinMarketClientServer):
     This class implements the logic for a taker that does *not* have tumbler options.
     """
 
+    def has_unconfirmed_round(self):
+        """True while an earlier attempt is still waiting for its destination to be mined."""
+        return any(event.get("status") == "started" for event in self.round_events)
+
+    def _has_unconfirmed_finished_attempt(self):
+        """Whether jmwalletd is idle while an earlier attempt still awaits mining."""
+        return self.has_unconfirmed_round() and not self.coinjoin_in_process
+
+    def _unconfirmed_finished_attempt_result(self, current_block):
+        """Keep waiting for the pending attempt, or report its timeout."""
+        return -1 if self.coinjoin_timed_out(current_block) else 0
+
     def _apply_coinjoin_process_status(self, response):
         """Store jmwalletd's process state and record a completed attempt."""
         was_in_process = self.coinjoin_in_process
@@ -106,7 +118,15 @@ class TakerClient(JoinMarketClientServer):
         self.update_status()
 
         delta = 0
-        if not self.coinjoin_in_process and not self.is_paused(current_block):
+        if self._has_unconfirmed_finished_attempt():
+            # jmwalletd reports the attempt as finished before the transaction
+            # is mined; report a timeout only once it cannot land any more.
+            return self._unconfirmed_finished_attempt_result(current_block)
+        if (
+            not self.coinjoin_in_process
+            and not self.is_paused(current_block)
+            and not self.has_unconfirmed_round()
+        ):
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
             self.start_coinjoin(**offer)
@@ -145,7 +165,9 @@ class TakerClient(JoinMarketClientServer):
             return 0
 
         delta = 0
-        if not self.coinjoin_in_process:
+        if self._has_unconfirmed_finished_attempt():
+            return self._unconfirmed_finished_attempt_result(current_block)
+        if not self.coinjoin_in_process and not self.has_unconfirmed_round():
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
             await self.start_coinjoin_async(**offer)
