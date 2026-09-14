@@ -703,7 +703,8 @@ class JoinmarketEngine(EngineBase):
             print()
             print("- limit reached")
             sleep(60)
-            self.node.mine_block()
+            # Mine confirmations for the last broadcast before artifacts are captured.
+            self.node.mine_block(3)
 
         finally:
             if self.loop and not self.loop.is_closed():
