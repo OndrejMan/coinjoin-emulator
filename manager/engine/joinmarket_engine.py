@@ -133,8 +133,28 @@ class JoinmarketEngine(EngineBase):
     def prepare_images(self):
         print("Preparing images")
         self.prepare_image("btc-node")
-        self.prepare_image("joinmarket-client-server")
+        base_image = self.prepare_joinmarket_base_image()
+        self.prepare_image(
+            "joinmarket-client-server",
+            build_args={"JOINMARKET_BASE_IMAGE": base_image} if base_image else None,
+        )
         self.prepare_image("irc-server")
+
+    def prepare_joinmarket_base_image(self):
+        """Build the vendored JoinMarket base for a local client build.
+
+        Return its tag for JOINMARKET_BASE_IMAGE, or None to use the default base.
+        """
+        if not self.local_build_requested("joinmarket-client-server"):
+            return None
+        base_path = "./vendor/joinmarket-clientserver"
+        if not os.path.isdir(base_path):
+            print(f"- vendored JoinMarket source missing at {base_path}; using the published base")
+            return None
+        base_image = f"{self.args.image_prefix}joinmarket-base:latest"
+        self.driver.build(base_image, base_path)
+        print(f"- image built {base_image}")
+        return base_image
 
 
     @staticmethod

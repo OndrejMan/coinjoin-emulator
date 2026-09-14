@@ -27,6 +27,56 @@ def test_container_environment_selects_the_watch_only_wallet() -> None:
     }
 
 
+def test_local_build_creates_the_vendored_base_before_the_client(monkeypatch) -> None:
+    instance = engine()
+    instance.args = SimpleNamespace(image_prefix="registry/")
+    instance.driver = Mock()
+    instance.local_build_requested = Mock(return_value=True)
+    calls = []
+    instance.prepare_image = Mock(
+        side_effect=lambda name, **kwargs: calls.append((name, kwargs.get("build_args")))
+    )
+    instance.driver.build.side_effect = lambda image, path: calls.append((image, path))
+    monkeypatch.setattr(
+        "manager.engine.joinmarket_engine.os.path.isdir",
+        lambda path: path == "./vendor/joinmarket-clientserver",
+    )
+
+    instance.prepare_images()
+
+    assert calls == [
+        ("btc-node", None),
+        ("registry/joinmarket-base:latest", "./vendor/joinmarket-clientserver"),
+        # The client Dockerfile's ARG default points at the unpublished ghcr.io
+        # base, so the locally built tag has to be handed to the build; without
+        # it a local build silently pulls that base from the registry.
+        (
+            "joinmarket-client-server",
+            {"JOINMARKET_BASE_IMAGE": "registry/joinmarket-base:latest"},
+        ),
+        ("irc-server", None),
+    ]
+
+
+def test_client_build_falls_back_to_the_published_base_without_vendored_source(monkeypatch) -> None:
+    instance = engine()
+    instance.args = SimpleNamespace(image_prefix="registry/")
+    instance.driver = Mock()
+    instance.local_build_requested = Mock(return_value=True)
+    calls = []
+    instance.prepare_image = Mock(
+        side_effect=lambda name, **kwargs: calls.append((name, kwargs.get("build_args")))
+    )
+    monkeypatch.setattr(
+        "manager.engine.joinmarket_engine.os.path.isdir", lambda path: False
+    )
+
+    instance.prepare_images()
+
+    assert instance.driver.build.mock_calls == []
+    assert ("joinmarket-client-server", None) in calls
+
+
 def test_core_wallet_creation_does_not_import_funding_descriptors() -> None:
     instance = engine()
     instance.node = Mock()
