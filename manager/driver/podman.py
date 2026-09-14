@@ -114,6 +114,9 @@ class PodmanDriver(Driver):
         with tarfile.open(fileobj=fo) as tar:
             return tar.extractfile(os.path.basename(path)).read().decode()
 
+    def logs(self, name: str) -> str:
+        return self.client.containers.get(name).logs().decode()
+
     def upload(self, name, src_path, dst_path):
         fo = BytesIO()
         with tarfile.open(fileobj=fo, mode="w") as tar:
