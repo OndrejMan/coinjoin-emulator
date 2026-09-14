@@ -92,8 +92,10 @@ class PodmanDriver(Driver):
                 tar.extractall(dst_path)
 
             print("- stored backend logs")
-        except Exception:
-            print("- could not store backend logs")
+        except (podman.errors.PodmanError, OSError, tarfile.TarError) as error:
+            raise CoinjoinEmulatorError(
+                f"Failed to copy {name}:{src_path} to {dst_path}: {error}"
+            ) from error
 
     def peek(self, name, path):
         stream, _ = self.client.containers.get(name).get_archive(path)
