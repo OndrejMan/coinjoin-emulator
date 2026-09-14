@@ -6,6 +6,7 @@ import random
 import re
 import sys
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 from time import sleep, time
 from traceback import print_exception
@@ -29,6 +30,12 @@ SUCCESSFUL_BROADCAST_RE = re.compile(
     r"successfully\s+broadcast(?:ed)?\s+(?:the\s+)?coinjoin(?:\s+transaction)?:\s*([0-9a-f]{64})",
     re.IGNORECASE,
 )
+WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
+
+
+def successful_broadcast_txids(log_texts: Iterable[str]) -> set[str]:
+    """Extract unique normalized transaction ids from Wasabi broadcast records."""
+    return {match.group(1).lower() for log_text in log_texts for match in SUCCESSFUL_BROADCAST_RE.finditer(log_text)}
 
 
 class WasabiEngine(EngineBase):
@@ -346,13 +353,9 @@ class WasabiEngine(EngineBase):
         log_paths: list[str] = sorted(
             str(path) for path in Path(label_root).rglob("Logs.txt") if path.is_file()
         )
-        successful_txids: set[str] = {
-            match.group(1).lower()
-            for path in log_paths
-            for match in SUCCESSFUL_BROADCAST_RE.finditer(
-                Path(path).read_text(encoding="utf-8", errors="replace")
-            )
-        }
+        successful_txids = successful_broadcast_txids(
+            Path(path).read_text(encoding="utf-8", errors="replace") for path in log_paths
+        )
         return {
             "engine": "wasabi",
             "complete": bool(log_paths),
@@ -430,14 +433,10 @@ class WasabiEngine(EngineBase):
         print("- limit reached")
 
     def _get_current_round(self) -> int:
-        if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
-            resp = self.coordinator._get_status()
-            if resp is not None:
-                for round_state in resp["RoundStates"]:
-                    if round_state["Phase"] == "TransactionSigning":
-                        self.round_ids.add(round_state["RoundId"])
-                return len(self.round_ids)
-            return 0
+        if self.backend_architecture == BackendArchitecture.SPLIT:
+            return len(
+                successful_broadcast_txids([self.driver.peek("wasabi-coordinator", WASABI_COORDINATOR_LOG_PATH)])
+            )
 
         else:
             # In legacy versions, rounds are tracked by the backend
