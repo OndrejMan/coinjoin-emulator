@@ -93,6 +93,16 @@ def test_a_live_scan_rejects_a_transaction_without_a_txid() -> None:
         confirm_rounds_in_blocks([event], FakeNode([[], [malformed]]), scanned_height=-1)
 
 
+def test_duplicate_pending_destinations_never_count_as_a_round() -> None:
+    events = [started("jcs-000", "reused-destination"), started("jcs-001", "reused-destination")]
+    node = FakeNode([[], [paying("cj-1", "reused-destination")]])
+
+    confirm_rounds_in_blocks(events, node, scanned_height=-1)
+
+    assert [event["status"] for event in events] == ["duplicate_destination", "duplicate_destination"]
+    assert count_confirmed_rounds(events) == 0
+
+
 def test_the_latest_started_attempt_of_the_taker_is_failed() -> None:
     older = started("jcs-000", "bcrt1a")
     other = started("jcs-001", "bcrt1b")
