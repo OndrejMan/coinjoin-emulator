@@ -9,7 +9,7 @@ USER 1000:1000
 # get wasabi from the github repo and checkout to the desired branch
 RUN mkdir -p /home/wasabi/wasabi-src
 WORKDIR /home/wasabi/wasabi-src
-RUN git clone https://github.com/zkSNACKs/WalletWasabi.git .
+RUN git clone https://github.com/WalletWasabi/WalletWasabi.git .
 RUN git checkout v2.6.0
 
 
