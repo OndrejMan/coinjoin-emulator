@@ -171,3 +171,13 @@ def test_run_removes_an_existing_container_before_reusing_its_name(driver_and_cl
     client.containers.run.side_effect = check_removal
     driver.run("client", "client:latest")
     client.containers.get.assert_called_once_with("client")
+
+
+def test_failed_artifact_download_raises_an_emulator_error(driver_and_client) -> None:
+    driver, client = driver_and_client
+    container = Mock()
+    container.get_archive.side_effect = podman.errors.PodmanError("archive unavailable")
+    client.containers.get.return_value = container
+
+    with pytest.raises(CoinjoinEmulatorError, match="archive unavailable"):
+        driver.download("btc-node", "/missing", "/tmp/logs")
