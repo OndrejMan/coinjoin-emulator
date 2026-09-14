@@ -64,8 +64,18 @@ class DockerDriver(Driver):
             pass
 
     def download(self, name, src_path, dst_path):
+        container = None
+        paused = False
         try:
-            stream, _ = self.client.containers.get(name).get_archive(src_path)
+            container = self.client.containers.get(name)
+            container.reload()
+            if container.status == "running":
+                # Docker builds the archive while reading the live filesystem;
+                # a growing log otherwise invalidates the tar stream with
+                # "archive/tar: write too long".
+                container.pause()
+                paused = True
+            stream, _ = container.get_archive(src_path)
 
             fo = BytesIO()
             for d in stream:
@@ -75,6 +85,9 @@ class DockerDriver(Driver):
                 tar.extractall(dst_path)
         except Exception:
             pass
+        finally:
+            if paused and container is not None:
+                container.unpause()
 
     def peek(self, name, path):
         stream, _ = self.client.containers.get(name).get_archive(path)
