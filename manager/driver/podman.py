@@ -1,5 +1,6 @@
 import os
 import tarfile
+from functools import cached_property
 from io import BytesIO
 
 import podman
@@ -10,8 +11,17 @@ from . import Driver
 
 
 class PodmanDriver(Driver):
-    def __init__(self):
+    def __init__(self, namespace="coinjoin"):
+        self._namespace = namespace
         self.client = podman.PodmanClient()
+
+    @cached_property
+    def network(self) -> str:
+        try:
+            self.client.networks.get(self._namespace)
+        except podman.errors.NotFound:
+            self.client.networks.create(self._namespace)
+        return self._namespace
 
     def has_image(self, name):
         try:
@@ -38,16 +48,22 @@ class PodmanDriver(Driver):
     ):
         container = self.client.containers.run(
             image,
+            command=kwargs.get("command"),
             detach=True,
             auto_remove=True,
             name=name,
             hostname=name,
-            ports=ports or {},
+            network=self.network,
+            ports={str(port): host_port for port, host_port in (ports or {}).items()},
             environment=env or {},
+            volumes=kwargs.get("volumes") or {},
         )
-        container_ip = container.network_settings["IPAddress"]
-        port_mapping = container.ports
-        return container_ip, port_mapping, None
+        inspect = container.inspect()
+        networks = inspect.get("NetworkSettings", {}).get("Networks", {})
+        container_ip = next((network.get("IPAddress") for network in networks.values()), None)
+        if not container_ip:
+            raise CoinjoinEmulatorError(f"Podman container {name} has no network address")
+        return container_ip, dict(ports or {}), None
 
     def stop(self, name):
         try:

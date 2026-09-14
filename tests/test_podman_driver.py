@@ -98,3 +98,46 @@ def test_cleanup_reads_images_from_the_podman_list_response(driver_and_client) -
     driver.cleanup()
 
     assert selected == ["btc-node"]
+
+
+@pytest.mark.parametrize("container_port", [28183, "28183", "28183/tcp"])
+def test_run_publishes_the_requested_ports_on_its_own_network(driver_and_client, container_port) -> None:
+    driver, client = driver_and_client
+    container = Mock()
+    container.inspect.return_value = {
+        "NetworkSettings": {"Networks": {"coinjoin": {"IPAddress": "10.88.0.7"}}}
+    }
+    payloads = []
+
+    def run_container(image, **kwargs):
+        payloads.append(ContainersManager._render_payload({"image": image, **kwargs}))
+        return container
+
+    client.containers.run.side_effect = run_container
+    client.networks.get.side_effect = podman.errors.NotFound("coinjoin")
+    endpoint = driver.run(
+        "client",
+        "client:latest",
+        env={"MODE": "walletd"},
+        ports={container_port: 28184},
+        volumes={"/host/data": {"bind": "/container/data", "mode": "rw"}},
+        command=["--flag"],
+    )
+
+    assert endpoint == ("10.88.0.7", {container_port: 28184}, None)
+    client.networks.create.assert_called_once_with("coinjoin")
+    assert payloads[0]["portmappings"] == [
+        {"container_port": 28183, "host_port": 28184, "protocol": "tcp"}
+    ]
+    client.containers.run.assert_called_once_with(
+        "client:latest",
+        command=["--flag"],
+        detach=True,
+        auto_remove=True,
+        name="client",
+        hostname="client",
+        network="coinjoin",
+        ports={str(container_port): 28184},
+        environment={"MODE": "walletd"},
+        volumes={"/host/data": {"bind": "/container/data", "mode": "rw"}},
+    )
