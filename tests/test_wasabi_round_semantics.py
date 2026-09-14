@@ -48,6 +48,7 @@ def test_the_run_stops_after_the_requested_number_of_rounds() -> None:
     engine = split_engine()
     engine.node = Mock()
     engine.node.get_block_count.return_value = 100
+    engine.node.mine_block.return_value = True
     engine.scenario = ScenarioConfig("test", 1, 0, "test", [WalletConfig(funds=[1])])
     engine.current_round = 0
     engine.current_block = 0
@@ -59,3 +60,4 @@ def test_the_run_stops_after_the_requested_number_of_rounds() -> None:
         engine.run_engine()
 
     engine._get_current_round.assert_called_once_with()  # pylint: disable=protected-access
+    engine.node.mine_block.assert_called_once_with(3)
