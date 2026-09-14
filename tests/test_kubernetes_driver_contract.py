@@ -1,6 +1,7 @@
 """Kubernetes driver contracts that keep a shared namespace usable."""
 
 import base64
+from copy import deepcopy
 import io
 import subprocess
 import tarfile
@@ -373,3 +374,25 @@ def test_the_wasabi_service_ports_are_reserved_for_the_pod() -> None:
         {"name": RESERVED_PORTS_SYSCTL, "value": RESERVED_PORT_RANGE}
     ]
 
+
+def test_an_api_server_that_forbids_the_sysctl_gets_a_pod_without_it() -> None:
+    instance = driver(in_cluster=True)
+    rejection = ApiException(status=403)
+    rejection.body = "forbidden sysctl: net.ipv4.ip_local_reserved_ports"
+    created_manifests = []
+
+    def reject_then_record(*, body, namespace):
+        assert namespace == "coinjoin"
+        created_manifests.append(deepcopy(body))
+        if len(created_manifests) == 1:
+            raise rejection
+
+    instance.client.create_namespaced_pod.side_effect = reject_then_record
+    instance._wait_for_pod_ip = Mock(return_value="10.0.0.7")  # pylint: disable=protected-access
+
+    endpoint = instance.run("wasabi-backend", "backend:latest", {}, {}, 1.0, 512)
+
+    assert endpoint == ("wasabi-backend.coinjoin.svc.cluster.local", {}, None)
+    assert len(created_manifests) == 2
+    assert "securityContext" in created_manifests[0]["spec"]
+    assert "securityContext" not in created_manifests[1]["spec"]

@@ -44,6 +44,27 @@ MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
 
 
+def _strip_reserved_ports_sysctl(pod_manifest):
+    """Remove the reserved-port sysctl when the API server does not allow it."""
+    spec = pod_manifest.get("spec") or {}
+    security_context = spec.get("securityContext") or {}
+    sysctls = security_context.get("sysctls") or []
+    remaining = [sysctl for sysctl in sysctls if sysctl.get("name") != RESERVED_PORTS_SYSCTL]
+    if len(remaining) == len(sysctls):
+        return False
+    if remaining:
+        security_context["sysctls"] = remaining
+    else:
+        spec.pop("securityContext", None)
+    return True
+
+
+def _is_sysctl_rejection(error):
+    return getattr(error, "status", None) in {400, 403, 422} and "sysctl" in str(
+        getattr(error, "body", "") or error
+    ).lower()
+
+
 def _host_path_volumes(volumes):
     volume_mounts = []
     pod_volumes = []
@@ -234,7 +255,10 @@ class KubernetesDriver(Driver):
                 raise KubernetesResourceQuotaError(
                     f"Kubernetes quota rejected pod {name} in namespace {self.namespace}: {details}"
                 ) from error
-            raise
+            if not _is_sysctl_rejection(error) or not _strip_reserved_ports_sysctl(pod_manifest):
+                raise
+            print(f"[WARNING] API server rejected {RESERVED_PORTS_SYSCTL} for pod {name}; starting it without it")
+            self.client.create_namespaced_pod(body=pod_manifest, namespace=self.namespace)
 
         try:
             pod_ip = self._wait_for_pod_ip(name)
