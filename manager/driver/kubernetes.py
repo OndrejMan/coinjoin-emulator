@@ -23,6 +23,7 @@ from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
 DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
 UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_UPLOAD_TIMEOUT", "120"))
+STOP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_STOP_TIMEOUT", "120"))
 UPLOAD_COMMAND_CHUNK_SIZE = 16 * 1024
 BENIGN_TAR_WARNING_RE = re.compile(
     r"^tar: .*: (file changed as we read it|socket ignored)$"
@@ -346,6 +347,11 @@ class KubernetesDriver(Driver):
             sleep(1)
 
     def stop(self, name):
+        """Delete the pod and service and return once the name can be reused.
+
+        A DELETE only starts the pod's termination; creating the same name
+        again before it has gone answers 409 AlreadyExists.
+        """
         try:
             self.client.delete_namespaced_pod(name=name, namespace=self.namespace)
             self.client.delete_namespaced_service(
@@ -353,6 +359,26 @@ class KubernetesDriver(Driver):
             )
         except Exception:
             pass
+        self._wait_until_gone(name)
+
+    def _wait_until_gone(self, name):
+        deadline = time.monotonic() + STOP_WAIT_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            if not self._exists(self.client.read_namespaced_pod, name) and not self._exists(
+                self.client.read_namespaced_service, name
+            ):
+                return
+            sleep(1)
+        print(f"[WARNING] {name} is still terminating after {STOP_WAIT_TIMEOUT_SECONDS}s")
+
+    def _exists(self, read, name):
+        try:
+            read(name=name, namespace=self.namespace)
+        except ApiException as error:
+            if error.status == 404:
+                return False
+            raise
+        return True
 
     def download(self, name, src_path, dst_path):
         self._require_exec_ready(name)

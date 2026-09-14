@@ -1,11 +1,11 @@
 """Kubernetes driver contracts that keep a shared namespace usable."""
 
 import base64
-from copy import deepcopy
 import io
 import subprocess
 import tarfile
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from threading import Event, RLock
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -419,6 +419,8 @@ def test_kubelet_sysctl_rejection_recreates_the_pod_without_it() -> None:
         created_manifests.append(deepcopy(body))
 
     instance.client.create_namespaced_pod.side_effect = record_manifest
+    instance.client.read_namespaced_pod.side_effect = ApiException(status=404)
+    instance.client.read_namespaced_service.side_effect = ApiException(status=404)
     instance._wait_for_pod_ip = Mock(  # pylint: disable=protected-access
         side_effect=[StartupError("Pod wasabi-backend: SysctlForbidden"), "10.0.0.7"]
     )
@@ -429,3 +431,30 @@ def test_kubelet_sysctl_rejection_recreates_the_pod_without_it() -> None:
     assert len(created_manifests) == 2
     assert "securityContext" in created_manifests[0]["spec"]
     assert "securityContext" not in created_manifests[1]["spec"]
+
+
+def test_stop_returns_only_after_the_pod_and_service_are_gone() -> None:
+    instance = driver()
+    gone = ApiException(status=404)
+    instance.client.read_namespaced_pod.side_effect = [running_pod(), running_pod(), gone]
+    instance.client.read_namespaced_service.side_effect = [gone]
+
+    with patch("manager.driver.kubernetes.sleep") as sleep:
+        instance.stop("wasabi-coordinator")
+
+    instance.client.delete_namespaced_pod.assert_called_once_with(name="wasabi-coordinator", namespace="coinjoin")
+    instance.client.delete_namespaced_service.assert_called_once_with("wasabi-coordinator", namespace="coinjoin")
+    assert instance.client.read_namespaced_pod.call_count == 3
+    assert sleep.call_count == 2
+
+
+def test_stop_gives_up_waiting_after_the_deadline() -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod.return_value = running_pod()
+
+    with patch("manager.driver.kubernetes.sleep"), patch(
+        "manager.driver.kubernetes.time.monotonic", side_effect=[0.0, 0.0, 1000.0]
+    ):
+        instance.stop("wasabi-coordinator")
+
+    assert instance.client.read_namespaced_pod.call_count == 1
