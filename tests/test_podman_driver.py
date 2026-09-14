@@ -1,0 +1,100 @@
+"""Podman driver contracts against the pinned Python SDK."""
+
+import tarfile
+from io import BytesIO
+from unittest.mock import Mock, patch
+
+import podman
+import pytest
+import requests
+from podman.domain.containers import Container
+from podman.domain.containers_manager import ContainersManager
+
+from manager.driver.podman import PodmanDriver
+from manager.exceptions import CoinjoinEmulatorError
+
+
+@pytest.fixture
+def driver_and_client():
+    with patch("manager.driver.podman.podman.PodmanClient") as client_class:
+        yield PodmanDriver(), client_class.return_value
+
+
+def test_image_queries_use_the_podman_client_only(driver_and_client) -> None:
+    driver, client = driver_and_client
+    client.images.get.side_effect = [None, podman.errors.ImageNotFound("missing")]
+
+    assert driver.has_image("present") is True
+    assert driver.has_image("missing") is False
+
+
+def test_artifact_transfer_uses_the_podman_archive_api(driver_and_client, tmp_path) -> None:
+    driver, client = driver_and_client
+    archive = BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as tar:
+        content = b"backend log"
+        entry = tarfile.TarInfo("backend.log")
+        entry.size = len(content)
+        tar.addfile(entry, BytesIO(content))
+
+    container = Mock()
+    container.get_archive.return_value = ([archive.getvalue()], {})
+    container.put_archive.return_value = True
+    client.containers.get.return_value = container
+    source = tmp_path / "scenario.json"
+    source.write_text("{}")
+    destination = tmp_path / "download"
+    destination.mkdir()
+    driver.download("btc-node", "/var/log/backend", str(destination))
+    driver.upload("client", str(source), "/app/scenario.json")
+
+    assert (destination / "backend.log").read_text() == "backend log"
+    container.get_archive.assert_called_once_with("/var/log/backend")
+    upload_path, upload_data = container.put_archive.call_args.args
+    assert upload_path == "/app"
+    assert upload_data
+
+
+def test_failed_artifact_upload_raises(driver_and_client, tmp_path) -> None:
+    driver, client = driver_and_client
+    source = tmp_path / "scenario.json"
+    source.write_text("{}")
+    client.containers.get.return_value.put_archive.return_value = False
+
+    with pytest.raises(CoinjoinEmulatorError, match="Failed to copy"):
+        driver.upload("client", str(source), "/app/scenario.json")
+
+
+@pytest.mark.parametrize("status_code", [204, 304])
+def test_stop_accepts_running_and_already_stopped_containers(driver_and_client, status_code) -> None:
+    driver, client = driver_and_client
+    api = Mock()
+    response = requests.Response()
+    response.status_code = status_code
+    response._content = b""
+    api.post.return_value = response
+    client.containers.get.return_value = Container(
+        attrs={"Id": "abc", "Name": "/btc-node"}, client=api
+    )
+
+    driver.stop("btc-node")
+
+    api.post.assert_called_once_with(
+        "/containers/abc/stop", params={"all": None, "timeout": None}
+    )
+
+
+def test_cleanup_reads_images_from_the_podman_list_response(driver_and_client) -> None:
+    driver, client = driver_and_client
+    api = Mock()
+    api.get.return_value.json.return_value = [
+        {"Id": "btc", "Names": ["btc-node"], "Image": "localhost/btc-node:latest", "State": "running"},
+        {"Id": "other", "Names": ["unrelated"], "Image": "postgres:latest", "State": "running"},
+    ]
+    client.containers = ContainersManager(client=api)
+    selected = []
+    driver.stop_many = lambda names: selected.extend(names)
+
+    driver.cleanup()
+
+    assert selected == ["btc-node"]
