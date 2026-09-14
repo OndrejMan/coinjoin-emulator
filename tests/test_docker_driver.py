@@ -20,3 +20,13 @@ def test_containers_are_addressed_by_name_on_the_bridge_network() -> None:
     endpoint = instance.run("jcs-000", "jcs:latest", ports={28183: 28185}, cpu=0.1, memory=64)
 
     assert endpoint == ("jcs-000", {28183: 28185}, None)
+
+
+def test_stopped_containers_are_still_found_during_cleanup() -> None:
+    instance = driver()
+    instance.client.containers.list.return_value = []
+    instance.client.networks.list.return_value = []
+
+    instance.cleanup()
+
+    assert instance.client.containers.list.call_args.kwargs == {"all": True}
