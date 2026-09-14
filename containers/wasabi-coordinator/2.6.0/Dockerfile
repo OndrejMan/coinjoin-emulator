@@ -11,7 +11,9 @@ COPY logger.patch /wasabi-src/logger.patch
 RUN patch --binary -p1 < logger.patch
 
 WORKDIR /wasabi-src/WalletWasabi.Coordinator
-RUN dotnet build -c Release
+# NuGet Audit flags NU1903 for a transitive dependency pinned by this
+# release and warnings are errors here, so an unchanged rebuild fails.
+RUN dotnet build -c Release -p:NuGetAudit=false
 
 # FROM mcr.microsoft.com/dotnet/runtime:8.0 # Missing ASP.NET Core
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
