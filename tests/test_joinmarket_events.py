@@ -1,5 +1,8 @@
 import json
 from pathlib import Path
+from typing import cast
+
+import pytest
 
 from manager.btc_node import BtcNode
 from manager.engine.joinmarket_engine import JoinmarketEngine
@@ -24,6 +27,20 @@ class EventHarness(JoinmarketEngine):
         self.node: BtcNode | None = None
         self.current_round = 0
         self._round_scan_height = -1
+
+
+class EventNode:
+    def __init__(self, blocks: list[dict[str, object]]) -> None:
+        self.blocks = blocks
+
+    def get_block_count(self) -> int:
+        return len(self.blocks) - 1
+
+    def get_block_hash(self, height: int) -> str:
+        return str(height)
+
+    def get_block_info(self, block_hash: str) -> dict[str, object]:
+        return self.blocks[int(block_hash)]
 
 
 def write_block(node_path: Path, height: int, txid: str, address: str) -> None:
@@ -71,6 +88,81 @@ class TestCollectRoundEvents:
 
 
 class TestJoinMarketRoundEvents:
+    def test_live_round_count_advances_only_for_mined_destination(self) -> None:
+        event = {
+            "round_id": 1,
+            "status": "started",
+            "destination_address": "destination-address",
+        }
+        client = EventClient("jcs-000", [event])
+        harness = EventHarness(client)
+        harness.node = cast(
+            BtcNode,
+            EventNode(
+                [
+                    {"tx": []},
+                    {
+                        "tx": [
+                            {
+                                "txid": "coinjoin-txid",
+                                "vout": [
+                                    {"scriptPubKey": {"address": "destination-address"}}
+                                ],
+                            }
+                        ]
+                    },
+                ]
+            ),
+        )
+
+        assert harness.confirm_started_rounds() == 1
+        assert event == {
+            "round_id": 1,
+            "status": "confirmed",
+            "execution_status": "started",
+            "destination_address": "destination-address",
+            "destination_matches": [{"txid": "coinjoin-txid", "block_height": 1}],
+            "match_source": "destination_output",
+        }
+        assert client.round_events == [event]
+
+    def test_live_round_count_ignores_rpc_start_without_chain_match(self) -> None:
+        event = {"round_id": 1, "status": "started", "destination_address": "unmined"}
+        harness = EventHarness(EventClient("jcs-000", [event]))
+        harness.node = cast(BtcNode, EventNode([{"tx": []}]))
+
+        assert harness.confirm_started_rounds() == 0
+        assert event["status"] == "started"
+
+    def test_live_round_count_rejects_a_malformed_rpc_txid(self) -> None:
+        event = {"round_id": 1, "status": "started", "destination_address": "destination-address"}
+        harness = EventHarness(EventClient("jcs-000", [event]))
+        harness.node = cast(
+            BtcNode,
+            EventNode(
+                [
+                    {"tx": []},
+                    {
+                        "tx": [
+                            {
+                                "txid": 42,
+                                "vout": [{"scriptPubKey": {"address": "destination-address"}}],
+                            }
+                        ]
+                    },
+                ]
+            ),
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="exported transaction txid must be a non-empty string",
+        ):
+            harness.confirm_started_rounds()
+
+        assert event["status"] == "started"
+        assert harness._round_scan_height == -1
+
     def test_round_event_is_matched_to_the_block_paying_its_destination(self, tmp_path: Path) -> None:
         write_block(tmp_path / "btc-node", 7, "coinjoin-txid", "destination-address")
         event = {
