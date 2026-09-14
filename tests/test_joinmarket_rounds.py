@@ -26,6 +26,7 @@ class RoundsClient:
 def harness(*clients: RoundsClient) -> JoinmarketEngine:
     engine = object.__new__(JoinmarketEngine)
     engine.args = SimpleNamespace()
+    engine.scenario = SimpleNamespace(rounds=0, blocks=0)
     engine.clients = list(clients)
     engine.obwatch_client = None
     engine._obwatch_missing_logged = True  # pylint: disable=protected-access
@@ -55,3 +56,25 @@ def test_a_timed_out_attempt_is_marked_failed_without_changing_the_counter() -> 
     assert engine.current_round == 0
     assert client.round_events[0]["status"] == "failed"
     assert client.round_events[0]["stop_block"] == 4
+
+
+def test_no_taker_is_updated_once_the_round_limit_is_reached() -> None:
+    client = RoundsClient("jcs-000")
+    engine = harness(client)
+    engine.scenario = SimpleNamespace(rounds=3, blocks=0)
+    engine.current_round = 3
+
+    engine.update_coinjoins_joinmarket()
+
+    assert client.updates == []
+
+
+def test_takers_are_updated_while_rounds_are_still_missing() -> None:
+    client = RoundsClient("jcs-000")
+    engine = harness(client)
+    engine.scenario = SimpleNamespace(rounds=3, blocks=0)
+    engine.current_round = 2
+
+    engine.update_coinjoins_joinmarket()
+
+    assert client.updates == [(4, 2)]

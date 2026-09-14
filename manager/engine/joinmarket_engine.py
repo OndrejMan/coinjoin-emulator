@@ -359,6 +359,10 @@ class JoinmarketEngine(EngineBase):
         self.current_round = count_confirmed_rounds(events)
         return self.current_round
 
+    def _round_limit_reached(self) -> bool:
+        """True once the confirmed rounds satisfy the scenario, so no taker may start another attempt."""
+        return self.scenario.rounds > 0 and self.current_round >= self.scenario.rounds
+
     def _mark_taker_round_failed(self, taker_name: str, reason: str) -> None:
         mark_latest_started_round_failed(self.live_round_events(), taker_name, reason, self.current_block)
 
@@ -499,6 +503,8 @@ class JoinmarketEngine(EngineBase):
 
     def update_coinjoins_joinmarket(self):
         self.confirm_started_rounds()
+        if self._round_limit_reached():
+            return
         for client in self.clients:
             try:
                 # Check if client just reached its limit
@@ -532,6 +538,8 @@ class JoinmarketEngine(EngineBase):
         Adds jitter between task creation to prevent synchronized RPC storms
         """
         self.confirm_started_rounds()
+        if self._round_limit_reached():
+            return
         # Create tasks for all client updates with jitter to desynchronize RPC calls
         client_tasks = []
         for client in self.clients:
