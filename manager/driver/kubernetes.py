@@ -314,6 +314,7 @@ class KubernetesDriver(Driver):
             pass
 
     def download(self, name, src_path, dst_path):
+        self._require_exec_ready(name)
         if src_path[-1] == "/":
             src_path = src_path[:-1]
         src_parent, src_target = os.path.split(src_path)
@@ -350,6 +351,7 @@ class KubernetesDriver(Driver):
             tar.extractall(dst_path)
 
     def peek(self, name, path):
+        self._require_exec_ready(name)
         resp = self._exec_stream(name, ["cat", path], f"read {path}")
         output = ""
         while resp.is_open():
@@ -358,6 +360,13 @@ class KubernetesDriver(Driver):
                 output += resp.read_stdout()
         resp.close()
         return output
+
+    def _require_exec_ready(self, name):
+        pod = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace)
+        if not pod.spec.node_name:
+            raise RuntimeError(f"pod {name} is not scheduled onto a node")
+        if pod.status.phase != "Running":
+            raise RuntimeError(f"pod {name} is in phase {pod.status.phase}; exec requires Running")
 
     def _exec_stream(self, name, exec_command, action):
         # stream() swaps ApiClient.request only until the connection is opened.
