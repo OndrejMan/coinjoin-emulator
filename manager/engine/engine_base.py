@@ -8,7 +8,6 @@ import random
 import shutil
 import time
 from time import sleep
-from typing import Any
 from zoneinfo import ZoneInfo
 
 from manager.btc_node import BtcNode
@@ -220,12 +219,7 @@ class EngineBase:
                     f"Failed to start {failed_count} clients after retries; aborting experiment"
                 )
 
-        # keep each client paired with its own wallet, so failed clients do not shift the funding
-        started = [(client, wallet) for client, wallet in zip(new_clients, wallets) if client is not None]
-        if len(started) < len(wallets):
-            print(f"- failed to start {len(wallets) - len(started)} clients; continuing ...")
-        self.clients.extend(client for client, _ in started)
-        return started
+        self.clients.extend(new_clients)
 
     @staticmethod
     def _client_health_error(client):
@@ -410,10 +404,12 @@ class EngineBase:
             self.pay_invoices(self.invoices[schedule])
             del self.invoices[schedule]
 
-    def prepare_invoices(self, client_wallets: list[tuple[Any, WalletConfig]]):
+    def prepare_invoices(self, wallets: list[WalletConfig]):
         print("Preparing invoices")
-        for client, wallet in client_wallets:
-            for fund in wallet.funds:
+        client_invoices = [(client, wallet.funds) for client, wallet in zip(self.clients, wallets)]
+
+        for client, funds in client_invoices:
+            for fund in funds:
                 block = 0
                 round = 0
                 if isinstance(fund, int):
@@ -484,10 +480,10 @@ class EngineBase:
         self.prepare_images()
         self.start_infrastructure()
         self.fund_distributor(5000)
-        started = self.start_clients(self.scenario.wallets)
+        self.start_clients(self.scenario.wallets)
         self.validate_clients()
         time.sleep(60)
-        self.prepare_invoices(started)
+        self.prepare_invoices(self.scenario.wallets)
 
         # Pay initial wallet funding invoices before additional funding
         print("Paying initial wallet funding")
