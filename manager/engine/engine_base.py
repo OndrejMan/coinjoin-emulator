@@ -285,19 +285,15 @@ class EngineBase:
         sleep(random.random() * 3)
         client_path = os.path.join(data_path, client.name)
         os.mkdir(client_path)
-        for label, filename, getter in (
-            ("coins", "coins.json", client.list_coins),
-            ("unspent coins", "unspent_coins.json", client.list_unspent_coins),
-            ("keys", "keys.json", client.list_keys),
-            ("history", "history.json", client.get_history),
-        ):
-            try:
-                data = getter()
-                with open(os.path.join(client_path, filename), "w") as f:
-                    json.dump(data, f, indent=2)
-                print(f"- stored {client.name} {label}")
-            except Exception as e:
-                print(f"- could not store {client.name} {label} ({e})")
+        with open(os.path.join(client_path, "coins.json"), "w") as f:
+            json.dump(client.list_coins(), f, indent=2)
+            print(f"- stored {client.name} coins")
+        with open(os.path.join(client_path, "unspent_coins.json"), "w") as f:
+            json.dump(client.list_unspent_coins(), f, indent=2)
+            print(f"- stored {client.name} unspent coins")
+        with open(os.path.join(client_path, "keys.json"), "w") as f:
+            json.dump(client.list_keys(), f, indent=2)
+            print(f"- stored {client.name} keys")
 
         # Store fidelity bonds data if available
         if hasattr(client, 'export_fidelity_bonds_data') and hasattr(client, 'fidelity_bonds'):
