@@ -92,16 +92,28 @@ class TakerClient(JoinMarketClientServer):
         """Keep waiting for the pending attempt, or report its timeout."""
         return -1 if self.coinjoin_timed_out(current_block) else 0
 
+    def confirmed_rounds(self):
+        """Attempts whose destination the engine found in a mined block."""
+        return sum(1 for event in self.round_events if event.get("status") == "confirmed")
+
+    def _note_attempt_finished(self, was_in_process):
+        """jmwalletd going idle ends an attempt; only a mined destination completes a CoinJoin."""
+        if was_in_process and not self.coinjoin_in_process:
+            print(f"Coinjoin attempt finished for {self.name}")
+
+    def _refresh_completed_coinjoins(self):
+        """Count towards max_coinjoins only the attempts that were actually mined."""
+        confirmed = self.confirmed_rounds()
+        if confirmed > self.completed_coinjoins:
+            self.completed_coinjoins = confirmed
+            limit_str = f"/{self.max_coinjoins}" if self.max_coinjoins > 0 else ""
+            print(f"Coinjoin confirmed for {self.name} (completed {confirmed}{limit_str})")
+
     def _apply_coinjoin_process_status(self, response):
-        """Store jmwalletd's process state and record a completed attempt."""
+        """Store jmwalletd's process state and note a finished attempt."""
         was_in_process = self.coinjoin_in_process
         self.coinjoin_in_process = response.get("coinjoin_in_process", False)
-
-        # Detect coinjoin completion and increment counter
-        if was_in_process and not self.coinjoin_in_process:
-            self.completed_coinjoins += 1
-            limit_str = f"/{self.max_coinjoins}" if self.max_coinjoins > 0 else ""
-            print(f"Coinjoin completed for {self.name} (completed {self.completed_coinjoins}{limit_str})")
+        self._note_attempt_finished(was_in_process)
         return response
 
     def update_status(self):
@@ -116,6 +128,7 @@ class TakerClient(JoinMarketClientServer):
         Stop the coinjoin if it has been running for 8 blocks.
         """
         self.update_status()
+        self._refresh_completed_coinjoins()
 
         delta = 0
         if self._has_unconfirmed_finished_attempt():
@@ -157,8 +170,8 @@ class TakerClient(JoinMarketClientServer):
         Async version: Start a coinjoin if none is running and the client is not paused.
         Stop the coinjoin if it has been running for 8 blocks.
         """
-        # Update status (which will increment completed_coinjoins if coinjoin finished)
-        response = self._apply_coinjoin_process_status(await self.update_status_async())
+        self._apply_coinjoin_process_status(await self.update_status_async())
+        self._refresh_completed_coinjoins()
 
         # Early return if paused
         if self.is_paused(current_block):
