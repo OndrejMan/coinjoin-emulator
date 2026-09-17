@@ -173,13 +173,13 @@ class TakerClient(JoinMarketClientServer):
         self._apply_coinjoin_process_status(await self.update_status_async())
         self._refresh_completed_coinjoins()
 
-        # Early return if paused
-        if self.is_paused(current_block):
-            return 0
-
         delta = 0
+        # A pending attempt is settled (mined or timed out) even for a paused taker,
+        # otherwise a taker that reached its limit would leave it open forever.
         if self._has_unconfirmed_finished_attempt():
             return self._unconfirmed_finished_attempt_result(current_block)
+        if self.is_paused(current_block):
+            return 0
         if not self.coinjoin_in_process and not self.has_unconfirmed_round():
             offer = self.get_offer(current_round)
             offer["destination"] = self.get_new_address()
