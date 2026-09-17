@@ -120,3 +120,14 @@ def test_the_async_path_counts_only_mined_attempts() -> None:
     assert taker.completed_coinjoins == 1
     assert taker.is_paused(7)
     assert taker.started == ["bcrt1q0"]
+
+
+def test_a_paused_taker_still_reports_its_pending_attempt_as_timed_out() -> None:
+    taker = OfflineTaker()
+    taker.max_coinjoins = 1
+    taker.update_now(current_block=5, current_round=0)
+    taker.reported_in_process = False
+    taker.completed_coinjoins = 1  # the limit was reached by an earlier, confirmed round
+
+    assert taker.is_paused(14)
+    assert taker.update_now(current_block=14, current_round=1) == -1
