@@ -6,6 +6,7 @@ from typing import List
 import httpx
 import requests
 import urllib3
+from bip_utils import Bip32Slip10Secp256k1, Bip39SeedGenerator
 
 from manager.exceptions import RpcError
 
@@ -977,6 +978,7 @@ class JoinMarketClientServer:
 
     def list_keys(self):
         """List all addresses reported by JoinMarket's complete wallet display."""
+        seed_bytes = Bip39SeedGenerator(self.seedphrase).Generate()
         walletinfo = self.display_wallet(display_all=True).get("walletinfo") or {}
         keys = []
         for account in walletinfo.get("accounts") or []:
@@ -984,13 +986,25 @@ class JoinMarketClientServer:
                 for entry in branch.get("entries") or []:
                     if not entry.get("address"):
                         continue
-                    keys.append({
+                    key_path = str(entry.get("hd_path") or "")
+                    key = {
+                        "full_key_path": key_path,
+                        "pubKey": None,
+                        "internal": None,
                         "address": str(entry["address"]),
-                        "path": str(entry.get("hd_path", "")),
+                        "path": key_path,
                         "account": str(account.get("account", "")),
                         "status": str(entry.get("status", "")),
                         "amount": str(entry.get("amount", "")),
-                    })
+                    }
+                    if key_path and ":" not in key_path:
+                        try:
+                            bip32_ctx = Bip32Slip10Secp256k1.FromSeedAndPath(seed_bytes, key_path)
+                            key["pubKey"] = bip32_ctx.PublicKey().RawUncompressed().ToHex()
+                            key["internal"] = key_path.split("/")[-2] == "1"
+                        except Exception as error:
+                            print(f"Error processing key path '{key_path}': {error}")
+                    keys.append(key)
         return keys
 
     def get_offer(self, round=0):
