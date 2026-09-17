@@ -121,13 +121,12 @@ class TakerClient(JoinMarketClientServer):
             print(f"Starting coinjoin {self.name}")
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
 
-        # TODO: The 8 block limit could be a parameter.
-        elif self.coinjoin_in_process and self.coinjoin_start + 8 < current_block:
+        elif self.coinjoin_in_process and self.coinjoin_timed_out(current_block):
             self.stop_coinjoin()
             self.coinjoin_in_process = False
             self.next_coinjoin_allowed = current_block + self.time_between_rounds
             delta = -1
-            print(f"Stopping coinjoin {self.name} (timeout after 8 blocks)")
+            print(f"Stopping coinjoin {self.name} (timeout after {self.coinjoin_timeout_blocks} blocks)")
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
         return delta
 
@@ -169,13 +168,12 @@ class TakerClient(JoinMarketClientServer):
             print(f"Starting coinjoin {self.name}")
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
 
-        # TODO: The 8 block limit could be a parameter.
-        elif self.coinjoin_in_process and self.coinjoin_start + 8 < current_block:
+        elif self.coinjoin_in_process and self.coinjoin_timed_out(current_block):
             self.stop_coinjoin()
             self.coinjoin_in_process = False
             self.next_coinjoin_allowed = current_block + self.time_between_rounds
             delta = -1
-            print(f"Stopping coinjoin {self.name} (timeout after 8 blocks)")
+            print(f"Stopping coinjoin {self.name} (timeout after {self.coinjoin_timeout_blocks} blocks)")
             print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
         return delta
 
