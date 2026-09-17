@@ -80,11 +80,8 @@ class TakerClient(JoinMarketClientServer):
     This class implements the logic for a taker that does *not* have tumbler options.
     """
 
-    def update_status(self):
-        """
-        Get the status of the client and update the coinjoin_in_process flag.
-        """
-        response = super().update_status()
+    def _apply_coinjoin_process_status(self, response):
+        """Store jmwalletd's process state and record a completed attempt."""
         was_in_process = self.coinjoin_in_process
         self.coinjoin_in_process = response.get("coinjoin_in_process", False)
 
@@ -93,8 +90,13 @@ class TakerClient(JoinMarketClientServer):
             self.completed_coinjoins += 1
             limit_str = f"/{self.max_coinjoins}" if self.max_coinjoins > 0 else ""
             print(f"Coinjoin completed for {self.name} (completed {self.completed_coinjoins}{limit_str})")
-
         return response
+
+    def update_status(self):
+        """
+        Get the status of the client and update the coinjoin_in_process flag.
+        """
+        return self._apply_coinjoin_process_status(super().update_status())
 
     def update(self, current_block, current_round):
         """
@@ -136,15 +138,7 @@ class TakerClient(JoinMarketClientServer):
         Stop the coinjoin if it has been running for 8 blocks.
         """
         # Update status (which will increment completed_coinjoins if coinjoin finished)
-        response = await self.update_status_async()
-        was_in_process = self.coinjoin_in_process
-        self.coinjoin_in_process = response.get("coinjoin_in_process", False)
-
-        # Detect coinjoin completion and increment counter
-        if was_in_process and not self.coinjoin_in_process:
-            self.completed_coinjoins += 1
-            limit_str = f"/{self.max_coinjoins}" if self.max_coinjoins > 0 else ""
-            print(f"Coinjoin completed for {self.name} (completed {self.completed_coinjoins}{limit_str})")
+        response = self._apply_coinjoin_process_status(await self.update_status_async())
 
         # Early return if paused
         if self.is_paused(current_block):
