@@ -86,3 +86,37 @@ def test_the_async_path_paces_like_the_sync_one() -> None:
     taker.round_events[0]["status"] = "confirmed"
     assert taker.update_now(current_block=10, current_round=1) == 1
     assert taker.started == ["bcrt1q0", "bcrt1q1"]
+
+
+def test_a_finished_attempt_counts_towards_max_coinjoins_only_once_mined() -> None:
+    taker = OfflineTaker()
+    taker.max_coinjoins = 1
+    taker.update(current_block=5, current_round=0)
+
+    taker.reported_in_process = False
+    assert taker.update(current_block=6, current_round=0) == 0
+    assert taker.completed_coinjoins == 0
+    assert not taker.is_paused(6)
+
+    taker.round_events[0]["status"] = "confirmed"
+    assert taker.update(current_block=7, current_round=1) == 0
+    assert taker.completed_coinjoins == 1
+    assert taker.is_paused(7)
+    assert taker.started == ["bcrt1q0"]
+
+
+def test_the_async_path_counts_only_mined_attempts() -> None:
+    taker = OfflineTaker()
+    taker.max_coinjoins = 1
+    taker.update_now(current_block=5, current_round=0)
+
+    taker.reported_in_process = False
+    assert taker.update_now(current_block=6, current_round=0) == 0
+    assert taker.completed_coinjoins == 0
+    assert not taker.is_paused(6)
+
+    taker.round_events[0]["status"] = "confirmed"
+    assert taker.update_now(current_block=7, current_round=1) == 0
+    assert taker.completed_coinjoins == 1
+    assert taker.is_paused(7)
+    assert taker.started == ["bcrt1q0"]
