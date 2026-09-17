@@ -15,6 +15,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 WALLET_NAME = "wallet"
 DEFAULT_WAIT_WALLET_TIMEOUT = 60
+DEFAULT_COINJOIN_TIMEOUT_BLOCKS = 8
 PASSWORD = "password"
 WALLET_TYPE = "sw"
 BTC = 100_000_000
@@ -41,6 +42,7 @@ class JoinMarketClientServer:
         offers=None,
         tumbler_options=None,
         time_between_rounds=0,
+        coinjoin_timeout_blocks=DEFAULT_COINJOIN_TIMEOUT_BLOCKS,
         has_fidelity_bonds=False,
         max_coinjoins=0,
     ):
@@ -56,6 +58,9 @@ class JoinMarketClientServer:
         self.coinjoin_start = 0
         self.next_coinjoin_allowed = delay[0]
         self.time_between_rounds = time_between_rounds
+        if coinjoin_timeout_blocks <= 0:
+            raise ValueError("coinjoin_timeout_blocks must be positive")
+        self.coinjoin_timeout_blocks = coinjoin_timeout_blocks
         self.stop = stop
         self.token = ""
         self.refresh_token = ""
@@ -159,6 +164,11 @@ class JoinMarketClientServer:
             offers=cls.offers_for_wallet(joinmarket, type_),
             tumbler_options=tumbler_options,
             time_between_rounds=(joinmarket.time_between_rounds if joinmarket else 0) or 0,
+            coinjoin_timeout_blocks=(
+                joinmarket.coinjoin_timeout_blocks
+                if joinmarket and joinmarket.coinjoin_timeout_blocks is not None
+                else DEFAULT_COINJOIN_TIMEOUT_BLOCKS
+            ),
             has_fidelity_bonds=has_fidelity_bonds,
             max_coinjoins=(joinmarket.max_coinjoins if joinmarket else None) or 0,
             host=host,
@@ -174,6 +184,10 @@ class JoinMarketClientServer:
 
         print(f"- started {client.name} (wait took {time() - start} seconds)")
         return client
+
+    def coinjoin_timed_out(self, current_block: int) -> bool:
+        """Whether the active CoinJoin attempt exceeded its configured block limit."""
+        return self.coinjoin_start + self.coinjoin_timeout_blocks < current_block
 
     def update_status(self) -> dict:
         self.update_coin_history()

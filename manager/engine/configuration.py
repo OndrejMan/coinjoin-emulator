@@ -34,6 +34,7 @@ class JoinMarketConfig:
     offers: list[dict[str, Any]] | None = None
     tumbler_options: dict[str, Any] | None = None
     time_between_rounds: int | None = None
+    coinjoin_timeout_blocks: int | None = None
     fidelity_bond: dict[str, Any] | None = None
     max_coinjoins: int | None = None
 
@@ -146,6 +147,7 @@ class ScenarioConfig:
             "offers",
             "tumbler_options",
             "time_between_rounds",
+            "coinjoin_timeout_blocks",
             "fidelity_bond",
             "max_coinjoins",
         }
@@ -158,9 +160,20 @@ class ScenarioConfig:
             "offers": nested_joinmarket.get("offers"),
             "tumbler_options": nested_joinmarket.get("tumbler_options"),
             "time_between_rounds": nested_joinmarket.get("time_between_rounds"),
+            "coinjoin_timeout_blocks": nested_joinmarket.get("coinjoin_timeout_blocks"),
             "fidelity_bond": nested_joinmarket.get("fidelity_bond"),
             "max_coinjoins": nested_joinmarket.get("max_coinjoins"),
         }
+        timeout_blocks = joinmarket_fields["coinjoin_timeout_blocks"]
+        if (
+            timeout_blocks is not None
+            and (
+                not isinstance(timeout_blocks, int)
+                or isinstance(timeout_blocks, bool)
+                or timeout_blocks <= 0
+            )
+        ):
+            raise ValueError("JoinMarket coinjoin_timeout_blocks must be a positive integer")
         joinmarket_config = None
         if role_value is not None or any(value is not None for value in joinmarket_fields.values()):
             try:
