@@ -251,6 +251,7 @@ class WasabiEngine(EngineBase):
             name="wasabi-client-distributor",
             delay=(0, 0),
             stop=(0, 0),
+            skip_rounds=(),
         )
         timeout = int(getattr(self.args, "distributor_startup_timeout", DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT))
         if not self.distributor.wait_wallet(timeout=timeout):
@@ -258,7 +259,7 @@ class WasabiEngine(EngineBase):
             raise Exception("Could not start distributor")
         print("- started distributor")
 
-    def init_wasabi_client(self, version, ip, port, name, delay, stop):
+    def init_wasabi_client(self, version, ip, port, name, delay, stop, skip_rounds=()):
         return WasabiClient(version)(
             host=ip,
             port=port,
@@ -267,6 +268,7 @@ class WasabiEngine(EngineBase):
             version=version,
             delay=delay,
             stop=stop,
+            skip_rounds=skip_rounds,
         )
 
     def start_client(self, idx: int, wallet: WalletConfig | None = None):
@@ -332,6 +334,7 @@ class WasabiEngine(EngineBase):
 
         delay = (wallet.delay_blocks or 0, wallet.delay_rounds or 0)
         stop = (wallet.stop_blocks or 0, wallet.stop_rounds or 0)
+        skip_rounds = wasabi_config.skip_rounds if wasabi_config and wasabi_config.skip_rounds else ()
         client_host, client_port = self.service_endpoint(ip, 37128, manager_ports, route)
         client = self.init_wasabi_client(
             version,
@@ -340,6 +343,7 @@ class WasabiEngine(EngineBase):
             f"wasabi-client-{idx:03}",
             delay,
             stop,
+            skip_rounds,
         )
 
         start = time()
@@ -452,6 +456,8 @@ class WasabiEngine(EngineBase):
             if self.current_block < client.delay[0]:
                 return False
             if self.current_round < client.delay[1]:
+                return False
+            if self.current_round in client.skip_rounds:
                 return False
             return True
 

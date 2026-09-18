@@ -21,6 +21,7 @@ class WasabiClientBase:
         version="2.0.4",
         delay=(0, 0),
         stop=(0, 0),
+        skip_rounds=(),
     ):
         self.host = host
         self.port = port
@@ -29,6 +30,7 @@ class WasabiClientBase:
         self.version = version
         self.delay = delay
         self.stop = stop
+        self.skip_rounds = frozenset(skip_rounds)
 
     def _rpc(self, request, wallet=True, timeout=5, repeat=1, wallet_name=None):
         request["jsonrpc"] = "2.0"

@@ -14,8 +14,9 @@ class WasabiClientV26(WasabiClientBase):
         version="2.6.0",
         delay=(0, 0),
         stop=(0, 0),
+        skip_rounds=(),
     ):
-        super().__init__(host, port, name, proxy, version, delay, stop)
+        super().__init__(host, port, name, proxy, version, delay, stop, skip_rounds)
 
     def wait_wallet(self, timeout=None):
         start = time()

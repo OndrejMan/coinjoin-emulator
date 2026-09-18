@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
-from manager.engine.configuration import ScenarioConfig, WalletConfig
+from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
 from manager.engine.wasabi_engine import WasabiEngine, successful_broadcast_txids
 from manager.wasabi_backend_factory import BackendArchitecture
 
@@ -47,7 +47,7 @@ def test_only_successfully_broadcast_transactions_count_as_rounds() -> None:
 
 def test_the_run_stops_clients_before_settlement_after_the_round_limit() -> None:
     engine = split_engine()
-    client = SimpleNamespace(stop=(0, 0), delay=(0, 0))
+    client = SimpleNamespace(stop=(0, 0), delay=(0, 0), skip_rounds=frozenset())
     lifecycle = Mock()
     engine.clients = [client]
     engine.start_coinjoin = lifecycle.start
@@ -66,3 +66,47 @@ def test_the_run_stops_clients_before_settlement_after_the_round_limit() -> None
 
     engine._get_current_round.assert_called_once_with()  # pylint: disable=protected-access
     assert lifecycle.method_calls == [call.stop(client), call.mine(3)]
+
+
+def test_wallet_skips_only_the_configured_rounds() -> None:
+    engine = split_engine()
+    skipping = SimpleNamespace(stop=(0, 0), delay=(0, 0), skip_rounds=frozenset({2}))
+    participating = SimpleNamespace(stop=(0, 0), delay=(0, 0), skip_rounds=frozenset())
+    engine.clients = [skipping, participating]
+    engine.scenario = ScenarioConfig("test", 10, 0, "test", [WalletConfig(funds=[1])])
+    engine.current_round = 2
+    engine.current_block = 0
+    engine.start_coinjoin = Mock()
+    engine.stop_coinjoin = Mock()
+
+    engine.update_coinjoins()
+
+    engine.start_coinjoin.assert_called_once_with(participating)
+    engine.stop_coinjoin.assert_called_once_with(skipping)
+
+
+def test_start_client_preserves_configured_skip_rounds() -> None:
+    engine = split_engine()
+    engine.args = SimpleNamespace(
+        image_prefix="",
+        btc_node_ip="",
+        wasabi_backend_ip="",
+        proxy="",
+        in_cluster=False,
+        control_ip="localhost",
+    )
+    engine.node = SimpleNamespace(internal_ip="btc-node")
+    engine.backend = SimpleNamespace(internal_ip="wasabi-backend")
+    engine.coordinator = SimpleNamespace(internal_ip="wasabi-coordinator")
+    engine.scenario = ScenarioConfig("test", 10, 0, "2.6.0", [])
+    engine.driver.run.return_value = ("client-ip", {37128: 37132}, None)
+    client = Mock(name="wasabi-client-000")
+    client.name = "wasabi-client-000"
+    client.wait_wallet.return_value = True
+    engine.init_wasabi_client = Mock(return_value=client)  # type: ignore[method-assign]
+    wallet = WalletConfig(funds=[1], wasabi=WasabiConfig(skip_rounds=[1, 3]))
+
+    with patch("manager.engine.wasabi_engine.sleep"):
+        assert engine.start_client(0, wallet) is client
+
+    assert engine.init_wasabi_client.call_args.args[-1] == [1, 3]
