@@ -1,14 +1,25 @@
 from abc import ABC, abstractmethod
 from multiprocessing.pool import ThreadPool
 
-MANAGED_IMAGE_MARKERS = (
-    "irc-server",
-    "btc-node",
-    "wasabi-backend",
-    "wasabi-client",
-    "wasabi-coordinator",
-    "joinmarket-client-server",
-)
+MANAGED_LABEL = "coinjoin-emulator.managed"
+NAMESPACE_LABEL = "coinjoin-emulator.namespace"
+RUN_ID_LABEL = "coinjoin-emulator.run-id"
+
+
+def managed_labels(namespace: str, run_id: str | None = None) -> dict[str, str]:
+    """Return ownership labels for resources created by one emulator run."""
+    labels = {
+        MANAGED_LABEL: "true",
+        NAMESPACE_LABEL: namespace,
+    }
+    if run_id:
+        labels[RUN_ID_LABEL] = run_id
+    return labels
+
+
+def managed_label_filters(namespace: str, run_id: str | None = None) -> list[str]:
+    """Return runtime label filters scoped like :func:`managed_labels`."""
+    return [f"{key}={value}" for key, value in managed_labels(namespace, run_id).items()]
 
 # The Wasabi backend, coordinator and clients bind fixed ports inside the
 # default ephemeral range, where the kernel can hand the same port to an
