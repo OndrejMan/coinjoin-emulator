@@ -33,6 +33,7 @@ def reconcile_round_event_destinations(
     one get the duplicate_destination status. Keep every round and its matches
     so the evidence records the fault without attributing the transaction to a round.
     """
+    events = list(events)
     events_by_destination: dict[str, list[RoundEvent]] = {}
     for event in events:
         destination = RoundEventRecord.from_data(event).destination_address
@@ -53,7 +54,7 @@ def reconcile_round_event_destinations(
                 for matched_event in events_by_destination.get(address, []) if address is not None else []:
                     RoundEventRecord.from_data(matched_event).add_destination_match(txid, block_height)
 
-    return [event for shared in events_by_destination.values() for event in shared]
+    return events
 
 
 def match_round_events_to_blocks(
@@ -113,6 +114,11 @@ def producer_label_evidence(
     if unlabelled_takers:
         incomplete_reasons.append(
             f"tumbler takers produce no per-round labels: {', '.join(sorted(unlabelled_takers))}"
+        )
+    missing_destinations = [record for record in records if record.destination_address is None]
+    if missing_destinations:
+        incomplete_reasons.append(
+            f"round events have no destination address: {_format_round_ids(missing_destinations)}"
         )
     if duplicates:
         rounds = _format_round_ids(duplicates)
