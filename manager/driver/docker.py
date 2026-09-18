@@ -5,15 +5,16 @@ from io import BytesIO
 
 import docker
 
-from . import MANAGED_IMAGE_MARKERS, RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver, managed_label_filters, managed_labels
 
 BYTES_IN_MEGABYTE = 1024 * 1024
 
 
 class DockerDriver(Driver):
-    def __init__(self, namespace="coinjoin"):
+    def __init__(self, namespace="coinjoin", run_id=None):
         self.client: docker.DockerClient = docker.from_env()
         self._namespace = namespace
+        self._run_id = run_id
 
     @cached_property
     def network(self):
@@ -55,6 +56,7 @@ class DockerDriver(Driver):
             environment=env or {},
             volumes=kwargs.get("volumes"),
             command=kwargs.get("command"),
+            labels=managed_labels(self._namespace, self._run_id),
             sysctls={RESERVED_PORTS_SYSCTL: RESERVED_PORT_RANGE},
         )
         return name, dict(ports or {}), None
@@ -145,14 +147,10 @@ class DockerDriver(Driver):
         self.client.containers.get(name).put_archive(os.path.dirname(dst_path), fo)
 
     def cleanup(self, image_prefix=""):
-        containers = []
-        for container in self.client.containers.list(all=True):
-            if any(
-                x in container.attrs["Config"]["Image"]
-                for x in MANAGED_IMAGE_MARKERS
-            ):
-                containers.append(container)
-
+        containers = self.client.containers.list(
+            all=True,
+            filters={"label": managed_label_filters(self._namespace, self._run_id)},
+        )
         self.stop_many(map(lambda x: x.name, containers))
         networks = self.client.networks.list(self._namespace)
         if networks:

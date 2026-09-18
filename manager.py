@@ -338,11 +338,11 @@ if __name__ == "__main__":
         case "docker":
             from manager.driver.docker import DockerDriver
 
-            driver = DockerDriver(args.namespace)
+            driver = DockerDriver(args.namespace, getattr(args, "run_id", None))
         case "podman":
             from manager.driver.podman import PodmanDriver
 
-            driver = PodmanDriver(args.namespace)
+            driver = PodmanDriver(args.namespace, getattr(args, "run_id", None))
         case "kubernetes":
             from manager.driver.kubernetes import KubernetesDriver
 

@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from manager.driver import MANAGED_IMAGE_MARKERS
+from manager.driver import managed_label_filters, managed_labels
 from manager.driver.docker import DockerDriver
 
 
@@ -13,6 +13,7 @@ def driver() -> DockerDriver:
     instance = object.__new__(DockerDriver)
     instance.client = Mock()
     instance._namespace = "coinjoin"  # pylint: disable=protected-access
+    instance._run_id = "run-42"  # pylint: disable=protected-access
     instance.__dict__["network"] = SimpleNamespace(id="net-1")
     return instance
 
@@ -41,6 +42,9 @@ def test_containers_are_addressed_by_name_on_the_bridge_network() -> None:
     endpoint = instance.run("jcs-000", "jcs:latest", ports={28183: 28185}, cpu=0.1, memory=64)
 
     assert endpoint == ("jcs-000", {28183: 28185}, None)
+    assert instance.client.containers.run.call_args.kwargs["labels"] == managed_labels(
+        "coinjoin", "run-42"
+    )
 
 
 def test_a_failed_download_is_reported_instead_of_ignored() -> None:
@@ -84,22 +88,17 @@ def test_stopped_containers_are_still_found_during_cleanup() -> None:
 
     instance.cleanup()
 
-    assert instance.client.containers.list.call_args.kwargs == {"all": True}
+    assert instance.client.containers.list.call_args.kwargs == {
+        "all": True,
+        "filters": {"label": managed_label_filters("coinjoin", "run-42")},
+    }
 
 
-def test_cleanup_selects_every_shared_emulator_image_marker() -> None:
+def test_cleanup_stops_only_containers_returned_by_the_ownership_filter() -> None:
     instance = driver()
     instance.client.containers.list.return_value = [
-        SimpleNamespace(
-            name=marker,
-            attrs={"Config": {"Image": f"registry/{marker}:latest"}},
-        )
-        for marker in MANAGED_IMAGE_MARKERS
-    ] + [
-        SimpleNamespace(
-            name="unrelated",
-            attrs={"Config": {"Image": "postgres:latest"}},
-        )
+        SimpleNamespace(name="btc-node"),
+        SimpleNamespace(name="wasabi-client-000"),
     ]
     instance.client.networks.list.return_value = []
     selected = []
@@ -107,7 +106,10 @@ def test_cleanup_selects_every_shared_emulator_image_marker() -> None:
 
     instance.cleanup()
 
-    assert selected == list(MANAGED_IMAGE_MARKERS)
+    assert selected == ["btc-node", "wasabi-client-000"]
+    assert instance.client.containers.list.call_args.kwargs["filters"] == {
+        "label": managed_label_filters("coinjoin", "run-42")
+    }
 
 
 def test_get_pod_resource_usage_reports_memory(monkeypatch) -> None:
