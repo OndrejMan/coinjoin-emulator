@@ -342,7 +342,7 @@ if __name__ == "__main__":
         case "podman":
             from manager.driver.podman import PodmanDriver
 
-            driver = PodmanDriver()
+            driver = PodmanDriver(args.namespace)
         case "kubernetes":
             from manager.driver.kubernetes import KubernetesDriver
 
