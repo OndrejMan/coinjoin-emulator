@@ -13,6 +13,8 @@ import time
 from datetime import datetime
 from typing import List, Optional, Tuple
 
+from manager.process_output import stream_process_output
+
 
 class ScenarioRunner:
     def __init__(self,
@@ -161,15 +163,11 @@ class ScenarioRunner:
 
         try:
             # Run the scenario
-            # Merge stderr into stdout: reading stderr only after the process
-            # exits deadlocks as soon as the manager fills the stderr pipe.
-            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             self.current_process = process  # Track the current process
 
-            # Stream output in real-time
-            for line in iter(process.stdout.readline, ''):
-                if line:
-                    print(f"  {line.rstrip()}")
+            # Drain both pipes concurrently so neither can block the manager.
+            stream_process_output(process)
 
             # Wait for completion
             return_code = process.wait()
