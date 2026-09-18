@@ -26,14 +26,24 @@ def exported_block(height: int, txid: str, script_pub_key: dict[str, object]) ->
 
 
 def test_event_is_copied_reconciled_and_exported_as_evidence() -> None:
-    source = {"round_id": 1, "taker": "jcs-000", "destination_address": "bcrt1qdestination"}
+    source = {
+        "round_id": 1,
+        "status": "started",
+        "taker": "jcs-000",
+        "destination_address": "bcrt1qdestination",
+    }
 
     labels = match_round_events_to_blocks(
         collect_round_events([[source]]),
         [exported_block(7, "a" * 64, {"address": "bcrt1qdestination"})],
     )
 
-    assert source == {"round_id": 1, "taker": "jcs-000", "destination_address": "bcrt1qdestination"}
+    assert source == {
+        "round_id": 1,
+        "status": "started",
+        "taker": "jcs-000",
+        "destination_address": "bcrt1qdestination",
+    }
     assert labels == [
         {
             "round_id": 1,
@@ -57,7 +67,7 @@ def test_event_is_copied_reconciled_and_exported_as_evidence() -> None:
 
 def test_multiple_destination_matches_are_not_positive() -> None:
     labels = match_round_events_to_blocks(
-        collect_round_events([[{"round_id": 1, "destination_address": "reused-address"}]]),
+        collect_round_events([[{"round_id": 1, "status": "started", "destination_address": "reused-address"}]]),
         [
             exported_block(3, "a" * 64, {"address": "reused-address"}),
             exported_block(4, "b" * 64, {"address": "reused-address"}),
@@ -89,23 +99,23 @@ def test_export_round_id_is_mandatory_and_an_integer() -> None:
 
 
 def test_events_without_destinations_are_dropped_and_export_order_is_stable() -> None:
-    first = {"round_id": 1, "destination_address": "first"}
-    second = {"round_id": 1, "destination_address": "second"}
+    first = {"round_id": 1, "status": "started", "destination_address": "first"}
+    second = {"round_id": 1, "status": "started", "destination_address": "second"}
     labels = match_round_events_to_blocks(
         collect_round_events([[{"round_id": 99, "status": "failed"}, first], [second]]),
         [],
     )
 
     assert [(label["round_id"], label["export_round_id"]) for label in labels] == [(1, 2), (1, 3)]
-    assert first == {"round_id": 1, "destination_address": "first"}
-    assert second == {"round_id": 1, "destination_address": "second"}
+    assert first == {"round_id": 1, "status": "started", "destination_address": "first"}
+    assert second == {"round_id": 1, "status": "started", "destination_address": "second"}
 
 
 @pytest.mark.parametrize("match_count", [0, 1, 2])
 def test_rounds_sharing_a_destination_keep_their_status_and_matches(match_count: int) -> None:
     events = collect_round_events([
-        [{"round_id": 1, "destination_address": "reused-destination"}],
-        [{"round_id": 1, "destination_address": "reused-destination"}],
+        [{"round_id": 1, "status": "started", "destination_address": "reused-destination"}],
+        [{"round_id": 1, "status": "started", "destination_address": "reused-destination"}],
     ])
 
     blocks = [
@@ -147,7 +157,7 @@ def test_duplicate_destination_status_survives_later_matching_without_the_other_
 
 def test_reconciliation_is_idempotent_and_tolerates_empty_transaction_lists() -> None:
     labels = match_round_events_to_blocks(
-        collect_round_events([[{"round_id": 1, "destination_address": "destination"}]]),
+        collect_round_events([[{"round_id": 1, "status": "started", "destination_address": "destination"}]]),
         [
             {"height": 1, "tx": []},
             exported_block(3, "a" * 64, {"address": "destination"}),
@@ -157,6 +167,94 @@ def test_reconciliation_is_idempotent_and_tolerates_empty_transaction_lists() ->
 
     assert labels[0]["destination_matches"] == [{"txid": "a" * 64, "block_height": 3}]
     assert labels[0]["status"] == "confirmed"
+
+
+@pytest.mark.parametrize(
+    ("match_count", "expected_status", "positive_count"),
+    [(0, "failed", 0), (1, "confirmed", 1), (2, "multiple_matches", 0)],
+)
+def test_export_reconciles_timed_out_rounds_and_keeps_failure_diagnostics(
+    match_count: int, expected_status: str, positive_count: int,
+) -> None:
+    failed = {
+        "round_id": 1,
+        "status": "failed",
+        "failure_reason": "coinjoin attempt timed out",
+        "stop_block": 6,
+        "destination_address": "late-destination",
+    }
+
+    labels = match_round_events_to_blocks(
+        collect_round_events([[failed]]),
+        [
+            exported_block(7 + index, str(index) * 64, {"address": "late-destination"})
+            for index in range(match_count)
+        ],
+    )
+
+    assert labels[0]["status"] == expected_status
+    assert labels[0]["failure_reason"] == failed["failure_reason"]
+    assert labels[0]["stop_block"] == 6
+    assert labels[0].get("destination_matches", []) == [
+        {"txid": str(index) * 64, "block_height": 7 + index}
+        for index in range(match_count)
+    ]
+    assert failed["status"] == "failed"
+    assert "destination_matches" not in failed
+    evidence = producer_label_evidence(labels, [])
+    assert evidence["positive_count"] == positive_count
+    assert evidence["complete"] is (match_count < 2)
+
+
+@pytest.mark.parametrize("other_status", ["started", "failed", "confirmed"])
+def test_export_detects_shared_destinations_across_round_statuses(other_status: str) -> None:
+    confirmed = {
+        "round_id": 1,
+        "status": "confirmed",
+        "destination_address": "shared-destination",
+        "destination_matches": [{"txid": "a" * 64, "block_height": 7}],
+    }
+    other = {"round_id": 2, "status": other_status, "destination_address": "shared-destination"}
+
+    labels = match_round_events_to_blocks(
+        collect_round_events([[confirmed], [other]]),
+        [exported_block(7, "a" * 64, {"address": "shared-destination"})],
+    )
+
+    assert [label["status"] for label in labels] == ["duplicate_destination", "duplicate_destination"]
+    assert all(label["destination_matches"] == confirmed["destination_matches"] for label in labels)
+    assert confirmed["status"] == "confirmed"
+    assert other["status"] == other_status
+    evidence = producer_label_evidence(labels, [])
+    assert evidence["positive_count"] == 0
+    assert evidence["complete"] is False
+
+
+def test_export_rechecks_a_confirmed_round_for_additional_transactions() -> None:
+    confirmed = {
+        "round_id": 1,
+        "status": "confirmed",
+        "destination_address": "reused-destination",
+        "destination_matches": [{"txid": "a" * 64, "block_height": 7}],
+    }
+    blocks = [
+        exported_block(7, "a" * 64, {"address": "reused-destination"}),
+        exported_block(8, "b" * 64, {"address": "reused-destination"}),
+    ]
+
+    labels = match_round_events_to_blocks(collect_round_events([[confirmed]]), blocks)
+
+    assert labels[0]["status"] == "multiple_matches"
+    assert labels[0]["destination_matches"] == [
+        {"txid": "a" * 64, "block_height": 7},
+        {"txid": "b" * 64, "block_height": 8},
+    ]
+    assert confirmed["destination_matches"] == [{"txid": "a" * 64, "block_height": 7}]
+    evidence = producer_label_evidence(labels, [])
+    assert evidence["positive_count"] == 0
+    assert evidence["complete"] is False
+    expected = json.loads(json.dumps(labels))
+    assert match_round_events_to_blocks(labels, blocks) == expected
 
 
 @pytest.mark.parametrize(
@@ -214,10 +312,12 @@ def test_unlabelled_takers_make_evidence_incomplete() -> None:
 
 def test_engine_reads_exported_block_files_and_accepts_a_missing_node_directory(tmp_path: Path) -> None:
     engine = object.__new__(JoinmarketEngine)
-    engine.clients = [SimpleNamespace(round_events=[{"round_id": 1, "destination_address": "destination"}])]
+    engine.clients = [
+        SimpleNamespace(round_events=[{"round_id": 1, "status": "started", "destination_address": "destination"}])
+    ]
 
     assert engine.match_joinmarket_rounds_to_blocks(str(tmp_path)) == [
-        {"round_id": 1, "export_round_id": 1, "destination_address": "destination"}
+        {"round_id": 1, "export_round_id": 1, "status": "started", "destination_address": "destination"}
     ]
 
     node_path = tmp_path / "btc-node"

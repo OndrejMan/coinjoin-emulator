@@ -12,11 +12,10 @@ from typing import Protocol
 from manager.engine.joinmarket.events import reconcile_round_event_destinations
 from manager.engine.joinmarket.round_event_record import (
     EVENT_STATUS_CONFIRMED,
+    EVENT_STATUS_FAILED,
+    EVENT_STATUS_STARTED,
     RoundEvent,
 )
-
-EVENT_STATUS_STARTED = "started"
-EVENT_STATUS_FAILED = "failed"
 
 
 class BlockSource(Protocol):

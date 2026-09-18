@@ -60,7 +60,11 @@ def match_round_events_to_blocks(
     events: Iterable[RoundEvent],
     blocks: Iterable[ExportedBlock],
 ) -> list[RoundEvent]:
-    """Reconcile export event records against the exported Bitcoin blocks."""
+    """Reconcile all export records, including timed-out and previously confirmed rounds.
+
+    A local timeout does not prevent a transaction from being mined later. Keep
+    failure diagnostics, but derive matches and destination conflicts across all rounds.
+    """
     def indexed_blocks() -> Iterator[tuple[int, ExportedBlock]]:
         for raw_block in blocks:
             block_height = ExportedBlockRecord.from_data(raw_block).height
