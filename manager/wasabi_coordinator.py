@@ -44,7 +44,7 @@ class WasabiCoordinator:
         while monotonic() < deadline:
             try:
                 status = self._get_status()
-                if status:
+                if status is not None:
                     print(f"Coordinator ready: {status}")
                     return
             except Exception:
