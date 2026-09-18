@@ -48,6 +48,32 @@ def test_driver_mode_is_selected_only_by_the_explicit_flag(monkeypatch, in_clust
     assert driver.call_args.kwargs["in_cluster"] is in_cluster
 
 
+def test_podman_receives_the_requested_namespace(monkeypatch) -> None:
+    from manager.driver import podman
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(ENTRYPOINT),
+            "--driver",
+            "podman",
+            "run",
+            "--namespace",
+            "experiment-a",
+            "--run-id",
+            "run-42",
+        ],
+    )
+    driver = Mock(side_effect=RuntimeError("driver construction reached"))
+    monkeypatch.setattr(podman, "PodmanDriver", driver)
+
+    with pytest.raises(RuntimeError, match="driver construction reached"):
+        runpy.run_path(str(ENTRYPOINT), run_name="__main__")
+
+    driver.assert_called_once_with("experiment-a")
+
+
 def test_service_host_does_not_authorize_disabling_port_forward(monkeypatch, capsys):
     from manager.driver import kubernetes
 
