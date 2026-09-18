@@ -417,6 +417,18 @@ class KubernetesDriver(Driver):
         with tarfile.open(fileobj=BytesIO(payload)) as tar:
             tar.extractall(dst_path)
 
+    def pause(self, name):
+        # Kubernetes has no container freezer; stop every process but the
+        # container's init and the signalling shell itself.
+        self._exec_checked(name, f"pause {name}", self._signal_deadline(), ["sh", "-c", "kill -STOP -1"])
+
+    def unpause(self, name):
+        self._exec_checked(name, f"unpause {name}", self._signal_deadline(), ["sh", "-c", "kill -CONT -1"])
+
+    @staticmethod
+    def _signal_deadline():
+        return time.monotonic() + UPLOAD_TIMEOUT_SECONDS
+
     def peek(self, name, path):
         self._require_exec_ready(name)
         resp = self._exec_stream(name, ["cat", path], f"read {path}")
@@ -537,7 +549,7 @@ class KubernetesDriver(Driver):
     def _append_upload_chunk(self, name, dst_path, deadline, chunk, remote_payload, redirect):
         self._exec_checked(
             name,
-            dst_path,
+            f"upload to {name}:{dst_path}",
             deadline,
             ["sh", "-c", f'printf "%s" "$1" {redirect} "$2"', "sh", chunk, remote_payload],
         )
@@ -545,7 +557,7 @@ class KubernetesDriver(Driver):
     def _extract_staged_upload(self, name, dst_path, deadline, remote_payload):
         self._exec_checked(
             name,
-            dst_path,
+            f"upload to {name}:{dst_path}",
             deadline,
             [
                 "sh",
@@ -557,16 +569,16 @@ class KubernetesDriver(Driver):
         )
 
     def _remove_staged_upload(self, name, dst_path, deadline, remote_payload):
-        self._exec_checked(name, dst_path, deadline, ["rm", "-f", "--", remote_payload])
+        self._exec_checked(name, f"upload to {name}:{dst_path}", deadline, ["rm", "-f", "--", remote_payload])
 
-    def _exec_checked(self, name, dst_path, deadline, exec_command):
-        """Run one upload command and fail if it wrote to stderr or exited non-zero."""
+    def _exec_checked(self, name, action, deadline, exec_command):
+        """Run one command and fail if it wrote to stderr or exited non-zero."""
         stderr_chunks = []
-        resp = self._exec_stream(name, exec_command, f"upload to {dst_path}")
+        resp = self._exec_stream(name, exec_command, action)
         try:
             while resp.is_open():
                 if time.monotonic() >= deadline:
-                    raise TimeoutError(f"Timed out uploading to {name}:{dst_path}")
+                    raise TimeoutError(f"Timed out: {action}")
                 resp.update(timeout=1)
                 if resp.peek_stdout():
                     resp.read_stdout()
@@ -577,7 +589,7 @@ class KubernetesDriver(Driver):
             resp.close()
         stderr = "".join(stderr_chunks).strip()
         if returncode not in (None, 0) or stderr:
-            raise RuntimeError(f"upload to {name}:{dst_path} failed" + (f": {stderr}" if stderr else ""))
+            raise RuntimeError(f"{action} failed" + (f": {stderr}" if stderr else ""))
 
 
     def cleanup(self, image_prefix=""):

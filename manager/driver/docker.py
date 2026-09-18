@@ -104,6 +104,18 @@ class DockerDriver(Driver):
             if paused and container is not None:
                 container.unpause()
 
+    def pause(self, name):
+        try:
+            self.client.containers.get(name).pause()
+        except (docker.errors.APIError, docker.errors.NotFound) as error:
+            raise RuntimeError(f"Failed to pause {name}: {error}") from error
+
+    def unpause(self, name):
+        try:
+            self.client.containers.get(name).unpause()
+        except (docker.errors.APIError, docker.errors.NotFound) as error:
+            raise RuntimeError(f"Failed to unpause {name}: {error}") from error
+
     def peek(self, name, path):
         stream, _ = self.client.containers.get(name).get_archive(path)
 

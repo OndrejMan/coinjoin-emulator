@@ -69,6 +69,27 @@ def test_a_running_container_is_paused_while_it_is_archived(tmp_path) -> None:
     container.unpause.assert_called_once_with()
 
 
+def test_pause_and_unpause_freeze_the_container() -> None:
+    instance = driver()
+    container = instance.client.containers.get.return_value
+
+    instance.pause("btc-node")
+    container.pause.assert_called_once_with()
+
+    instance.unpause("btc-node")
+    container.unpause.assert_called_once_with()
+
+
+def test_a_failed_pause_is_reported() -> None:
+    import docker
+
+    instance = driver()
+    instance.client.containers.get.return_value.pause.side_effect = docker.errors.APIError("already paused")
+
+    with pytest.raises(RuntimeError, match="Failed to pause btc-node"):
+        instance.pause("btc-node")
+
+
 def tar_bytes() -> bytes:
     import io
     import tarfile

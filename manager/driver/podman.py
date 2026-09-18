@@ -115,6 +115,18 @@ class PodmanDriver(Driver):
                 f"Failed to copy {name}:{src_path} to {dst_path}: {error}"
             ) from error
 
+    def pause(self, name):
+        try:
+            self.client.containers.get(name).pause()
+        except podman.errors.PodmanError as error:
+            raise CoinjoinEmulatorError(f"Failed to pause {name}: {error}") from error
+
+    def unpause(self, name):
+        try:
+            self.client.containers.get(name).unpause()
+        except podman.errors.PodmanError as error:
+            raise CoinjoinEmulatorError(f"Failed to unpause {name}: {error}") from error
+
     def peek(self, name, path):
         stream, _ = self.client.containers.get(name).get_archive(path)
 

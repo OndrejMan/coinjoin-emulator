@@ -220,6 +220,25 @@ def test_run_refuses_to_replace_a_container_from_another_owner(
     client.containers.run.assert_not_called()
 
 
+def test_pause_and_unpause_freeze_the_container(driver_and_client) -> None:
+    driver, client = driver_and_client
+    container = client.containers.get.return_value
+
+    driver.pause("btc-node")
+    driver.unpause("btc-node")
+
+    container.pause.assert_called_once_with()
+    container.unpause.assert_called_once_with()
+
+
+def test_a_failed_pause_raises_an_emulator_error(driver_and_client) -> None:
+    driver, client = driver_and_client
+    client.containers.get.return_value.pause.side_effect = podman.errors.PodmanError("no freezer")
+
+    with pytest.raises(CoinjoinEmulatorError, match="Failed to pause btc-node"):
+        driver.pause("btc-node")
+
+
 def test_failed_artifact_download_raises_an_emulator_error(driver_and_client) -> None:
     driver, client = driver_and_client
     container = Mock()

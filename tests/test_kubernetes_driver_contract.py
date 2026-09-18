@@ -190,6 +190,27 @@ def test_download_preserves_binary_files_across_text_chunks(tmp_path) -> None:
     assert (tmp_path / "dst/logs/binary.dat").read_bytes() == contents
 
 
+def test_pause_and_unpause_signal_every_process_in_the_pod() -> None:
+    commands = []
+
+    def run_command(api, name, namespace, command, **kwargs):
+        commands.append(command)
+        return FakeStream()
+
+    with patch("manager.driver.kubernetes.stream", side_effect=run_command):
+        driver().pause("btc-node")
+        driver().unpause("btc-node")
+
+    assert commands == [["sh", "-c", "kill -STOP -1"], ["sh", "-c", "kill -CONT -1"]]
+
+
+def test_a_pause_that_fails_inside_the_pod_is_reported() -> None:
+    response = FakeStream(stderr="sh: kill: Operation not permitted\n")
+    with patch("manager.driver.kubernetes.stream", return_value=response):
+        with pytest.raises(RuntimeError, match="pause btc-node failed: sh: kill: Operation not permitted"):
+            driver().pause("btc-node")
+
+
 def test_download_rejects_invalid_base64(tmp_path) -> None:
     with patch("manager.driver.kubernetes.stream", return_value=FakeStream(stdout="broken!")):
         with pytest.raises(RuntimeError, match="invalid base64"):

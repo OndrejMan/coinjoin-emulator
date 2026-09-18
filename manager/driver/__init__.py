@@ -67,6 +67,14 @@ class Driver(ABC):
             p.map(lambda x: self.stop(x), names)
 
     @abstractmethod
+    def pause(self, name):
+        """Freeze every process of the container so its filesystem stops changing."""
+
+    @abstractmethod
+    def unpause(self, name):
+        """Resume a container frozen by :meth:`pause`."""
+
+    @abstractmethod
     def download(self, name, src_path, dst_path):
         pass
 
