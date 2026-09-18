@@ -6,7 +6,7 @@ the public archive contract: a scenario, a contiguous exported blockchain,
 and one complete set of wallet artifacts for every configured wallet.
 
 Set ``TESTING_DATA_DIR`` to run the checks against another archive collection.
-The repository-level ``testing_data`` directory is used by default.
+The workspace-level ``testing_data`` directory is used by default.
 """
 
 import json
@@ -32,6 +32,10 @@ def _archive_root(names: list[str]) -> str:
     roots = {Path(name).parts[0] for name in names}
     assert len(roots) == 1, f"expected one archive root, found {sorted(roots)}"
     return roots.pop()
+
+
+def _archive_root_matches_scenario(root: str, scenario_name: object) -> bool:
+    return root == "coinjoin_emulator_data" or root.endswith(f"_{scenario_name}")
 
 
 def _load_json(archive: ZipFile, name: str) -> object:
@@ -76,8 +80,9 @@ def test_historical_run_archives_follow_the_emulator_artifact_contract() -> None
             # read as plain JSON rather than through the runtime parser.
             scenario = _load_json(archive, scenario_name)
             assert isinstance(scenario, dict), f"{archive_path.name}: scenario.json is not an object"
-            assert root.endswith(f"_{scenario.get('name')}"), (
-                f"{archive_path.name}: archive root does not end with the scenario name"
+            assert _archive_root_matches_scenario(root, scenario.get("name")), (
+                f"{archive_path.name}: archive root is neither the current canonical root "
+                "nor a historical scenario-named root"
             )
             wallets = scenario.get("wallets")
             assert isinstance(wallets, list) and wallets, f"{archive_path.name}: scenario has no wallets"
@@ -110,6 +115,12 @@ def test_historical_run_archives_follow_the_emulator_artifact_contract() -> None
                     artifact_name = f"{client_path}/{artifact}"
                     assert artifact_name in names, f"{archive_path.name}: missing {artifact_name}"
                     _load_json(archive, artifact_name)
+
+
+def test_archive_root_accepts_current_and_historical_layouts() -> None:
+    assert _archive_root_matches_scenario("coinjoin_emulator_data", "scenario")
+    assert _archive_root_matches_scenario("2025-04-02_12-15_scenario", "scenario")
+    assert not _archive_root_matches_scenario("unrelated", "scenario")
 
 
 def test_historical_run_archives_have_a_consistent_transaction_and_wallet_view() -> None:
