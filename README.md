@@ -101,6 +101,17 @@ still has its destination on record:
 
 The simulation script enables advanced configuration for running on different container platforms with various networking setups. This section describes the advanced configuration and shows common examples.
 
+### Raw Bitcoin node data
+
+`run --download-btc-data <dir>` copies the node's datadir (`--download-path`,
+default `btc-node:/home/bitcoin/data/`) out of the container after the logs are
+stored and before the resources are removed. The copy is a consistent snapshot:
+the node is asked to flush its block index and chainstate first, every process
+in its container is frozen while the archive is read, and the copy is repeated
+when a block arrived in between. The archive is streamed to disk, so the datadir
+may be larger than the available memory. The recorded height is the connected
+tip; a block accepted at that very instant is connected by whoever opens the copy.
+
 ### Backend driver
 
 

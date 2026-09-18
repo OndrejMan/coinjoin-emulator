@@ -356,12 +356,26 @@ def test_cleanup_skips_log_storage_without_a_bitcoin_node():
     assert "store_logs" not in engine.calls
 
 
+class SnapshotNode(FakeNode):
+    """A node whose flush is observed by the cleanup call log."""
+
+    def __init__(self, calls):
+        super().__init__()
+        self.calls = calls
+
+    def flush_state_to_disk(self):
+        self.calls.append("flush")
+
+
 def test_raw_bitcoin_data_is_downloaded_before_the_driver_is_cleaned_up(tmp_path):
     entrypoint = load_entrypoint()
     engine = CleanupEngine()
     calls = engine.calls
+    engine.node = SnapshotNode(calls)
     driver = types.SimpleNamespace(
         cleanup=lambda prefix: calls.append("driver_cleanup"),
+        pause=lambda name: calls.append(("pause", name)),
+        unpause=lambda name: calls.append(("unpause", name)),
         download=lambda name, src, dst: calls.append(("download", name, src, dst)),
     )
     args = types.SimpleNamespace(
@@ -372,8 +386,13 @@ def test_raw_bitcoin_data_is_downloaded_before_the_driver_is_cleaned_up(tmp_path
     )
 
     assert entrypoint.cleanup(engine, driver, args) is False
-    assert calls[-2:] == [
+    # The datadir is flushed and the node frozen while it is copied, and the
+    # node is still there for it: the driver is cleaned up only afterwards.
+    assert calls[-5:] == [
+        "flush",
+        ("pause", "btc-node"),
         ("download", "btc-node", "/home/bitcoin/data/", str(tmp_path / "btc")),
+        ("unpause", "btc-node"),
         "driver_cleanup",
     ]
     assert (tmp_path / "btc").is_dir()
