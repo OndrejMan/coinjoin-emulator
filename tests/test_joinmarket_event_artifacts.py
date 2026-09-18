@@ -10,6 +10,7 @@ from manager.engine.joinmarket.events import (
     collect_round_events,
     match_round_events_to_blocks,
     producer_label_evidence,
+    reconcile_round_event_destinations,
 )
 from manager.engine.joinmarket.exported_block_record import ExportedBlockRecord
 from manager.engine.joinmarket.round_event_record import RoundEvent, RoundEventRecord
@@ -98,7 +99,7 @@ def test_export_round_id_is_mandatory_and_an_integer() -> None:
         RoundEventRecord.from_data({"export_round_id": "1"}).export_round_id
 
 
-def test_events_without_destinations_are_dropped_and_export_order_is_stable() -> None:
+def test_events_without_destinations_are_preserved_and_export_order_is_stable() -> None:
     first = {"round_id": 1, "status": "started", "destination_address": "first"}
     second = {"round_id": 1, "status": "started", "destination_address": "second"}
     labels = match_round_events_to_blocks(
@@ -106,9 +107,37 @@ def test_events_without_destinations_are_dropped_and_export_order_is_stable() ->
         [],
     )
 
-    assert [(label["round_id"], label["export_round_id"]) for label in labels] == [(1, 2), (1, 3)]
+    assert [(label["round_id"], label["export_round_id"]) for label in labels] == [(99, 1), (1, 2), (1, 3)]
     assert first == {"round_id": 1, "status": "started", "destination_address": "first"}
     assert second == {"round_id": 1, "status": "started", "destination_address": "second"}
+
+
+@pytest.mark.parametrize("destination", [None, "", 42])
+def test_unmatchable_events_are_retained_and_make_evidence_incomplete(destination) -> None:
+    event = {"round_id": 1, "status": "failed", "destination_address": destination}
+    labels = match_round_events_to_blocks(collect_round_events([[event]]), [])
+
+    assert len(labels) == 1
+    assert labels[0]["destination_address"] == destination
+    evidence = producer_label_evidence(labels, [])
+    assert evidence["complete"] is False
+    assert evidence["positive_count"] == 0
+    assert evidence["reason"] == "round events have no destination address: 1"
+
+
+def test_reconciliation_preserves_generator_order_and_event_identity() -> None:
+    events = [
+        {"status": "started", "destination_address": "shared"},
+        {"status": "failed"},
+        {"status": "started", "destination_address": "other"},
+        {"status": "started", "destination_address": "shared"},
+    ]
+
+    result = reconcile_round_event_destinations((event for event in events), [])
+
+    assert len(result) == len(events)
+    assert all(actual is expected for actual, expected in zip(result, events))
+    assert result[0]["status"] == result[3]["status"] == "duplicate_destination"
 
 
 @pytest.mark.parametrize("match_count", [0, 1, 2])

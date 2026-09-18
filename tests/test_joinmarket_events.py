@@ -241,10 +241,12 @@ class TestJoinMarketRoundEvents:
         ]
         assert first["round_id"] == second["round_id"] == 1
 
-    def test_events_without_a_destination_are_dropped(self, tmp_path: Path) -> None:
+    def test_events_without_a_destination_are_preserved(self, tmp_path: Path) -> None:
         harness = EventHarness(EventClient("jcs-000", [{"round_id": 1, "status": "failed"}]))
 
-        assert harness.match_joinmarket_rounds_to_blocks(str(tmp_path)) == []
+        assert harness.match_joinmarket_rounds_to_blocks(str(tmp_path)) == [
+            {"round_id": 1, "export_round_id": 1, "status": "failed"}
+        ]
 
 
 class TestStoreRoundEvents:
