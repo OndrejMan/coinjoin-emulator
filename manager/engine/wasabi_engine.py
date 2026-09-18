@@ -480,21 +480,25 @@ class WasabiEngine(EngineBase):
             raise RuntimeError("Bitcoin node is not initialized")
         initial_block = self.node.get_block_count()
         while not self._run_limit_reached():
-            for _ in range(3):
+            for attempt in range(3):
                 try:
                     self.current_round = self._get_current_round()
                     break
                 except Exception as e:
                     print("- could not get rounds".ljust(60), end="\r")
                     print(f"Round exception: {e}", file=sys.stderr)
+                    if attempt == 2:
+                        raise RuntimeError("Could not refresh Wasabi round count after 3 attempts") from e
 
-            for _ in range(3):
+            for attempt in range(3):
                 try:
                     self.current_block = self.node.get_block_count() - initial_block  # type: ignore
                     break
                 except Exception as e:
                     print("- could not get blocks".ljust(60), end="\r")
                     print(f"Block exception: {e}", file=sys.stderr)
+                    if attempt == 2:
+                        raise RuntimeError("Could not refresh Wasabi block count after 3 attempts") from e
 
             self.update_invoice_payments()
             self.update_coinjoins()
