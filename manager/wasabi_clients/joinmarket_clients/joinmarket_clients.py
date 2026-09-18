@@ -7,6 +7,8 @@ from datetime import datetime
 import httpx
 import requests
 
+from manager.engine.joinmarket.round_event_record import RoundEvent
+
 from .joinmarket_client_base import JoinMarketClientServer
 
 
@@ -96,6 +98,31 @@ class TakerClient(JoinMarketClientServer):
         """Attempts whose destination the engine found in a mined block."""
         return sum(1 for event in self.round_events if event.get("status") == "confirmed")
 
+    def _prepare_attempt(self, current_round: int) -> dict[str, object]:
+        """Choose an offer and generate its destination."""
+        offer = self.get_offer(current_round)
+        offer["destination"] = self.get_new_address()
+        return offer
+
+    def _record_attempt(self, offer: dict[str, object], current_block: int) -> RoundEvent:
+        """Record a started attempt."""
+        event = self.record_round_start(
+            offer["destination"],
+            offer.get("amount_sats"),
+            offer.get("counterparties"),
+            offer.get("mixdepth"),
+            current_block,
+        )
+        self.coinjoin_start = current_block
+        return event
+
+    def _note_attempt_started(self, current_block: int, current_round: int) -> int:
+        """Report one more running round."""
+        self.coinjoin_in_process = True
+        print(f"Starting coinjoin {self.name}")
+        print(f"- coinjoin rounds: {current_round + 1} (block {current_block})".ljust(60))
+        return 1
+
     def _note_attempt_finished(self, was_in_process):
         """jmwalletd going idle ends an attempt; only a mined destination completes a CoinJoin."""
         if was_in_process and not self.coinjoin_in_process:
@@ -140,21 +167,10 @@ class TakerClient(JoinMarketClientServer):
             and not self.is_paused(current_block)
             and not self.has_unconfirmed_round()
         ):
-            offer = self.get_offer(current_round)
-            offer["destination"] = self.get_new_address()
+            offer = self._prepare_attempt(current_round)
             self.start_coinjoin(**offer)
-            self.record_round_start(
-                offer["destination"],
-                offer.get("amount_sats"),
-                offer.get("counterparties"),
-                offer.get("mixdepth"),
-                current_block,
-            )
-            self.coinjoin_start = current_block
-            self.coinjoin_in_process = True
-            delta = +1
-            print(f"Starting coinjoin {self.name}")
-            print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
+            self._record_attempt(offer, current_block)
+            delta = self._note_attempt_started(current_block, current_round)
 
         elif self.coinjoin_in_process and self.coinjoin_timed_out(current_block):
             self.stop_coinjoin()
@@ -181,21 +197,10 @@ class TakerClient(JoinMarketClientServer):
         if self.is_paused(current_block):
             return 0
         if not self.coinjoin_in_process and not self.has_unconfirmed_round():
-            offer = self.get_offer(current_round)
-            offer["destination"] = self.get_new_address()
+            offer = self._prepare_attempt(current_round)
             await self.start_coinjoin_async(**offer)
-            self.record_round_start(
-                offer["destination"],
-                offer.get("amount_sats"),
-                offer.get("counterparties"),
-                offer.get("mixdepth"),
-                current_block,
-            )
-            self.coinjoin_start = current_block
-            self.coinjoin_in_process = True
-            delta = +1
-            print(f"Starting coinjoin {self.name}")
-            print(f"- coinjoin rounds: {current_round + delta} (block {current_block})".ljust(60))
+            self._record_attempt(offer, current_block)
+            delta = self._note_attempt_started(current_block, current_round)
 
         elif self.coinjoin_in_process and self.coinjoin_timed_out(current_block):
             self.stop_coinjoin()
