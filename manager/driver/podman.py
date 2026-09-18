@@ -1,5 +1,6 @@
 import os
 import tarfile
+from contextlib import closing
 from functools import cached_property
 from io import BytesIO
 from uuid import uuid4
@@ -17,6 +18,7 @@ from . import (
     managed_labels,
     preserve_stopped_container,
 )
+from .archive import extract_tar_stream
 
 
 class PodmanDriver(Driver):
@@ -104,15 +106,12 @@ class PodmanDriver(Driver):
 
     def download(self, name, src_path, dst_path):
         try:
-            stream, _ = self.client.containers.get(name).get_archive(src_path)
-
-            fo = BytesIO()
-            for d in stream:
-                fo.write(d)
-            fo.seek(0)
-            with tarfile.open(fileobj=fo) as tar:
-                tar.extractall(dst_path)
-
+            container = self.client.containers.get(name)
+            with closing(self.client.api.get(
+                f"/containers/{container.id}/archive", params={"path": [src_path]}, stream=True
+            )) as response:
+                response.raise_for_status()
+                extract_tar_stream(response.iter_content(chunk_size=podman.api.DEFAULT_CHUNK_SIZE), dst_path)
             print("- stored backend logs")
         except (podman.errors.PodmanError, OSError, tarfile.TarError) as error:
             raise CoinjoinEmulatorError(

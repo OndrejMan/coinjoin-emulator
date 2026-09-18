@@ -11,7 +11,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from kubernetes import client as kubernetes_client
 from kubernetes.client.exceptions import ApiException
+from kubernetes.stream.ws_client import ABNF, WSClient
 
 from manager.driver import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL
 from manager.driver.kubernetes import (
@@ -19,6 +21,7 @@ from manager.driver.kubernetes import (
     MANAGED_BY_VALUE,
     UPLOAD_COMMAND_CHUNK_SIZE,
     KubernetesDriver,
+    _Base64StreamDecoder,
 )
 from manager.exceptions import KubernetesResourceQuotaError, StartupError
 
@@ -188,6 +191,72 @@ def test_download_preserves_binary_files_across_text_chunks(tmp_path) -> None:
         instance.download("jcs-000", str(source) + "/", str(tmp_path / "dst"))
 
     assert (tmp_path / "dst/logs/binary.dat").read_bytes() == contents
+
+
+def test_download_leaves_only_the_unpacked_archive_behind(tmp_path) -> None:
+    with patch("manager.driver.kubernetes.stream", return_value=FakeStream(stdout=archive())):
+        driver().download("jcs-000", "/logs/", str(tmp_path / "dst"))
+
+    assert [path.name for path in (tmp_path / "dst").iterdir()] == ["logs"]
+
+
+def test_download_rejects_a_truncated_base64_stream(tmp_path) -> None:
+    with patch("manager.driver.kubernetes.stream", return_value=FakeStream(stdout=archive()[:-1])):
+        with pytest.raises(RuntimeError, match="invalid base64"):
+            driver().download("jcs-000", "/logs/", str(tmp_path))
+
+
+@pytest.mark.parametrize("split", range(9))
+def test_base64_padding_rejects_following_data_at_every_chunk_boundary(split) -> None:
+    encoded = "YQ==Yg=="
+    decoder = _Base64StreamDecoder()
+    with pytest.raises(ValueError):
+        decoder.feed(encoded[:split])
+        decoder.feed(encoded[split:])
+        decoder.finish()
+
+
+@pytest.mark.parametrize("data", [b"a", b"ab", b"abc"])
+def test_base64_decoder_accepts_valid_padding_across_chunks(data) -> None:
+    encoded = base64.b64encode(data).decode("ascii")
+    for split in range(len(encoded) + 1):
+        decoder = _Base64StreamDecoder()
+        result = decoder.feed(encoded[:split]) + decoder.feed(encoded[split:]) + decoder.feed("")
+        assert result + decoder.finish() == data
+
+
+def test_download_does_not_accumulate_stdout_in_the_real_sdk(tmp_path) -> None:
+    responses = []
+    encoded = archive()
+    frames = iter([
+        (ABNF.OPCODE_BINARY, SimpleNamespace(data=b"\x01" + encoded[i:i + 73].encode("ascii")))
+        for i in range(0, len(encoded), 73)
+    ] + [(ABNF.OPCODE_CLOSE, SimpleNamespace(data=b""))])
+    sock = Mock(connected=True)
+
+    def receive(*args):
+        assert not isinstance(responses[0]._all, io.StringIO)  # pylint: disable=protected-access
+        return next(frames)
+
+    def connect(*args, **kwargs):
+        response = WSClient(*args, **kwargs)
+        responses.append(response)
+        return response
+
+    sock.recv_data_frame.side_effect = receive
+    with kubernetes_client.ApiClient() as api:
+        core = kubernetes_client.CoreV1Api(api)
+        core.read_namespaced_pod_status = Mock(return_value=running_pod())
+        instance = driver(client=core)
+        with patch("kubernetes.stream.ws_client.create_websocket", return_value=sock), \
+             patch("kubernetes.stream.ws_client.select.poll") as poll, \
+             patch("kubernetes.stream.ws_client.WSClient", side_effect=connect):
+            poll.return_value.poll.return_value = [(1, 1)]
+            instance.download("jcs-000", "/logs", str(tmp_path))
+
+    assert (tmp_path / "logs/run.log").read_bytes() == b"hello"
+    assert not isinstance(responses[0]._all, io.StringIO)  # pylint: disable=protected-access
+    sock.close.assert_called_once()
 
 
 def test_pause_and_unpause_signal_every_process_in_the_pod() -> None:

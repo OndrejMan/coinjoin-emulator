@@ -3,10 +3,11 @@ import os
 import re
 import shlex
 import tarfile
+import tempfile
 import time
 import traceback
 import uuid
-from functools import cached_property
+from functools import cached_property, partial
 from io import BytesIO
 from threading import RLock
 from time import sleep
@@ -14,11 +15,16 @@ from time import sleep
 import backoff
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
-from kubernetes.stream import stream
+from kubernetes.stream.stream import _websocket_request
+from kubernetes.stream.ws_client import websocket_call
 
 from manager.exceptions import KubernetesResourceQuotaError, StartupError
 
 from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
+from .archive import extract_tar_stream
+
+# Generated exec methods cannot forward capture_all to websocket_call.
+stream = partial(_websocket_request, partial(websocket_call, capture_all=False), None)
 
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
 DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
@@ -29,6 +35,34 @@ BENIGN_TAR_WARNING_RE = re.compile(
     r"^tar: .*: (file changed as we read it|socket ignored)$"
     r"|^tar: Removing leading [`'\"]?/[`'\"]? from (member names|hard link targets)$"
 )
+
+
+class _Base64StreamDecoder:
+    """Decode base64 text arriving in arbitrary pieces, four characters at a time."""
+
+    def __init__(self) -> None:
+        self._carry = ""
+        self._finished = False
+
+    def feed(self, text: str) -> bytes:
+        if self._finished:
+            if text:
+                raise ValueError("data after base64 padding")
+            return b""
+        data = self._carry + text
+        usable = len(data) - len(data) % 4
+        self._carry = data[usable:]
+        encoded = data[:usable]
+        decoded = base64.b64decode(encoded, validate=True)
+        self._finished = "=" in encoded
+        if self._finished and self._carry:
+            raise ValueError("data after base64 padding")
+        return decoded
+
+    def finish(self) -> bytes:
+        if self._carry:
+            raise ValueError(f"trailing base64 characters: {self._carry!r}")
+        return b""
 
 
 def _check_tar_stderr(name, src_path, stderr):
@@ -390,8 +424,19 @@ class KubernetesDriver(Driver):
             "sh", "-c",
             f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64 | tr -d '\\n'",
         ]
+        os.makedirs(dst_path, exist_ok=True)
+        with tempfile.TemporaryFile(dir=dst_path, prefix=".coinjoin-download-") as staged:
+            stderr = self._stream_exec_archive(name, src_path, exec_command, staged)
+            _check_tar_stderr(name, src_path, stderr)
+            if staged.tell() == 0:
+                raise RuntimeError(f"download of {name}:{src_path} produced an empty archive")
+            staged.seek(0)
+            extract_tar_stream(iter(lambda: staged.read(UPLOAD_COMMAND_CHUNK_SIZE), b""), dst_path)
+
+    def _stream_exec_archive(self, name, src_path, exec_command, staged):
+        """Decode the base64 archive from the exec stream into ``staged``; return tar's stderr."""
         resp = self._exec_stream(name, exec_command, f"download {src_path}")
-        encoded_chunks = []
+        decoder = _Base64StreamDecoder()
         stderr_chunks = []
         deadline = time.monotonic() + DOWNLOAD_TIMEOUT_SECONDS
         try:
@@ -400,22 +445,15 @@ class KubernetesDriver(Driver):
                     raise TimeoutError(f"Timed out downloading {name}:{src_path}")
                 resp.update(timeout=1)
                 if resp.peek_stdout():
-                    encoded_chunks.append(resp.read_stdout())
+                    staged.write(decoder.feed(resp.read_stdout()))
                 if resp.peek_stderr():
                     stderr_chunks.append(resp.read_stderr())
-        finally:
-            resp.close()
-
-        _check_tar_stderr(name, src_path, "".join(stderr_chunks))
-        encoded = "".join(encoded_chunks)
-        if not encoded.strip():
-            raise RuntimeError(f"download of {name}:{src_path} produced an empty archive")
-        try:
-            payload = base64.b64decode(encoded, validate=True)
+            staged.write(decoder.finish())
         except ValueError as error:
             raise RuntimeError(f"download of {name}:{src_path} returned invalid base64") from error
-        with tarfile.open(fileobj=BytesIO(payload)) as tar:
-            tar.extractall(dst_path)
+        finally:
+            resp.close()
+        return "".join(stderr_chunks)
 
     def pause(self, name):
         # Kubernetes has no container freezer; stop every process but the

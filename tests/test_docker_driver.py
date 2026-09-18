@@ -157,6 +157,37 @@ def test_a_failed_pause_is_reported() -> None:
         instance.pause("btc-node")
 
 
+def test_an_archive_is_unpacked_from_its_chunks(tmp_path) -> None:
+    instance = driver()
+    container = instance.client.containers.get.return_value
+    container.status = "exited"
+    archive = tar_bytes()
+    container.get_archive.return_value = (iter([archive[:100], archive[100:]]), {})
+
+    instance.download("jcs-000", "/logs", str(tmp_path))
+
+    assert (tmp_path / "logs").is_dir()
+    container.pause.assert_not_called()
+
+
+def test_a_late_transfer_error_is_reported_and_the_container_is_resumed(tmp_path) -> None:
+    instance = driver()
+    container = instance.client.containers.get.return_value
+    container.status = "running"
+
+    def chunks():
+        yield tar_bytes()
+        raise OSError("broken transfer")
+
+    container.get_archive.return_value = (chunks(), {})
+    with pytest.raises(RuntimeError, match="Failed to download.*broken transfer"):
+        instance.download("jcs-000", "/logs", str(tmp_path))
+
+    assert list(tmp_path.iterdir()) == []
+    container.pause.assert_called_once_with()
+    container.unpause.assert_called_once_with()
+
+
 def tar_bytes() -> bytes:
     import io
     import tarfile

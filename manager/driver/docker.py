@@ -15,6 +15,7 @@ from . import (
     managed_labels,
     preserve_stopped_container,
 )
+from .archive import extract_tar_stream
 
 BYTES_IN_MEGABYTE = 1024 * 1024
 
@@ -113,13 +114,7 @@ class DockerDriver(Driver):
                 container.pause()
                 paused = True
             stream, _ = container.get_archive(src_path)
-
-            fo = BytesIO()
-            for d in stream:
-                fo.write(d)
-            fo.seek(0)
-            with tarfile.open(fileobj=fo) as tar:
-                tar.extractall(dst_path)
+            extract_tar_stream(stream, dst_path)
         except (docker.errors.APIError, docker.errors.NotFound, tarfile.TarError, OSError) as error:
             raise RuntimeError(f"Failed to download {name}:{src_path} to {dst_path}: {error}") from error
         finally:
