@@ -49,6 +49,13 @@ class BtcNode:
     def get_blockchain_info(self):
         return self._rpc({"method": "getblockchaininfo", "params": []})
 
+    def flush_state_to_disk(self):
+        """Write the block index and chainstate to the datadir."""
+        self._rpc(
+            {"method": "gettxoutsetinfo", "params": ["none"]},
+            timeout=WRITE_RPC_TIMEOUT_SECONDS,
+        )
+
     def estimate_smart_fee(self):
         return self._rpc({"method": "estimatesmartfee", "params": [6]})
 
