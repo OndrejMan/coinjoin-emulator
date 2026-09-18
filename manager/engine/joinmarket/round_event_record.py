@@ -11,6 +11,8 @@ class DestinationMatch(TypedDict):
     txid: str
     block_height: int
 
+EVENT_STATUS_STARTED = "started"
+EVENT_STATUS_FAILED = "failed"
 EVENT_STATUS_CONFIRMED = "confirmed"
 EVENT_STATUS_MULTIPLE_MATCHES = "multiple_matches"
 EVENT_STATUS_DUPLICATE_DESTINATION = "duplicate_destination"
