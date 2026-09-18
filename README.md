@@ -84,8 +84,10 @@ The default protocol is Wasabi. To run the simulation with Joinmarket, use the `
 
 `duplicate_destination` takes precedence over the match count. Matching transactions
 remain in `destination_matches` for diagnostics, but cannot confirm such a round.
-Both conflict statuses make the producer-label manifest incomplete. The status is
-the sole classification; no duplicate-destination boolean is emitted.
+Both conflict statuses make the producer-label manifest incomplete.
+
+`execution_status` preserves the local `started` or `failed` attempt state;
+`status` remains the chain-reconciliation result.
 
 ## Advanced usage
 

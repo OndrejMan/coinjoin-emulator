@@ -53,6 +53,7 @@ def test_event_is_copied_reconciled_and_exported_as_evidence() -> None:
             "destination_address": "bcrt1qdestination",
             "destination_matches": [{"txid": "a" * 64, "block_height": 7}],
             "status": "confirmed",
+            "execution_status": "started",
             "match_source": "destination_output",
         }
     ]
@@ -184,6 +185,24 @@ def test_duplicate_destination_status_survives_later_matching_without_the_other_
     assert event["match_source"] == "destination_output"
 
 
+def test_direct_matching_preserves_failure_through_later_conflicts() -> None:
+    event: RoundEvent = {"status": "failed", "failure_reason": "RPC timeout"}
+    record = RoundEventRecord.from_data(event)
+
+    record.add_destination_match("first", 1)
+    assert event["execution_status"] == "failed"
+    assert record.status == "confirmed"
+
+    record.add_destination_match("second", 2)
+    record.mark_duplicate_destination()
+    record.add_destination_match("third", 3)
+
+    assert event["execution_status"] == "failed"
+    assert event["failure_reason"] == "RPC timeout"
+    assert record.status == "duplicate_destination"
+    assert record.confirmed_destination_txid() is None
+
+
 def test_reconciliation_is_idempotent_and_tolerates_empty_transaction_lists() -> None:
     labels = match_round_events_to_blocks(
         collect_round_events([[{"round_id": 1, "status": "started", "destination_address": "destination"}]]),
@@ -222,6 +241,7 @@ def test_export_reconciles_timed_out_rounds_and_keeps_failure_diagnostics(
     )
 
     assert labels[0]["status"] == expected_status
+    assert labels[0]["execution_status"] == "failed"
     assert labels[0]["failure_reason"] == failed["failure_reason"]
     assert labels[0]["stop_block"] == 6
     assert labels[0].get("destination_matches", []) == [
@@ -233,6 +253,8 @@ def test_export_reconciles_timed_out_rounds_and_keeps_failure_diagnostics(
     evidence = producer_label_evidence(labels, [])
     assert evidence["positive_count"] == positive_count
     assert evidence["complete"] is (match_count < 2)
+    expected = json.loads(json.dumps(labels))
+    assert match_round_events_to_blocks(labels, []) == expected
 
 
 @pytest.mark.parametrize("other_status", ["started", "failed", "confirmed"])
@@ -254,6 +276,10 @@ def test_export_detects_shared_destinations_across_round_statuses(other_status: 
     assert all(label["destination_matches"] == confirmed["destination_matches"] for label in labels)
     assert confirmed["status"] == "confirmed"
     assert other["status"] == other_status
+    if other_status in ("started", "failed"):
+        assert labels[1]["execution_status"] == other_status
+    else:
+        assert "execution_status" not in labels[1]
     evidence = producer_label_evidence(labels, [])
     assert evidence["positive_count"] == 0
     assert evidence["complete"] is False
@@ -346,7 +372,10 @@ def test_engine_reads_exported_block_files_and_accepts_a_missing_node_directory(
     ]
 
     assert engine.match_joinmarket_rounds_to_blocks(str(tmp_path)) == [
-        {"round_id": 1, "export_round_id": 1, "status": "started", "destination_address": "destination"}
+        {
+            "round_id": 1, "export_round_id": 1, "status": "started",
+            "execution_status": "started", "destination_address": "destination",
+        }
     ]
 
     node_path = tmp_path / "btc-node"
