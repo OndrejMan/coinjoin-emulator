@@ -58,6 +58,7 @@ def mark_latest_started_round_failed(
     for event in reversed(events):
         if event.get("status") == EVENT_STATUS_STARTED and event.get("taker") == taker:
             event["status"] = EVENT_STATUS_FAILED
+            event["execution_status"] = EVENT_STATUS_FAILED
             event["failure_reason"] = reason
             event["stop_block"] = stop_block
             return event

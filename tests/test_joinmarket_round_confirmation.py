@@ -57,7 +57,7 @@ def test_live_and_export_paths_share_destination_matching() -> None:
         [{"height": 1, "tx": [transaction]}],
     )[0]
 
-    for field in ("status", "destination_matches", "match_source"):
+    for field in ("status", "execution_status", "destination_matches", "match_source"):
         assert live_event[field] == export_event[field]
 
 
@@ -107,11 +107,15 @@ def test_the_latest_started_attempt_of_the_taker_is_failed() -> None:
     older = started("jcs-000", "bcrt1a")
     other = started("jcs-001", "bcrt1b")
     newest = started("jcs-000", "bcrt1c")
+    newest["execution_status"] = "started"
 
     failed = mark_latest_started_round_failed([older, other, newest], "jcs-000", "timed out", stop_block=9)
 
     assert failed is newest
-    assert newest == {**started("jcs-000", "bcrt1c"), "status": "failed", "failure_reason": "timed out", "stop_block": 9}
+    assert newest == {
+        **started("jcs-000", "bcrt1c"), "status": "failed", "execution_status": "failed",
+        "failure_reason": "timed out", "stop_block": 9,
+    }
     assert older["status"] == "started"
     assert other["status"] == "started"
 

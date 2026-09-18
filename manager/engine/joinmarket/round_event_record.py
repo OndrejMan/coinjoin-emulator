@@ -72,10 +72,17 @@ class RoundEventRecord:
 
     def mark_duplicate_destination(self) -> None:
         """Record a shared destination; this status takes precedence over match counts."""
+        self.preserve_execution_status()
         self._data["status"] = EVENT_STATUS_DUPLICATE_DESTINATION
+
+    def preserve_execution_status(self) -> None:
+        """Retain known local execution evidence before reconciliation changes status."""
+        if self.status in (EVENT_STATUS_STARTED, EVENT_STATUS_FAILED):
+            self._data.setdefault("execution_status", self.status)
 
     def add_destination_match(self, txid: str, block_height: int) -> None:
         """Record one exported transaction and update the reconciliation status."""
+        self.preserve_execution_status()
         matches = self._destination_matches()
         candidate: DestinationMatch = {"txid": txid, "block_height": block_height}
         if candidate not in matches:

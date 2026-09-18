@@ -786,6 +786,7 @@ class JoinMarketClientServer:
             "round_id": len(self.round_events) + 1,
             "engine": "joinmarket",
             "status": "started",
+            "execution_status": "started",
             "taker": self.name,
             "destination_address": destination,
             "amount_sats": amount_sats,

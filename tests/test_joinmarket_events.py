@@ -6,6 +6,7 @@ import pytest
 
 from manager.btc_node import BtcNode
 from manager.engine.joinmarket_engine import JoinmarketEngine
+from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 
 
 class EventClient:
@@ -56,6 +57,16 @@ def write_block(node_path: Path, height: int, txid: str, address: str) -> None:
 
 
 class TestCollectRoundEvents:
+    def test_new_attempt_records_its_execution_status(self) -> None:
+        client = object.__new__(JoinMarketClientServer)
+        client.name = "jcs-000"
+        client.round_events = []
+
+        event = client.record_round_start("destination", 100_000, 2, 0, current_block=1)
+
+        assert event["status"] == event["execution_status"] == "started"
+        assert client.round_events == [event]
+
     def test_events_are_collected_from_every_client(self) -> None:
         harness = EventHarness(
             EventClient("jcs-000", [{"round_id": 1}]),
@@ -108,6 +119,7 @@ class TestJoinMarketRoundEvents:
         assert event == {
             "round_id": 1,
             "status": "confirmed",
+            "execution_status": "started",
             "destination_address": "destination-address",
             "destination_matches": [{"txid": "coinjoin-txid", "block_height": 1}],
             "match_source": "destination_output",
@@ -168,6 +180,7 @@ class TestJoinMarketRoundEvents:
                 "round_id": 2,
                 "export_round_id": 1,
                 "status": "confirmed",
+                "execution_status": "started",
                 "taker": "jcs-002",
                 "destination_address": "destination-address",
                 "destination_matches": [{"txid": "coinjoin-txid", "block_height": 7}],
@@ -211,6 +224,7 @@ class TestJoinMarketRoundEvents:
                 "round_id": 1,
                 "export_round_id": 1,
                 "status": "started",
+                "execution_status": "started",
                 "destination_address": "unmined-destination",
             }
         ]
@@ -245,7 +259,7 @@ class TestJoinMarketRoundEvents:
         harness = EventHarness(EventClient("jcs-000", [{"round_id": 1, "status": "failed"}]))
 
         assert harness.match_joinmarket_rounds_to_blocks(str(tmp_path)) == [
-            {"round_id": 1, "export_round_id": 1, "status": "failed"}
+            {"round_id": 1, "export_round_id": 1, "status": "failed", "execution_status": "failed"}
         ]
 
 

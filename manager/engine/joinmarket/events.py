@@ -36,7 +36,9 @@ def reconcile_round_event_destinations(
     events = list(events)
     events_by_destination: dict[str, list[RoundEvent]] = {}
     for event in events:
-        destination = RoundEventRecord.from_data(event).destination_address
+        record = RoundEventRecord.from_data(event)
+        record.preserve_execution_status()
+        destination = record.destination_address
         if destination is not None:
             events_by_destination.setdefault(destination, []).append(event)
     for shared in events_by_destination.values():
