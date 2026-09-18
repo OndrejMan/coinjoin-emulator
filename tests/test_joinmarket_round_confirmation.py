@@ -120,5 +120,16 @@ def test_the_latest_started_attempt_of_the_taker_is_failed() -> None:
     assert other["status"] == "started"
 
 
+@pytest.mark.parametrize("execution_status", ["requested", "unknown"])
+def test_a_timed_out_attempt_without_a_start_answer_keeps_its_uncertainty(execution_status: str) -> None:
+    pending = {**started("jcs-000", "bcrt1a"), "execution_status": execution_status}
+
+    mark_latest_started_round_failed([pending], "jcs-000", "timed out", stop_block=9)
+
+    assert pending["status"] == "failed"
+    assert pending["execution_status"] == execution_status
+    assert pending["failure_reason"] == "timed out"
+
+
 def test_failing_a_taker_without_a_pending_attempt_is_a_no_op() -> None:
     assert mark_latest_started_round_failed([], "jcs-000", "timed out", stop_block=1) is None

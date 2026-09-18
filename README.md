@@ -86,8 +86,16 @@ The default protocol is Wasabi. To run the simulation with Joinmarket, use the `
 remain in `destination_matches` for diagnostics, but cannot confirm such a round.
 Both conflict statuses make the producer-label manifest incomplete.
 
-`execution_status` preserves the local `started` or `failed` attempt state;
-`status` remains the chain-reconciliation result.
+`execution_status` preserves what the emulator itself knows about the attempt,
+while `status` remains the chain-reconciliation result. The record is written
+before the start RPC, so a request that jmwalletd executed but never answered
+still has its destination on record:
+
+- `requested`: the start RPC was sent and the run ended before it was answered.
+- `started`: jmwalletd acknowledged the start.
+- `unknown`: the start RPC failed without saying whether jmwalletd executed it
+  (timeout, lost connection); the chain reconciliation decides the outcome.
+- `failed`: an acknowledged attempt timed out locally.
 
 ## Advanced usage
 

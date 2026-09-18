@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import TakerClient
 
 
@@ -12,6 +14,7 @@ class OfflineTaker(TakerClient):
         super().__init__(name="jcs-000", type="taker", offers=[{"amount_sats": 100000, "counterparties": 3, "mixdepth": 0}])
         self.reported_in_process = in_process
         self.started: list[str] = []
+        self.lose_start_answer = False
         self.addresses = iter(f"bcrt1q{index}" for index in range(100))
 
     def update_status(self):  # type: ignore[override]
@@ -26,6 +29,8 @@ class OfflineTaker(TakerClient):
 
     def start_coinjoin(self, mixdepth, amount_sats, counterparties, destination, txfee=None):  # type: ignore[override]
         self.started.append(destination)
+        if self.lose_start_answer:
+            raise TimeoutError("jmwalletd did not answer")
         return {}
 
     async def start_coinjoin_async(self, mixdepth, amount_sats, counterparties, destination, txfee=None):  # type: ignore[override]
@@ -41,7 +46,51 @@ def test_a_free_taker_starts_an_attempt_and_records_it() -> None:
     assert taker.update(current_block=5, current_round=0) == 1
     assert taker.started == ["bcrt1q0"]
     assert [event["status"] for event in taker.round_events] == ["started"]
+    assert [event["execution_status"] for event in taker.round_events] == ["started"]
     assert taker.has_unconfirmed_round()
+
+
+def test_the_attempt_is_on_record_before_jmwalletd_is_asked() -> None:
+    taker = OfflineTaker()
+    seen: list[list[str]] = []
+    original = taker.start_coinjoin
+
+    def observing_start(**offer):
+        seen.append([str(event["execution_status"]) for event in taker.round_events])
+        return original(**offer)
+
+    taker.start_coinjoin = observing_start  # type: ignore[method-assign]
+
+    taker.update(current_block=5, current_round=0)
+
+    assert seen == [["requested"]]
+
+
+@pytest.mark.parametrize("path", ["sync", "async"])
+def test_a_lost_start_answer_keeps_the_attempt_pending_for_the_chain(path: str) -> None:
+    taker = OfflineTaker()
+    taker.lose_start_answer = True
+    update = taker.update if path == "sync" else taker.update_now
+
+    with pytest.raises(TimeoutError):
+        update(current_block=5, current_round=0)
+
+    assert taker.started == ["bcrt1q0"]
+    assert taker.round_events[0]["destination_address"] == "bcrt1q0"
+    assert taker.round_events[0]["status"] == "started"
+    assert taker.round_events[0]["execution_status"] == "unknown"
+    assert taker.coinjoin_start == 5
+
+    # jmwalletd may have run the request: no new attempt starts and the chain
+    # reconciliation confirms or times out this one like any other attempt.
+    taker.lose_start_answer = False
+    assert update(current_block=6, current_round=0) == 0
+    assert taker.started == ["bcrt1q0"]
+    assert update(current_block=14, current_round=0) == -1
+
+    taker.round_events[0]["status"] = "confirmed"
+    assert update(current_block=15, current_round=1) == 1
+    assert taker.started == ["bcrt1q0", "bcrt1q1"]
 
 
 def test_a_taker_waits_while_its_previous_attempt_is_unconfirmed() -> None:

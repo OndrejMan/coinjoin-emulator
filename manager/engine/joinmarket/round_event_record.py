@@ -18,6 +18,11 @@ EVENT_STATUS_MULTIPLE_MATCHES = "multiple_matches"
 EVENT_STATUS_DUPLICATE_DESTINATION = "duplicate_destination"
 MATCH_SOURCE_DESTINATION_OUTPUT = "destination_output"
 
+EXECUTION_STATUS_REQUESTED = "requested"
+EXECUTION_STATUS_STARTED = "started"
+EXECUTION_STATUS_UNKNOWN = "unknown"
+EXECUTION_STATUS_FAILED = "failed"
+
 
 class RoundEventRecord:
     """Working representation of one serialized round-event dictionary."""

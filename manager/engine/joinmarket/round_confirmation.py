@@ -14,6 +14,8 @@ from manager.engine.joinmarket.round_event_record import (
     EVENT_STATUS_CONFIRMED,
     EVENT_STATUS_FAILED,
     EVENT_STATUS_STARTED,
+    EXECUTION_STATUS_FAILED,
+    EXECUTION_STATUS_STARTED,
     RoundEvent,
 )
 
@@ -54,11 +56,12 @@ def mark_latest_started_round_failed(
     reason: str,
     stop_block: int,
 ) -> RoundEvent | None:
-    """Close the taker's most recent pending attempt as failed; return it, if any."""
+    """Mark and return a taker's latest pending attempt as failed."""
     for event in reversed(events):
         if event.get("status") == EVENT_STATUS_STARTED and event.get("taker") == taker:
             event["status"] = EVENT_STATUS_FAILED
-            event["execution_status"] = EVENT_STATUS_FAILED
+            if event.get("execution_status", EXECUTION_STATUS_STARTED) == EXECUTION_STATUS_STARTED:
+                event["execution_status"] = EXECUTION_STATUS_FAILED
             event["failure_reason"] = reason
             event["stop_block"] = stop_block
             return event

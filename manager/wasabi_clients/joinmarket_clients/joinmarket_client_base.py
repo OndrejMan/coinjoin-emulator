@@ -8,6 +8,11 @@ import requests
 import urllib3
 from bip_utils import Bip32Slip10Secp256k1, Bip39SeedGenerator
 
+from manager.engine.joinmarket.round_event_record import (
+    EXECUTION_STATUS_REQUESTED,
+    EXECUTION_STATUS_STARTED,
+    EXECUTION_STATUS_UNKNOWN,
+)
 from manager.exceptions import RpcError
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -781,12 +786,12 @@ class JoinMarketClientServer:
         current_block: int,
         chain_height: int | None = None,
     ) -> dict[str, object]:
-        """Record a producer-owned round event for later reconciliation with the chain."""
+        """Record an attempt before its start RPC so its destination can be reconciled with blocks."""
         event = {
             "round_id": len(self.round_events) + 1,
             "engine": "joinmarket",
             "status": "started",
-            "execution_status": "started",
+            "execution_status": EXECUTION_STATUS_REQUESTED,
             "taker": self.name,
             "destination_address": destination,
             "amount_sats": amount_sats,
@@ -797,6 +802,14 @@ class JoinMarketClientServer:
         }
         self.round_events.append(event)
         return event
+
+    def record_round_start_outcome(self, event: dict[str, object], acknowledged: bool) -> None:
+        """Record whether jmwalletd acknowledged the start; otherwise the chain decides the outcome."""
+        if acknowledged:
+            event["execution_status"] = EXECUTION_STATUS_STARTED
+            return
+        event["execution_status"] = EXECUTION_STATUS_UNKNOWN
+        print(f"- round {event['round_id']} of {self.name} got no answer to its start; the chain decides its outcome")
 
     def start_coinjoin(
         self,

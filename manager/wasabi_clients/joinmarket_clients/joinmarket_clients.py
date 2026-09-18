@@ -116,8 +116,9 @@ class TakerClient(JoinMarketClientServer):
         self.coinjoin_start = current_block
         return event
 
-    def _note_attempt_started(self, current_block: int, current_round: int) -> int:
-        """Report one more running round."""
+    def _note_attempt_started(self, event: RoundEvent, current_block: int, current_round: int) -> int:
+        """Report one more running round after its start was acknowledged."""
+        self.record_round_start_outcome(event, acknowledged=True)
         self.coinjoin_in_process = True
         print(f"Starting coinjoin {self.name}")
         print(f"- coinjoin rounds: {current_round + 1} (block {current_block})".ljust(60))
@@ -168,9 +169,13 @@ class TakerClient(JoinMarketClientServer):
             and not self.has_unconfirmed_round()
         ):
             offer = self._prepare_attempt(current_round)
-            self.start_coinjoin(**offer)
-            self._record_attempt(offer, current_block)
-            delta = self._note_attempt_started(current_block, current_round)
+            event = self._record_attempt(offer, current_block)
+            try:
+                self.start_coinjoin(**offer)
+            except Exception:
+                self.record_round_start_outcome(event, acknowledged=False)
+                raise
+            delta = self._note_attempt_started(event, current_block, current_round)
 
         elif self.coinjoin_in_process and self.coinjoin_timed_out(current_block):
             self.stop_coinjoin()
@@ -198,9 +203,13 @@ class TakerClient(JoinMarketClientServer):
             return 0
         if not self.coinjoin_in_process and not self.has_unconfirmed_round():
             offer = self._prepare_attempt(current_round)
-            await self.start_coinjoin_async(**offer)
-            self._record_attempt(offer, current_block)
-            delta = self._note_attempt_started(current_block, current_round)
+            event = self._record_attempt(offer, current_block)
+            try:
+                await self.start_coinjoin_async(**offer)
+            except Exception:
+                self.record_round_start_outcome(event, acknowledged=False)
+                raise
+            delta = self._note_attempt_started(event, current_block, current_round)
 
         elif self.coinjoin_in_process and self.coinjoin_timed_out(current_block):
             self.stop_coinjoin()
