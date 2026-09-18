@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import manager.commands.genscen
 import manager.commands.genscen_joinmarket
+from manager.btc_datadir_snapshot import snapshot_btc_datadir
 from manager.driver import Driver
 from manager.engine.engine_base import EngineBase
 from manager.engine.joinmarket_engine import JoinmarketEngine
@@ -112,7 +113,7 @@ def run():
     return finalize_controller_marker(exit_code)
 
 
-def download_btc_data(driver, dest_path, download_path):
+def download_btc_data(node, driver, dest_path, download_path):
     """Copy the raw Bitcoin data out before the driver removes the resources."""
     if ":" not in download_path:
         raise ValueError("download path must use '<container-or-pod>:<source-path>' format")
@@ -121,8 +122,8 @@ def download_btc_data(driver, dest_path, download_path):
         raise ValueError("download path must include both container/pod name and source path")
     os.makedirs(dest_path, exist_ok=True)
     print(f"Downloading {download_path} to {dest_path}", flush=True)
-    driver.download(name, src_path, dest_path)
-    print(f"- {download_path} downloaded to {dest_path}", flush=True)
+    height = snapshot_btc_datadir(node, driver, name, src_path, dest_path)
+    print(f"- {download_path} downloaded to {dest_path} at block height {height}", flush=True)
 
 
 def cleanup_step(description, action):
@@ -153,7 +154,7 @@ def cleanup(engine, driver, args):
         else:
             failed |= cleanup_step(
                 "download btc data",
-                lambda: download_btc_data(driver, args.download_btc_data, args.download_path),
+                lambda: download_btc_data(engine.node, driver, args.download_btc_data, args.download_path),
             )
     print("[manager.py] Cleaning up resources...", flush=True)
     failed |= cleanup_step("cleanup driver resources", lambda: driver.cleanup(args.image_prefix))

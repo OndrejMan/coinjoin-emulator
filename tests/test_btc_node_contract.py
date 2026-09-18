@@ -30,6 +30,19 @@ def test_read_only_calls_keep_the_short_polling_deadline() -> None:
     assert post.call_args.kwargs["timeout"] == RPC_TIMEOUT_SECONDS
 
 
+def test_flushing_the_datadir_uses_the_utxo_statistics_call() -> None:
+    """gettxoutsetinfo is the RPC that forces bitcoind to flush its block index and chainstate."""
+    with patch(
+        "manager.btc_node.requests.post",
+        return_value=response({"error": None, "result": {"height": 1200}}),
+    ) as post:
+        node().flush_state_to_disk()
+
+    assert b'"gettxoutsetinfo"' in post.call_args.kwargs["data"].encode()
+    assert b'"none"' in post.call_args.kwargs["data"].encode()
+    assert post.call_args.kwargs["timeout"] == WRITE_RPC_TIMEOUT_SECONDS
+
+
 def test_funding_a_address_waits_far_longer_than_a_poll() -> None:
     """`fund_distributor` issues 200 sequential sends with no retry above them.
 
