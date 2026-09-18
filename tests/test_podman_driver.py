@@ -2,11 +2,13 @@
 
 import tarfile
 from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import podman
 import pytest
 import requests
+from podman.api.client import APIClient
 from podman.domain.containers import Container
 from podman.domain.containers_manager import ContainersManager
 
@@ -65,7 +67,9 @@ def test_artifact_transfer_uses_the_podman_archive_api(driver_and_client, tmp_pa
         tar.addfile(entry, BytesIO(content))
 
     container = Mock()
-    container.get_archive.return_value = ([archive.getvalue()], {})
+    container.id = "btc-id"
+    response = client.api.get.return_value
+    response.iter_content.return_value = iter([archive.getvalue()])
     container.put_archive.return_value = True
     client.containers.get.return_value = container
     source = tmp_path / "scenario.json"
@@ -76,7 +80,10 @@ def test_artifact_transfer_uses_the_podman_archive_api(driver_and_client, tmp_pa
     driver.upload("client", str(source), "/app/scenario.json")
 
     assert (destination / "backend.log").read_text() == "backend log"
-    container.get_archive.assert_called_once_with("/var/log/backend")
+    client.api.get.assert_called_once_with(
+        "/containers/btc-id/archive", params={"path": ["/var/log/backend"]}, stream=True
+    )
+    response.close.assert_called_once_with()
     upload_path, upload_data = container.put_archive.call_args.args
     assert upload_path == "/app"
     assert upload_data
@@ -301,8 +308,57 @@ def test_a_failed_pause_raises_an_emulator_error(driver_and_client) -> None:
 def test_failed_artifact_download_raises_an_emulator_error(driver_and_client) -> None:
     driver, client = driver_and_client
     container = Mock()
-    container.get_archive.side_effect = podman.errors.PodmanError("archive unavailable")
+    client.api.get.return_value.raise_for_status.side_effect = podman.errors.PodmanError("archive unavailable")
     client.containers.get.return_value = container
 
     with pytest.raises(CoinjoinEmulatorError, match="archive unavailable"):
         driver.download("btc-node", "/missing", "/tmp/logs")
+
+    client.api.get.return_value.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("broken", [False, True])
+def test_download_streams_through_the_real_sdk_and_closes_http(tmp_path, broken) -> None:
+    archive = BytesIO()
+    with tarfile.open(fileobj=archive, mode="w") as tar:
+        entry = tarfile.TarInfo("data/block.dat")
+        entry.size = 5
+        tar.addfile(entry, BytesIO(b"block"))
+    closed = []
+
+    class Body(BytesIO):
+        def read(self, size=-1):
+            if broken and self.tell():
+                raise OSError("broken transfer")
+            return super().read(size)
+
+    class Response(requests.Response):
+        def close(self):
+            closed.append(True)
+            super().close()
+
+    class Adapter(requests.adapters.BaseAdapter):
+        def send(self, request, **kwargs):
+            assert kwargs["stream"] is True
+            assert request.path_url.endswith("/containers/btc-id/archive?path=%2Fdata")
+            response = Response()
+            response.status_code = 200
+            response.raw = Body(archive.getvalue())
+            return response
+
+        def close(self):
+            pass
+
+    with APIClient(base_url="http://localhost:12345", version="4.7.0") as api:
+        api.mount("http://", Adapter())
+        instance = object.__new__(PodmanDriver)
+        instance.client = SimpleNamespace(api=api, containers=Mock())
+        instance.client.containers.get.return_value = Container(attrs={"Id": "btc-id"}, client=api)
+        if broken:
+            with pytest.raises(CoinjoinEmulatorError, match="broken transfer"):
+                instance.download("btc-node", "/data", str(tmp_path))
+            assert list(tmp_path.iterdir()) == []
+        else:
+            instance.download("btc-node", "/data", str(tmp_path))
+            assert (tmp_path / "data/block.dat").read_bytes() == b"block"
+    assert closed == [True]

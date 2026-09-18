@@ -15,6 +15,7 @@ dependencies = [
     "PySocks==1.7.1",
     "PyYAML>=6.0",
     "requests==2.31",
+    "typing-extensions",
     "tzdata",
     "urllib3<2",
 ]

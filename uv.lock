@@ -508,6 +508,7 @@ dependencies = [
     { name = "pysocks" },
     { name = "pyyaml" },
     { name = "requests" },
+    { name = "typing-extensions" },
     { name = "tzdata" },
     { name = "urllib3" },
 ]
@@ -534,6 +535,7 @@ requires-dist = [
     { name = "pysocks", specifier = "==1.7.1" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "requests", specifier = "==2.31" },
+    { name = "typing-extensions" },
     { name = "tzdata" },
     { name = "urllib3", specifier = "<2" },
 ]
