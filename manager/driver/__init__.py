@@ -1,9 +1,13 @@
 from abc import ABC, abstractmethod
 from multiprocessing.pool import ThreadPool
 
+from manager.exceptions import CoinjoinEmulatorError
+
 MANAGED_LABEL = "coinjoin-emulator.managed"
 NAMESPACE_LABEL = "coinjoin-emulator.namespace"
 RUN_ID_LABEL = "coinjoin-emulator.run-id"
+PRESERVED_CONTAINER_PREFIX = "coinjoin-stale-"
+STOPPED_CONTAINER_STATES = frozenset({"created", "dead", "exited", "stopped"})
 
 
 def managed_labels(namespace: str, run_id: str | None = None) -> dict[str, str]:
@@ -20,6 +24,29 @@ def managed_labels(namespace: str, run_id: str | None = None) -> dict[str, str]:
 def managed_label_filters(namespace: str, run_id: str | None = None) -> list[str]:
     """Return runtime label filters scoped like :func:`managed_labels`."""
     return [f"{key}={value}" for key, value in managed_labels(namespace, run_id).items()]
+
+
+def preserve_stopped_container(container, inspection: dict, name: str, namespace: str) -> None:
+    """Free a reused name without discarding a previous run's container evidence."""
+    labels = inspection.get("Config", {}).get("Labels")
+    expected = managed_labels(namespace)
+    if not isinstance(labels, dict) or any(labels.get(key) != value for key, value in expected.items()):
+        raise CoinjoinEmulatorError(
+            f"Refusing to replace container {name}: it is not owned by emulator namespace {namespace!r}"
+        )
+    state = inspection.get("State")
+    status = state.get("Status") if isinstance(state, dict) else None
+    if status not in STOPPED_CONTAINER_STATES:
+        raise CoinjoinEmulatorError(
+            f"Refusing to replace container {name}: state is {status or 'unknown'}; "
+            "stop it explicitly before starting another run"
+        )
+    container_id = inspection.get("Id")
+    if not isinstance(container_id, str) or not container_id:
+        raise CoinjoinEmulatorError(f"Refusing to replace container {name}: container ID is unavailable")
+    preserved_name = f"{PRESERVED_CONTAINER_PREFIX}{container_id}"
+    container.rename(preserved_name)
+    print(f"- preserved stopped container {name} as {preserved_name}")
 
 # The Wasabi backend, coordinator and clients bind fixed ports inside the
 # default ephemeral range, where the kernel can hand the same port to an
@@ -101,3 +128,7 @@ class Driver(ABC):
     @abstractmethod
     def cleanup(self, image_prefix=""):
         pass
+
+    def cleanup_all(self, image_prefix=""):
+        """Explicit clean command; drivers may give normal run cleanup a narrower scope."""
+        self.cleanup(image_prefix)

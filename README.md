@@ -119,6 +119,13 @@ tip; a block accepted at that very instant is connected by whoever opens the cop
 
 The default driver is `docker`. Running `docker` requires [Docker](https://www.docker.com/) installed locally and running.
 
+If an earlier run left a stopped emulator container with a name needed by the new run,
+the driver renames it to `coinjoin-stale-<container-id>` before starting the replacement.
+Its logs and filesystem remain available for inspection. A running or foreign container
+is never replaced automatically. Normal run cleanup keeps the preserved container;
+the explicit `clean --namespace <name>` command removes all emulator containers in
+that namespace, including preserved ones.
+
 JoinMarket tumbler scenarios using a round limit must also set `blocks` to a
 positive limit, which bounds the run.
 
@@ -127,6 +134,9 @@ positive limit, which bounds the run.
 *Podman support will be likely **removed** in the future versions.*
 
 To run the simulation using `podman`, specify it as driver using `--driver podman` option.
+
+Podman uses the same stopped-container preservation and explicit `clean` behavior
+as Docker.
 
 The driver requires [Podman](https://podman.io/) being installed and you may also need to override default IP addresses to communicate via localhost using `--control-ip` and `--wasabi-backend-ip` options. 
 

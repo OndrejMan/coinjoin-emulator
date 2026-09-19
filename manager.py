@@ -380,7 +380,7 @@ if __name__ == "__main__":
         case "build":
             engine.prepare_images()
         case "clean":
-            driver.cleanup(args.image_prefix)
+            driver.cleanup_all(args.image_prefix)
         case "run":
             sys.exit(run())
         case _:

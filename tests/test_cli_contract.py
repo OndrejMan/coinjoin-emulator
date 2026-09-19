@@ -100,6 +100,21 @@ def test_docker_receives_the_requested_namespace_and_run_id(monkeypatch) -> None
     driver.assert_called_once_with("experiment-a", "run-42")
 
 
+def test_explicit_docker_clean_includes_preserved_containers(monkeypatch) -> None:
+    from manager.driver import docker
+    from manager.engine import wasabi_engine
+
+    monkeypatch.setattr(sys, "argv", [str(ENTRYPOINT), "--driver", "docker", "clean"])
+    driver = Mock()
+    monkeypatch.setattr(docker, "DockerDriver", Mock(return_value=driver))
+    monkeypatch.setattr(wasabi_engine, "WasabiEngine", Mock())
+
+    runpy.run_path(str(ENTRYPOINT), run_name="__main__")
+
+    driver.cleanup_all.assert_called_once_with("")
+    driver.cleanup.assert_not_called()
+
+
 def test_service_host_does_not_authorize_disabling_port_forward(monkeypatch, capsys):
     from manager.driver import kubernetes
 

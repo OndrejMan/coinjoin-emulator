@@ -3,10 +3,12 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import docker
 import pytest
 
 from manager.driver import managed_label_filters, managed_labels
 from manager.driver.docker import DockerDriver
+from manager.exceptions import CoinjoinEmulatorError
 
 
 def driver() -> DockerDriver:
@@ -14,6 +16,7 @@ def driver() -> DockerDriver:
     instance.client = Mock()
     instance._namespace = "coinjoin"  # pylint: disable=protected-access
     instance._run_id = "run-42"  # pylint: disable=protected-access
+    instance._network_created = False  # pylint: disable=protected-access
     instance.__dict__["network"] = SimpleNamespace(id="net-1")
     return instance
 
@@ -38,6 +41,7 @@ def test_build_forwards_dockerfile_build_arguments() -> None:
 
 def test_containers_are_addressed_by_name_on_the_bridge_network() -> None:
     instance = driver()
+    instance.client.containers.get.side_effect = docker.errors.NotFound("missing")
 
     endpoint = instance.run("jcs-000", "jcs:latest", ports={28183: 28185}, cpu=0.1, memory=64)
 
@@ -45,6 +49,69 @@ def test_containers_are_addressed_by_name_on_the_bridge_network() -> None:
     assert instance.client.containers.run.call_args.kwargs["labels"] == managed_labels(
         "coinjoin", "run-42"
     )
+
+
+def test_a_stopped_container_from_an_older_run_is_preserved() -> None:
+    instance = driver()
+    previous = instance.client.containers.get.return_value
+    previous.attrs = {
+        "Id": "old-container-id",
+        "Config": {"Labels": managed_labels("coinjoin", "old-run")},
+        "State": {"Status": "exited"},
+    }
+
+    instance.run("btc-node", "btc:latest")
+
+    previous.rename.assert_called_once_with("coinjoin-stale-old-container-id")
+    previous.remove.assert_not_called()
+    instance.client.containers.run.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("labels", "status"),
+    [
+        (managed_labels("other", "old-run"), "exited"),
+        (managed_labels("coinjoin", "old-run"), "running"),
+    ],
+)
+def test_run_does_not_take_over_foreign_or_running_containers(labels, status) -> None:
+    instance = driver()
+    previous = instance.client.containers.get.return_value
+    previous.attrs = {
+        "Id": "old-container-id",
+        "Config": {"Labels": labels},
+        "State": {"Status": status},
+    }
+
+    with pytest.raises(CoinjoinEmulatorError, match="Refusing to replace container btc-node"):
+        instance.run("btc-node", "btc:latest")
+
+    previous.rename.assert_not_called()
+    instance.client.containers.run.assert_not_called()
+
+
+def test_an_existing_network_is_reused_and_left_for_the_stale_container() -> None:
+    instance = driver()
+    del instance.__dict__["network"]
+    instance.client.containers.get.side_effect = docker.errors.NotFound("missing")
+    instance.client.containers.list.return_value = []
+
+    instance.run("btc-node", "btc:latest")
+    instance.cleanup()
+
+    instance.client.networks.get.assert_called_once_with("coinjoin")
+    instance.client.networks.create.assert_not_called()
+    instance.client.networks.get.return_value.remove.assert_not_called()
+
+
+def test_direct_runs_get_distinct_cleanup_labels(monkeypatch) -> None:
+    monkeypatch.setattr(docker, "from_env", Mock())
+
+    first = DockerDriver()
+    second = DockerDriver()
+
+    assert first._run_id.startswith("local-")  # pylint: disable=protected-access
+    assert first._run_id != second._run_id  # pylint: disable=protected-access
 
 
 def test_a_failed_download_is_reported_instead_of_ignored() -> None:
@@ -130,6 +197,35 @@ def test_cleanup_stops_only_containers_returned_by_the_ownership_filter() -> Non
     assert selected == ["btc-node", "wasabi-client-000"]
     assert instance.client.containers.list.call_args.kwargs["filters"] == {
         "label": managed_label_filters("coinjoin", "run-42")
+    }
+
+
+def test_normal_cleanup_preserves_an_archived_container_with_the_same_run_id() -> None:
+    instance = driver()
+    instance.client.containers.list.return_value = [
+        SimpleNamespace(name="coinjoin-stale-old-container-id"),
+        SimpleNamespace(name="btc-node"),
+    ]
+    selected = []
+    instance.stop_many = lambda names: selected.extend(names)
+
+    instance.cleanup()
+
+    assert selected == ["btc-node"]
+
+
+def test_explicit_clean_includes_preserved_containers() -> None:
+    instance = driver()
+    instance.client.containers.list.return_value = [SimpleNamespace(name="coinjoin-stale-old-container-id")]
+    instance.client.networks.list.return_value = []
+    selected = []
+    instance.stop_many = lambda names: selected.extend(names)
+
+    instance.cleanup_all()
+
+    assert selected == ["coinjoin-stale-old-container-id"]
+    assert instance.client.containers.list.call_args.kwargs["filters"] == {
+        "label": managed_label_filters("coinjoin")
     }
 
 
