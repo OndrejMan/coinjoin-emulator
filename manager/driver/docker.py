@@ -2,15 +2,18 @@ import os
 import tarfile
 from functools import cached_property
 from io import BytesIO
+from uuid import uuid4
 
 import docker
 
 from . import (
+    PRESERVED_CONTAINER_PREFIX,
     RESERVED_PORT_RANGE,
     RESERVED_PORTS_SYSCTL,
     Driver,
     managed_label_filters,
     managed_labels,
+    preserve_stopped_container,
     warn_if_host_ports_unreserved,
 )
 
@@ -21,12 +24,18 @@ class DockerDriver(Driver):
     def __init__(self, namespace="coinjoin", run_id=None):
         self.client: docker.DockerClient = docker.from_env()
         self._namespace = namespace
-        self._run_id = run_id
+        self._run_id = run_id or f"local-{uuid4().hex}"
+        self._network_created = False
         warn_if_host_ports_unreserved(os.environ.get("DOCKER_HOST"))
 
     @cached_property
     def network(self):
-        return self.client.networks.create(self._namespace, driver="bridge")
+        try:
+            return self.client.networks.get(self._namespace)
+        except docker.errors.NotFound:
+            network = self.client.networks.create(self._namespace, driver="bridge")
+            self._network_created = True
+            return network
 
     def has_image(self, name):
         try:
@@ -53,6 +62,13 @@ class DockerDriver(Driver):
         memory=None,
         **kwargs
     ):
+        try:
+            previous = self.client.containers.get(name)
+        except docker.errors.NotFound:
+            pass
+        else:
+            previous.reload()
+            preserve_stopped_container(previous, previous.attrs, name, self._namespace)
         self.client.containers.run(
             image,
             detach=True,
@@ -170,6 +186,19 @@ class DockerDriver(Driver):
         containers = self.client.containers.list(
             all=True,
             filters={"label": managed_label_filters(self._namespace, self._run_id)},
+        )
+        self.stop_many(
+            container.name for container in containers
+            if not container.name.startswith(PRESERVED_CONTAINER_PREFIX)
+        )
+        if self._network_created:
+            self.network.remove()
+
+    def cleanup_all(self, image_prefix=""):
+        """Remove all containers and networks in the selected emulator namespace."""
+        containers = self.client.containers.list(
+            all=True,
+            filters={"label": managed_label_filters(self._namespace)},
         )
         self.stop_many(map(lambda x: x.name, containers))
         networks = self.client.networks.list(self._namespace)

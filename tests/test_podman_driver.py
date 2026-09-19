@@ -18,7 +18,7 @@ from manager.exceptions import CoinjoinEmulatorError
 @pytest.fixture
 def driver_and_client():
     with patch("manager.driver.podman.podman.PodmanClient") as client_class:
-        yield PodmanDriver(), client_class.return_value
+        yield PodmanDriver(run_id="run-42"), client_class.return_value
 
 
 def test_build_forwards_dockerfile_build_arguments(driver_and_client) -> None:
@@ -44,6 +44,15 @@ def test_image_queries_use_the_podman_client_only(driver_and_client) -> None:
 
     assert driver.has_image("present") is True
     assert driver.has_image("missing") is False
+
+
+def test_direct_runs_get_distinct_cleanup_labels() -> None:
+    with patch("manager.driver.podman.podman.PodmanClient"):
+        first = PodmanDriver()
+        second = PodmanDriver()
+
+    assert first._run_id.startswith("local-")  # pylint: disable=protected-access
+    assert first._run_id != second._run_id  # pylint: disable=protected-access
 
 
 def test_artifact_transfer_uses_the_podman_archive_api(driver_and_client, tmp_path) -> None:
@@ -116,7 +125,7 @@ def test_stop_accepts_running_and_already_stopped_containers(driver_and_client, 
     )
 
 
-def test_cleanup_uses_the_podman_ownership_filter(driver_and_client) -> None:
+def test_explicit_clean_uses_the_podman_namespace_filter(driver_and_client) -> None:
     driver, client = driver_and_client
     api = Mock()
     api.get.return_value.json.return_value = [
@@ -128,7 +137,7 @@ def test_cleanup_uses_the_podman_ownership_filter(driver_and_client) -> None:
     selected = []
     driver.stop_many = lambda names: selected.extend(names)
 
-    driver.cleanup()
+    driver.cleanup_all()
 
     assert selected == ["btc-node", "joinmarket-client", "wasabi-coordinator"]
     assert api.get.call_args.kwargs["params"]["all"] is True
@@ -180,31 +189,36 @@ def test_run_publishes_the_requested_ports_on_its_own_network(driver_and_client,
         ports={str(container_port): 28184},
         environment={"MODE": "walletd"},
         volumes={"/host/data": {"bind": "/container/data", "mode": "rw"}},
-        labels=managed_labels("coinjoin"),
+        labels=managed_labels("coinjoin", "run-42"),
         sysctls={"net.ipv4.ip_local_reserved_ports": "37127-37260"},
     )
 
 
 @pytest.mark.parametrize("exists", [False, True])
-def test_run_removes_an_existing_container_before_reusing_its_name(driver_and_client, exists) -> None:
+def test_run_preserves_an_existing_stopped_container_before_reusing_its_name(driver_and_client, exists) -> None:
     driver, client = driver_and_client
     old_container = Mock()
     if exists:
         client.containers.get.return_value = old_container
-        old_container.inspect.return_value = {"Config": {"Labels": managed_labels("coinjoin")}}
+        old_container.inspect.return_value = {
+            "Id": "old-container-id",
+            "Config": {"Labels": managed_labels("coinjoin", "old-run")},
+            "State": {"Status": "exited"},
+        }
     else:
         client.containers.get.side_effect = podman.errors.NotFound("client")
     client.containers.run.return_value.inspect.return_value = {
         "NetworkSettings": {"Networks": {"coinjoin": {"IPAddress": "10.88.0.7"}}}
     }
 
-    def check_removal(image, **kwargs):
+    def check_preservation(image, **kwargs):
         if exists:
-            old_container.remove.assert_called_once_with(force=True)
+            old_container.rename.assert_called_once_with("coinjoin-stale-old-container-id")
+            old_container.remove.assert_not_called()
         assert not kwargs.get("auto_remove", False)
         return client.containers.run.return_value
 
-    client.containers.run.side_effect = check_removal
+    client.containers.run.side_effect = check_preservation
     driver.run("client", "client:latest")
     client.containers.get.assert_called_once_with("client")
 
@@ -229,6 +243,40 @@ def test_run_refuses_to_replace_a_container_from_another_owner(
 
     existing.remove.assert_not_called()
     client.containers.run.assert_not_called()
+
+
+def test_run_refuses_to_replace_a_running_container_from_another_run(driver_and_client) -> None:
+    driver, client = driver_and_client
+    existing = client.containers.get.return_value
+    existing.inspect.return_value = {
+        "Id": "old-container-id",
+        "Config": {"Labels": managed_labels("coinjoin", "old-run")},
+        "State": {"Status": "running"},
+    }
+
+    with pytest.raises(CoinjoinEmulatorError, match="state is running"):
+        driver.run("client", "client:latest")
+
+    existing.rename.assert_not_called()
+    client.containers.run.assert_not_called()
+
+
+def test_normal_cleanup_uses_the_current_run_id_and_keeps_an_existing_network(driver_and_client) -> None:
+    driver, client = driver_and_client
+    client.containers.list.return_value = [
+        SimpleNamespace(name="coinjoin-stale-old-container-id"),
+        SimpleNamespace(name="btc-node"),
+    ]
+    selected = []
+    driver.stop_many = lambda names: selected.extend(names)
+
+    driver.cleanup()
+
+    assert selected == ["btc-node"]
+    assert client.containers.list.call_args.kwargs["filters"] == {
+        "label": managed_label_filters("coinjoin", "run-42")
+    }
+    client.networks.get.assert_not_called()
 
 
 def test_pause_and_unpause_freeze_the_container(driver_and_client) -> None:
