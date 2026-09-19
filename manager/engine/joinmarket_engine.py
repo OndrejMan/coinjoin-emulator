@@ -668,19 +668,36 @@ class JoinmarketEngine(EngineBase):
             except Exception as e:
                 print(f"- error during async client cleanup: {e}")
 
+    # Takers source their PoDLE commitment from a confirmed utxo (POLICY
+    # taker_utxo_age), so the funding transactions get this many confirmations
+    # before the first tick.
+    WARMUP_BLOCKS = 5
+
+    def start_block_clock(self) -> int:
+        """Mine the warm-up blocks and return the height scenario blocks count from.
+
+        The baseline is taken after the warm-up. Taken before it, the first tick
+        already sat at block 5, every ``delay_blocks`` up to 5 was a no-op, and the
+        two takers of default-joinmarket filled the same maker utxo in the same
+        tick; the losing transaction was abandoned and left that taker and its
+        makers without confirmed coins for the rest of the run.
+        """
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        for _ in range(self.WARMUP_BLOCKS):
+            self.node.mine_block()
+        try:
+            return self.node.get_block_count()
+        except Exception as e:
+            print(f"- could not get initial block count: {e}")
+            return 0
+
     def run_engine(self):
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
 
         # Note: Initial invoice payments now happen before this method is called
-        try:
-            initial_block = self.node.get_block_count()
-        except Exception as e:
-            print(f"- could not get initial block count: {e}")
-            initial_block = 0
-        for i in range(5):
-            # Takers need 3 confirmations of transactions for the sourcing commitments
-            self.node.mine_block()
+        initial_block = self.start_block_clock()
 
         print(f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60))
 
