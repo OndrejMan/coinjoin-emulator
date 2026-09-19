@@ -1,18 +1,26 @@
-import json
-from typing import List
-import requests
-from time import sleep, time
 import asyncio
+import json
+from time import sleep, time
+from typing import List
 
-import urllib3
-from bip_utils import Bip39SeedGenerator, Bip32Slip10Secp256k1
-import backoff
 import httpx
+import requests
+import urllib3
+from bip_utils import Bip32Slip10Secp256k1, Bip39SeedGenerator
+
+from manager.engine.joinmarket.round_event_record import (
+    EXECUTION_STATUS_REQUESTED,
+    EXECUTION_STATUS_STARTED,
+    EXECUTION_STATUS_UNKNOWN,
+)
+from manager.exceptions import RpcError
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 WALLET_NAME = "wallet"
+DEFAULT_WAIT_WALLET_TIMEOUT = 60
+DEFAULT_COINJOIN_TIMEOUT_BLOCKS = 8
 PASSWORD = "password"
 WALLET_TYPE = "sw"
 BTC = 100_000_000
@@ -39,6 +47,7 @@ class JoinMarketClientServer:
         offers=None,
         tumbler_options=None,
         time_between_rounds=0,
+        coinjoin_timeout_blocks=DEFAULT_COINJOIN_TIMEOUT_BLOCKS,
         has_fidelity_bonds=False,
         max_coinjoins=0,
     ):
@@ -54,6 +63,9 @@ class JoinMarketClientServer:
         self.coinjoin_start = 0
         self.next_coinjoin_allowed = delay[0]
         self.time_between_rounds = time_between_rounds
+        if coinjoin_timeout_blocks <= 0:
+            raise ValueError("coinjoin_timeout_blocks must be positive")
+        self.coinjoin_timeout_blocks = coinjoin_timeout_blocks
         self.stop = stop
         self.token = ""
         self.refresh_token = ""
@@ -67,6 +79,8 @@ class JoinMarketClientServer:
 
         # Fidelity bond tracking
         self.fidelity_bonds = {}  # Track created bonds: {address: {amount, locktime, creation_block}}
+        # Producer-owned ground truth: one record per coinjoin this client starts.
+        self.round_events: list[dict[str, object]] = []
 
         # Async HTTP client setup
         self._async_client = None
@@ -97,6 +111,29 @@ class JoinMarketClientServer:
             self._client_initialized = False
 
     @classmethod
+    def offers_for_wallet(cls, joinmarket, role):
+        """Configured offers, or the legacy defaults for a role that declares none."""
+        configured = [dict(offer) for offer in (joinmarket.offers if joinmarket else None) or []]
+        return configured or cls._default_offers(role)
+
+    @staticmethod
+    def _default_offers(role):
+        """Offers a scenario that only declares a role used to get implicitly."""
+        # Defaults removed from JoinmarketEngine in d2ec87aba092e8acc775768c7d0b9bad84357492.
+        if role == "maker":
+            return [{
+                "txfee": 0,
+                "cjfee_a": 5000,
+                "cjfee_r": 0.00004,
+                "ordertype": "sw0reloffer",
+                "minsize": 30000,
+                "maxsize": 3000000,
+            }]
+        if role == "taker":
+            return [{"mixdepth": 0, "amount_sats": 40000, "counterparties": 4}]
+        return []
+
+    @classmethod
     def from_wallet(cls, name: str, port: int, wallet, host: str, proxy=""):
         joinmarket = getattr(wallet, "joinmarket", None)
         type_ = joinmarket.role.value if joinmarket and joinmarket.role else "maker"
@@ -107,6 +144,7 @@ class JoinMarketClientServer:
         has_fidelity_bonds = bool(fidelity_bond.get("enabled", False))
 
         # Select the appropriate subclass based on wallet config.
+        client_cls: type["JoinMarketClientServer"]
         if type_ == "maker":
             from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import MakerClient
             client_cls = MakerClient
@@ -128,11 +166,16 @@ class JoinMarketClientServer:
             type=type_,
             delay=(wallet.delay_blocks or 0, wallet.delay_rounds or 0),
             stop=(wallet.stop_blocks or 0, wallet.stop_rounds or 0),
-            offers=(joinmarket.offers if joinmarket else None) or [],
+            offers=cls.offers_for_wallet(joinmarket, type_),
             tumbler_options=tumbler_options,
             time_between_rounds=(joinmarket.time_between_rounds if joinmarket else 0) or 0,
+            coinjoin_timeout_blocks=(
+                joinmarket.coinjoin_timeout_blocks
+                if joinmarket and joinmarket.coinjoin_timeout_blocks is not None
+                else DEFAULT_COINJOIN_TIMEOUT_BLOCKS
+            ),
             has_fidelity_bonds=has_fidelity_bonds,
-            max_coinjoins=wallet.get("max_coinjoins", 0),
+            max_coinjoins=(joinmarket.max_coinjoins if joinmarket else None) or 0,
             host=host,
             proxy=proxy
         )
@@ -146,6 +189,10 @@ class JoinMarketClientServer:
 
         print(f"- started {client.name} (wait took {time() - start} seconds)")
         return client
+
+    def coinjoin_timed_out(self, current_block: int) -> bool:
+        """Whether the active CoinJoin attempt exceeded its configured block limit."""
+        return self.coinjoin_start + self.coinjoin_timeout_blocks < current_block
 
     def update_status(self) -> dict:
         self.update_coin_history()
@@ -196,10 +243,7 @@ class JoinMarketClientServer:
                 if attempt == repeat - 1:
                     raise
                 sleep(1)
-        if response is not None:
-            return response.json()
-
-        raise Exception("timeout")
+        raise RpcError(f"{method} {endpoint} stayed unauthorized after {repeat} attempts")
 
     async def _rpc_async(self, method, endpoint, json_data=None, timeout=60, repeat=4) -> dict:
         """Async version of _rpc using httpx.AsyncClient."""
@@ -235,7 +279,7 @@ class JoinMarketClientServer:
                     try:
                         error_data = response.json()
                         error_message = error_data.get("message", "Unknown error")
-                    except:
+                    except Exception:
                         error_message = response.text
                     print(f"[RPC-ASYNC] Error {response.status_code}: {error_message}")
                     response.raise_for_status()
@@ -252,7 +296,7 @@ class JoinMarketClientServer:
                     raise
                 await asyncio.sleep(1)
 
-        raise Exception("timeout")
+        raise RpcError(f"{method} {endpoint} stayed unauthorized after {repeat} attempts")
 
     def is_paused(self, current_block):
         # Check delay - "delay[0]" means "don't run until current_block >= delay[0]"
@@ -339,10 +383,12 @@ class JoinMarketClientServer:
             try:
                 response = await self._rpc_async(method, endpoint, json_data=json_data)
                 return response
-            except Exception as e:
+            except Exception:
                 if time() - start >= 60:
                     print("Failed to run schedule, attempt timed out.")
                 await asyncio.sleep(1)  # Add a small delay between retries
+
+        raise TimeoutError(f"Could not run the tumbler schedule for {self.walletname}")
 
     async def get_schedule_async(self):
         """Async version of get_schedule"""
@@ -388,62 +434,74 @@ class JoinMarketClientServer:
             self.refresh_token = response.get("refresh_token", "")
             return response
 
-    @backoff.on_exception(
-        backoff.expo,
-        Exception,
-        max_time=60,
-        max_tries=None,
-        jitter=None,
-    )
-    def _wait_wallet_create(self, timeout=None):
-        elapsed = int(time() - self._wait_wallet_start)
-        wallet_type = "sw-fb" if self.has_fidelity_bonds else WALLET_TYPE
-        print(f"- trying wallet creation for {self.walletname} on {self.host}:{self.port} (elapsed {elapsed}s, type: {wallet_type})")
-        self._create_wallet(wallettype=wallet_type)
+    def _retry_until_deadline(self, step, deadline):
+        """Retry step with exponential backoff until the deadline passes."""
+        delay = 1.0
+        while True:
+            try:
+                step()
+                return
+            except Exception:
+                remaining = deadline - time()
+                if remaining <= 0:
+                    raise
+                sleep(min(delay, remaining))
+                delay = min(delay * 2, 8.0)
 
-    @backoff.on_exception(
-        backoff.expo,
-        Exception,
-        max_time=60,
-        max_tries=None,
-        jitter=None,
-    )
-    def _wait_wallet_display(self, timeout=None):
-        elapsed = int(time() - self._wait_wallet_start)
-        print(f"- checking wallet display for {self.walletname} on {self.host}:{self.port} (elapsed {elapsed}s)")
-        self.get_balance()
-        print(f"- wallet {self.walletname} ready on {self.host}:{self.port}")
-        return True
+    def _wait_wallet_create(self, deadline):
+        def create():
+            elapsed = int(time() - self._wait_wallet_start)
+            wallet_type = "sw-fb" if self.has_fidelity_bonds else WALLET_TYPE
+            print(f"- trying wallet creation for {self.walletname} on {self.host}:{self.port} (elapsed {elapsed}s, type: {wallet_type})")
+            self._create_wallet(wallettype=wallet_type)
+
+        self._retry_until_deadline(create, deadline)
+
+    def _wait_wallet_display(self, deadline):
+        def display():
+            elapsed = int(time() - self._wait_wallet_start)
+            print(f"- checking wallet display for {self.walletname} on {self.host}:{self.port} (elapsed {elapsed}s)")
+            self.get_balance()
+            print(f"- wallet {self.walletname} ready on {self.host}:{self.port}")
+
+        self._retry_until_deadline(display, deadline)
 
     def wait_wallet(self, timeout=None):
         """
         Wait for the wallet to become available, using separate exponential backoff for creation and display.
+
+        The timeout is the budget for each of the two phases; it used to be
+        ignored in favour of a fixed 60 seconds.
         """
-        from time import time
         self._wait_wallet_start = time()
+        budget = DEFAULT_WAIT_WALLET_TIMEOUT if timeout is None else timeout
         try:
             try:
-                self._wait_wallet_create(timeout=timeout)
+                self._wait_wallet_create(time() + budget)
             except Exception as e:
                 print(f"- wallet {self.walletname} creation failed: {e}")
                 raise
-            self._wait_wallet_display(timeout=timeout)
+            self._wait_wallet_display(time() + budget)
             return True
         except Exception:
             print(f"[TIMEOUT] Wallet {self.walletname} not ready after {int(time() - self._wait_wallet_start)}s on {self.host}:{self.port}")
             return False
 
-    def display_wallet(self):
+    def display_wallet(self, display_all=False):
         """Get detailed breakdown of wallet contents by account."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/display"
+        if display_all:
+            endpoint += "?displayall=true"
         response = self._rpc(method, endpoint)
         return response
 
-    async def display_wallet_async(self):
+    async def display_wallet_async(self, display_all=False):
         """Async get detailed breakdown of wallet contents by account."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/display"
+        if display_all:
+            endpoint += "?displayall=true"
         response = await self._rpc_async(method, endpoint)
         return response
 
@@ -719,6 +777,40 @@ class JoinMarketClientServer:
         response = await self._rpc_async(method, endpoint)
         return response
 
+    def record_round_start(
+        self,
+        destination: str,
+        amount_sats: int | None,
+        counterparties: int | None,
+        mixdepth: int | None,
+        current_block: int,
+        chain_height: int | None = None,
+    ) -> dict[str, object]:
+        """Record an attempt before its start RPC so its destination can be reconciled with blocks."""
+        event = {
+            "round_id": len(self.round_events) + 1,
+            "engine": "joinmarket",
+            "status": "started",
+            "execution_status": EXECUTION_STATUS_REQUESTED,
+            "taker": self.name,
+            "destination_address": destination,
+            "amount_sats": amount_sats,
+            "counterparties": counterparties,
+            "mixdepth": mixdepth,
+            "start_block": current_block,
+            "start_chain_height": chain_height,
+        }
+        self.round_events.append(event)
+        return event
+
+    def record_round_start_outcome(self, event: dict[str, object], acknowledged: bool) -> None:
+        """Record whether jmwalletd acknowledged the start; otherwise the chain decides the outcome."""
+        if acknowledged:
+            event["execution_status"] = EXECUTION_STATUS_STARTED
+            return
+        event["execution_status"] = EXECUTION_STATUS_UNKNOWN
+        print(f"- round {event['round_id']} of {self.name} got no answer to its start; the chain decides its outcome")
+
     def start_coinjoin(
         self,
         mixdepth,
@@ -800,10 +892,12 @@ class JoinMarketClientServer:
             try:
                 response = self._rpc(method, endpoint, json_data=json_data)
                 return response
-            except Exception as e:
+            except Exception:
                 if time() - start >= 60:
                     print("Failed to run schedule, attempt timed out.")
                 sleep(1)  # Add a small delay between retries
+
+        raise TimeoutError(f"Could not run the tumbler schedule for {self.walletname}")
 
     def get_schedule(self):
         """Get the schedule that is currently running."""
@@ -876,7 +970,7 @@ class JoinMarketClientServer:
     def list_transactions_maker(self):
         """List all transactions in the wallet."""
         method = "GET"
-        endpoint = f"/wallet/yieldgen/report"
+        endpoint = "/wallet/yieldgen/report"
         response = self._rpc(method, endpoint)
         return response
 
@@ -897,34 +991,34 @@ class JoinMarketClientServer:
             list(self.coin_history.values()))
 
     def list_keys(self):
-        """List all keys in the wallet."""
+        """List all addresses reported by JoinMarket's complete wallet display."""
         seed_bytes = Bip39SeedGenerator(self.seedphrase).Generate()
-        coins = self.list_coins()
+        walletinfo = self.display_wallet(display_all=True).get("walletinfo") or {}
         keys = []
-        for coin in coins:
-            key_path = coin.get("keyPath", "")
-
-            # Skip fidelity bond coins that have colons in their paths (e.g., "79:1785542400")
-            # These are not valid BIP32 paths and are handled differently in JoinMarket
-            if ":" in key_path:
-                print(f"Skipping fidelity bond coin with path: {key_path}")
-                continue
-
-            # Skip empty paths
-            if not key_path:
-                continue
-
-            key = {"full_key_path": key_path}
-            try:
-                bip32_ctx = Bip32Slip10Secp256k1.FromSeedAndPath(seed_bytes, str(key_path))
-                key["pubKey"] = bip32_ctx.PublicKey().RawUncompressed().ToHex()
-                key["internal"] = str(key_path).split("/")[-2] == "1"
-                key["address"] = coin.get("address", "")
-                keys.append(key)
-            except Exception as e:
-                print(f"Error processing key path '{key_path}': {e}")
-                continue
-
+        for account in walletinfo.get("accounts") or []:
+            for branch in account.get("branches") or []:
+                for entry in branch.get("entries") or []:
+                    if not entry.get("address"):
+                        continue
+                    key_path = str(entry.get("hd_path") or "")
+                    key = {
+                        "full_key_path": key_path,
+                        "pubKey": None,
+                        "internal": None,
+                        "address": str(entry["address"]),
+                        "path": key_path,
+                        "account": str(account.get("account", "")),
+                        "status": str(entry.get("status", "")),
+                        "amount": str(entry.get("amount", "")),
+                    }
+                    if key_path and ":" not in key_path:
+                        try:
+                            bip32_ctx = Bip32Slip10Secp256k1.FromSeedAndPath(seed_bytes, key_path)
+                            key["pubKey"] = bip32_ctx.PublicKey().RawUncompressed().ToHex()
+                            key["internal"] = key_path.split("/")[-2] == "1"
+                        except Exception as error:
+                            print(f"Error processing key path '{key_path}': {error}")
+                    keys.append(key)
         return keys
 
     def get_offer(self, round=0):

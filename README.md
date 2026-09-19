@@ -4,10 +4,10 @@ A container-based setup for the emulation of CoinJoin transactions on RegTest ne
 
 ## Usage
 
-1. Install [Docker](https://docker.com/) and [Python](http://python.org/).
+1. Install [Docker](https://docker.com/), [Python](http://python.org/), and [uv](https://docs.astral.sh/uv/).
 2. Clone the repository `git clone --recurse-submodules https://github.com/crocs-muni/coinjoin-emulator`.
-3. Install dependencies: `pip install -r requirements.txt`.
-4. Run the default scenario with the default driver: `python manager.py run`.
+3. Install dependencies: `uv sync`.
+4. Run the default scenario with the default driver: `uv run python manager.py run`.
    - [Scenario](#scenarios) definition file can be specified using the `--scenario` option.
 
 For more complex setups see section [Advanced usage](#advanced-usage).
@@ -36,8 +36,8 @@ Scenario definition files can be passed to the simulation script using the `--sc
         {"funds": [1000000, 50000], "delay_rounds": 3},
         {"funds": [100000, {"value": 200000, "delay_rounds": 5}]},
         {"funds": [200000], "version": "2.0.3"},
-        {"funds": [4000000], "anon_score_target": "25"},
-        {"funds": [3500000], "redcoin_isolation": true},
+        {"funds": [4000000], "wasabi": {"anon_score_target": "25"}},
+        {"funds": [3500000], "wasabi": {"redcoin_isolation": true}},
         ...
     ],
 }
@@ -62,17 +62,55 @@ The fields are as follows:
   - `stop_blocks` is the number of blocks after which the wallet will stop participating.
   - `stop_rounds` is the number of rounds after which the wallet will stop participating.
   - `version` is the string representation of wallet wasabi version used for client running this wallet.
-  - `anon_score_target` is the target anon score of the wallet.
-  - `redcoin_isolation` is a boolean value indicating whether the wallet should use redcoin isolation.
+  - `wasabi` is an optional object with Wasabi-specific wallet settings:
+    - `anon_score_target` is the target anon score of the wallet.
+    - `redcoin_isolation` is a boolean value indicating whether the wallet should use redcoin isolation.
+    - `skip_rounds` is a list of round numbers the wallet skips.
 
 ## Engine
 You can run the simulation with different CoinJoin protocols. Currently, Wasabi and Joinmarket are supported. 
 The default protocol is Wasabi. To run the simulation with Joinmarket, use the `--engine joinmarket` option.  
 
 
+### JoinMarket round-event statuses
+
+`data/joinmarket_round_events.json` records each round's `status`:
+
+- `started`: the attempt is waiting for a mined destination match.
+- `failed`: the attempt failed.
+- `confirmed`: the destination belongs to one round and matches one mined transaction.
+- `multiple_matches`: the destination matches several transactions.
+- `duplicate_destination`: several rounds share the same destination address.
+
+`duplicate_destination` takes precedence over the match count. Matching transactions
+remain in `destination_matches` for diagnostics, but cannot confirm such a round.
+Both conflict statuses make the producer-label manifest incomplete.
+
+`execution_status` preserves what the emulator itself knows about the attempt,
+while `status` remains the chain-reconciliation result. The record is written
+before the start RPC, so a request that jmwalletd executed but never answered
+still has its destination on record:
+
+- `requested`: the start RPC was sent and the run ended before it was answered.
+- `started`: jmwalletd acknowledged the start.
+- `unknown`: the start RPC failed without saying whether jmwalletd executed it
+  (timeout, lost connection); the chain reconciliation decides the outcome.
+- `failed`: an acknowledged attempt timed out locally.
+
 ## Advanced usage
 
 The simulation script enables advanced configuration for running on different container platforms with various networking setups. This section describes the advanced configuration and shows common examples.
+
+### Raw Bitcoin node data
+
+`run --download-btc-data <dir>` copies the node's datadir (`--download-path`,
+default `btc-node:/home/bitcoin/data/`) out of the container after the logs are
+stored and before the resources are removed. The copy is a consistent snapshot:
+the node is asked to flush its block index and chainstate first, every process
+in its container is frozen while the archive is read, and the copy is repeated
+when a block arrived in between. The archive is streamed to disk, so the datadir
+may be larger than the available memory. The recorded height is the connected
+tip; a block accepted at that very instant is connected by whoever opens the copy.
 
 ### Backend driver
 
@@ -80,6 +118,9 @@ The simulation script enables advanced configuration for running on different co
 #### Docker
 
 The default driver is `docker`. Running `docker` requires [Docker](https://www.docker.com/) installed locally and running.
+
+JoinMarket tumbler scenarios using a round limit must also set `blocks` to a
+positive limit, which bounds the run.
 
 #### Podman
 
@@ -93,6 +134,12 @@ The driver requires [Podman](https://podman.io/) being installed and you may als
 #### Kubernetes
 
 To run the simulation on a [Kubernetes](https://kubernetes.io/) cluster, use the `kubernetes` driver. The driver requires a running Kubernetes cluster and `kubectl` configured to access the cluster. 
+
+When the manager itself runs inside the cluster, explicitly pass `--in-cluster`
+before `run` (for example, `python manager.py --driver kubernetes --in-cluster run ...`).
+This selects service-account credentials and Service DNS endpoints. The manager
+does not enable this mode from `KUBERNETES_SERVICE_HOST`. A manager running outside
+the cluster with a kubeconfig should omit the flag.
 
 The `kubernetes` driver relies on used images being accessible publicly from [DockerHub](https://hub.docker.com/). For that, build the images in `containers` directory manually and upload them to the registry. Afterwards, specify the image prefix using `--image-prefix` option when starting the simulation.
 

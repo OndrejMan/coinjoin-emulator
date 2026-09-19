@@ -1,12 +1,13 @@
 import argparse
 import json
 import os
-import sys
-import numpy.random
-import copy
 import random
+import sys
+
+import numpy.random
 
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
+
 
 def create_backend_config(args):
     """Create backend configuration dictionary."""

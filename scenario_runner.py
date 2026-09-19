@@ -4,14 +4,16 @@ JoinMarket Scenario Runner
 Runs all scenarios in a given folder with proper cleanup and error handling
 """
 
+import argparse
+import json
 import os
+import signal
 import subprocess
 import time
-import json
-import argparse
-import signal
 from datetime import datetime
-from typing import List, Tuple, Optional
+from typing import List, Optional, Tuple
+
+from manager.process_output import stream_process_output
 
 
 class ScenarioRunner:
@@ -22,7 +24,9 @@ class ScenarioRunner:
                  proxy: str = "socks5://127.0.0.1:8123",
                  shadowsocks_config: str = "/home/drajnoha/Code/PycharmProjects/coinjoin-simulator/shadowsocks/config_local.yaml",
                  cleanup_wait: int = 150,
-                 in_cluster: bool = False):
+                 in_cluster: bool = False,
+                 engine: str = "joinmarket",
+                 distributor_startup_timeout: int | None = None):
 
         self.scenario_dir = scenario_dir
         self.namespace = namespace
@@ -30,6 +34,8 @@ class ScenarioRunner:
         self.proxy = proxy
         self.shadowsocks_config = shadowsocks_config
         self.cleanup_wait = cleanup_wait
+        self.engine = engine
+        self.distributor_startup_timeout = distributor_startup_timeout
         self.sslocal_process = None
         self.results = []
         self.in_cluster = in_cluster
@@ -96,7 +102,7 @@ class ScenarioRunner:
         cmd = [
             "python", "manager.py",
             "--driver", "kubernetes",
-            "--engine", "joinmarket",
+            "--engine", self.engine,
             "clean",
             "--reuse-namespace",
             "--namespace", self.namespace,
@@ -136,7 +142,7 @@ class ScenarioRunner:
         cmd = [
             "python", "manager.py",
             "--driver", "kubernetes",
-            "--engine", "joinmarket",
+            "--engine", self.engine,
             "run",
             "--namespace", self.namespace,
             "--reuse-namespace",
@@ -150,6 +156,9 @@ class ScenarioRunner:
         if not self.in_cluster and self.proxy:
             cmd.extend(["--proxy", self.proxy])
 
+        if self.distributor_startup_timeout is not None:
+            cmd.extend(["--distributor-startup-timeout", str(self.distributor_startup_timeout)])
+
         start_time = time.time()
 
         try:
@@ -157,10 +166,8 @@ class ScenarioRunner:
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             self.current_process = process  # Track the current process
 
-            # Stream output in real-time
-            for line in iter(process.stdout.readline, ''):
-                if line:
-                    print(f"  {line.rstrip()}")
+            # Drain both pipes concurrently so neither can block the manager.
+            stream_process_output(process)
 
             # Wait for completion
             return_code = process.wait()
@@ -171,9 +178,7 @@ class ScenarioRunner:
                 print(f"[{self.get_timestamp()}] SUCCESS: Scenario completed in {duration:.1f} seconds")
                 return True, duration
             else:
-                stderr = process.stderr.read()
                 print(f"[{self.get_timestamp()}] ERROR: Scenario failed after {duration:.1f} seconds")
-                print(f"STDERR: {stderr}")
                 return False, duration
 
         except Exception as e:
@@ -198,6 +203,7 @@ class ScenarioRunner:
 
     def save_results(self):
         """Save run results to file"""
+        os.makedirs("logs", exist_ok=True)
         results_file = os.path.join('logs', f"run_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
 
         with open(results_file, 'w') as f:
@@ -321,14 +327,23 @@ def main():
     parser = argparse.ArgumentParser(description="Run JoinMarket scenarios")
     parser.add_argument("--scenario_dir", help="Directory containing scenario JSON files")
     parser.add_argument("--namespace", default="rajnoha-ns", help="Kubernetes namespace")
-    parser.add_argument("--in-cluster", action="store_true", default="False", help="When scenario runner is running in cluster")
+    parser.add_argument("--in-cluster", action="store_true", default=False, help="When scenario runner is running in cluster")
     parser.add_argument("--image-prefix", default="drajnoha/", help="Docker image prefix")
+    parser.add_argument(
+        "--engine", choices=["joinmarket", "wasabi"], default="joinmarket",
+        help="Simulation engine passed on to manager.py",
+    )
     parser.add_argument("--proxy", default="socks5://127.0.0.1:8123", help="Proxy URL")
     parser.add_argument("--shadowsocks-config",
                         default="/home/drajnoha/Code/PycharmProjects/coinjoin-simulator/shadowsocks/config_local.yaml",
                         help="Shadowsocks config file")
     parser.add_argument("--cleanup-wait", type=int, default=90,
                         help="Seconds to wait after cleanup")
+    parser.add_argument(
+        "--distributor-startup-timeout",
+        type=int,
+        help="Seconds passed to manager.py while waiting for the distributor wallet",
+    )
     parser.add_argument("--start-from", help="Start from scenario containing this string")
 
     args = parser.parse_args()
@@ -340,7 +355,9 @@ def main():
         proxy=args.proxy,
         shadowsocks_config=args.shadowsocks_config,
         cleanup_wait=args.cleanup_wait,
-        in_cluster=args.in_cluster
+        in_cluster=args.in_cluster,
+        engine=args.engine,
+        distributor_startup_timeout=args.distributor_startup_timeout,
     )
 
     runner.run_all(start_from=args.start_from)

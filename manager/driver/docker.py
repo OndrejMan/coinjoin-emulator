@@ -1,17 +1,20 @@
-from functools import cached_property
-from io import BytesIO
 import os
 import tarfile
+from functools import cached_property
+from io import BytesIO
 
-from docker.models.containers import Container
-from . import Driver
 import docker
+
+from . import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver, managed_label_filters, managed_labels
+
+BYTES_IN_MEGABYTE = 1024 * 1024
 
 
 class DockerDriver(Driver):
-    def __init__(self, namespace="coinjoin"):
+    def __init__(self, namespace="coinjoin", run_id=None):
         self.client: docker.DockerClient = docker.from_env()
         self._namespace = namespace
+        self._run_id = run_id
 
     @cached_property
     def network(self):
@@ -24,8 +27,10 @@ class DockerDriver(Driver):
         except docker.errors.ImageNotFound:
             return False
 
-    def build(self, name, path):
-        self.client.images.build(path=path, tag=name, rm=True, nocache=True)
+    def build(self, name, path, build_args=None):
+        self.client.images.build(
+            path=path, tag=name, rm=True, nocache=True, buildargs=build_args or None
+        )
 
     def pull(self, name):
         self.client.images.pull(name)
@@ -40,41 +45,52 @@ class DockerDriver(Driver):
         memory=None,
         **kwargs
     ):
-        container = self.client.containers.run(
+        self.client.containers.run(
             image,
             detach=True,
-            auto_remove=True,
+            auto_remove=False,
             name=name,
             hostname=name,
             network=self.network.id,
             ports=ports or {},
             environment=env or {},
+            volumes=kwargs.get("volumes"),
+            command=kwargs.get("command"),
+            labels=managed_labels(self._namespace, self._run_id),
+            sysctls={RESERVED_PORTS_SYSCTL: RESERVED_PORT_RANGE},
         )
-        container_ip = container.attrs['NetworkSettings']['IPAddress']
-        
-        # Normalize port mapping to match Kubernetes format
-        # Docker format: {'8080/tcp': [{'HostIp': '', 'HostPort': '8080'}]}
-        # Kubernetes format: {8080: 8080}
-        raw_port_mapping = container.attrs['NetworkSettings']['Ports']
-        port_mapping = {}
-        
-        if ports:
-            for internal_port in ports.keys():
-                # For Docker networking, internal container port maps to itself
-                port_mapping[internal_port] = internal_port
-        
-        return container_ip, port_mapping, None
+        return name, dict(ports or {}), None
+
+    def container_state(self, name):
+        try:
+            return self.client.containers.get(name).status
+        except docker.errors.NotFound:
+            return "gone"
+        except docker.errors.APIError:
+            return None
 
     def stop(self, name):
         try:
-            self.client.containers.get(name).stop()
+            container = self.client.containers.get(name)
+            container.stop()
+            container.remove(force=True, v=True)
             print(f"- stopped {name}")
         except docker.errors.NotFound:
             pass
 
     def download(self, name, src_path, dst_path):
+        container = None
+        paused = False
         try:
-            stream, _ = self.client.containers.get(name).get_archive(src_path)
+            container = self.client.containers.get(name)
+            container.reload()
+            if container.status == "running":
+                # Docker builds the archive while reading the live filesystem;
+                # a growing log otherwise invalidates the tar stream with
+                # "archive/tar: write too long".
+                container.pause()
+                paused = True
+            stream, _ = container.get_archive(src_path)
 
             fo = BytesIO()
             for d in stream:
@@ -82,8 +98,23 @@ class DockerDriver(Driver):
             fo.seek(0)
             with tarfile.open(fileobj=fo) as tar:
                 tar.extractall(dst_path)
-        except:
-            pass
+        except (docker.errors.APIError, docker.errors.NotFound, tarfile.TarError, OSError) as error:
+            raise RuntimeError(f"Failed to download {name}:{src_path} to {dst_path}: {error}") from error
+        finally:
+            if paused and container is not None:
+                container.unpause()
+
+    def pause(self, name):
+        try:
+            self.client.containers.get(name).pause()
+        except (docker.errors.APIError, docker.errors.NotFound) as error:
+            raise RuntimeError(f"Failed to pause {name}: {error}") from error
+
+    def unpause(self, name):
+        try:
+            self.client.containers.get(name).unpause()
+        except (docker.errors.APIError, docker.errors.NotFound) as error:
+            raise RuntimeError(f"Failed to unpause {name}: {error}") from error
 
     def peek(self, name, path):
         stream, _ = self.client.containers.get(name).get_archive(path)
@@ -95,6 +126,31 @@ class DockerDriver(Driver):
         with tarfile.open(fileobj=fo) as tar:
             return tar.extractfile(os.path.basename(path)).read().decode()
 
+    def get_pod_resource_usage(self, name):
+        """Memory usage of a container, mirroring the Kubernetes driver's shape."""
+        try:
+            container = self.client.containers.get(name)
+            stats = container.stats(stream=False)
+        except (docker.errors.NotFound, docker.errors.APIError, OSError):
+            return None
+
+        memory = stats.get("memory_stats") or {}
+        usage = memory.get("usage")
+        limit = memory.get("limit")
+        if not usage or not limit:
+            return None
+
+        memory_mb = usage / BYTES_IN_MEGABYTE
+        memory_limit_mb = limit / BYTES_IN_MEGABYTE
+        return {
+            "memory_mb": memory_mb,
+            "memory_limit_mb": memory_limit_mb,
+            "memory_percent": (memory_mb / memory_limit_mb) * 100 if memory_limit_mb else 0.0,
+        }
+
+    def logs(self, name):
+        return self.client.containers.get(name).logs(stdout=True, stderr=True).decode(errors="replace")
+
     def upload(self, name, src_path, dst_path):
         fo = BytesIO()
         with tarfile.open(fileobj=fo, mode="w") as tar:
@@ -103,22 +159,10 @@ class DockerDriver(Driver):
         self.client.containers.get(name).put_archive(os.path.dirname(dst_path), fo)
 
     def cleanup(self, image_prefix=""):
-        containers = []
-        for container in self.client.containers.list():
-            if any(
-                x in container.attrs["Config"]["Image"]
-                for x in (
-                    "irc-server",
-                    "btc-node",
-                    "wasabi-backend",
-                    "wasabi-client",
-                    "wasabi-client-distributor",
-                    "wasabi-coordinator",
-                    "joinmarket-client-server",
-                )
-            ):
-                containers.append(container)
-
+        containers = self.client.containers.list(
+            all=True,
+            filters={"label": managed_label_filters(self._namespace, self._run_id)},
+        )
         self.stop_many(map(lambda x: x.name, containers))
         networks = self.client.networks.list(self._namespace)
         if networks:

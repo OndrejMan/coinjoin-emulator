@@ -1,9 +1,14 @@
 import json
 import random
+from time import monotonic, sleep, time
+
 import requests
-from time import sleep, time
+
+from manager.exceptions import RpcError
 
 WALLET_NAME = "wallet"
+
+RETRY_BACKOFF_SECONDS = 1
 
 
 class WasabiClientBase:
@@ -16,6 +21,7 @@ class WasabiClientBase:
         version="2.0.4",
         delay=(0, 0),
         stop=(0, 0),
+        skip_rounds=(),
     ):
         self.host = host
         self.port = port
@@ -24,6 +30,7 @@ class WasabiClientBase:
         self.version = version
         self.delay = delay
         self.stop = stop
+        self.skip_rounds = frozenset(skip_rounds)
 
     def _rpc(self, request, wallet=True, timeout=5, repeat=1, wallet_name=None):
         request["jsonrpc"] = "2.0"
@@ -32,7 +39,8 @@ class WasabiClientBase:
         if self.version < "2.0.4":
             wallet = False
 
-        for _ in range(repeat):
+        last_error = None
+        for attempt in range(repeat):
             try:
                 response = requests.post(
                     f"http://{self.host}:{self.port}/{(wallet_name or WALLET_NAME) if wallet else ''}",
@@ -40,14 +48,19 @@ class WasabiClientBase:
                     proxies=dict(http=self.proxy),
                     timeout=timeout,
                 )
-            except requests.exceptions.Timeout:
+            except requests.exceptions.Timeout as error:
+                last_error = error
+                if attempt + 1 < repeat:
+                    sleep(RETRY_BACKOFF_SECONDS)
                 continue
             if "error" in response.json():
-                raise Exception(response.json()["error"])
+                raise RpcError(response.json()["error"])
             if "result" in response.json():
                 return response.json()["result"]
             return None
-        return "timeout"
+        if last_error is not None:
+            raise last_error
+        raise RpcError(f"no answer from {self.host}:{self.port} after {repeat} attempts")
 
     def get_status(self):
         request = {
@@ -67,7 +80,7 @@ class WasabiClientBase:
             "method": "getnewaddress",
             "params": ["label"],
         }
-        res = self._rpc(request)["address"]
+        res = self._rpc(request, repeat=3)["address"]
         return res
 
     def get_balance(self, timeout=None, wallet_name=None):
@@ -81,13 +94,13 @@ class WasabiClientBase:
         while timeout is None or time() - start < timeout:
             try:
                 self._create_wallet()
-            except:
+            except Exception:
                 pass
 
             try:
                 self.get_balance(timeout=5)
                 return True
-            except:
+            except Exception:
                 pass
 
             sleep(0.1)
@@ -157,11 +170,13 @@ class WasabiClientBase:
         }
         return self._rpc(request, timeout=10, repeat=3)
 
-    def wait_ready(self):
-        while True:
+    def wait_ready(self, timeout=120):
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
             try:
                 self.get_status()
-                break
-            except:
+                return
+            except Exception:
                 pass
             sleep(0.1)
+        raise TimeoutError(f"{self.__class__.__name__} at {self.host}:{self.port} was not ready after {timeout}s")
