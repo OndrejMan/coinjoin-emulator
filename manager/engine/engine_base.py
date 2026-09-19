@@ -1,3 +1,5 @@
+import time
+
 from manager.btc_node import BtcNode
 from manager import utils
 from manager.engine.configuration import ScenarioConfig, WalletConfig, FundConfig
@@ -11,8 +13,8 @@ import math
 import shutil
 import datetime
 
-DISTRIBUTOR_UTXOS = 10
-BATCH_SIZE = 20
+DISTRIBUTOR_UTXOS = 200
+BATCH_SIZE = 5  # smaller batches avoid UTXO race conditions
 BTC = 100_000_000
 
 
@@ -73,20 +75,23 @@ class EngineBase:
         self.start_distributor()
 
     def start_btc_node(self):
-        btc_node_ip, btc_node_ports = self.driver.run(
+        btc_node_ip, btc_node_ports, _ = self.driver.run(
             "btc-node",
             f"{self.args.image_prefix}btc-node",
             ports={18443: 18443, 18444: 18444},
-            cpu=4.0,
-            memory=8192,
+            cpu=2.0,
+            memory=2048,
+            service_account="btc-node",
         )
 
+        print(btc_node_ip, btc_node_ports)
         self.node = BtcNode(
-            host=btc_node_ip if self.args.proxy else self.args.control_ip,
+            host=btc_node_ip if self.args.proxy or self.args.in_cluster else self.args.control_ip,
             port=18443 if self.args.proxy else btc_node_ports[18443],
             internal_ip=btc_node_ip,
             proxy=self.args.proxy,
         )
+        print("BTC node startup in progress")
         self.node.wait_ready()
         print("- started btc-node")
 
@@ -105,38 +110,102 @@ class EngineBase:
     def stop_client(self, idx: int):
         raise NotImplementedError
 
+    def _start_classified_wallets(self, pool, wallet_list, fb_batch_size=5, fb_batch_delay=15):
+        """
+        Start a list of (idx, wallet) tuples with smart batching:
+        - Regular wallets: all in parallel
+        - FB wallets: in small batches to avoid Bitcoin RPC overload
+
+        Returns dict: {idx: client} (client is None if startup failed)
+        """
+        # Classify into regular and FB wallets
+        regular_wallets = []
+        fb_wallets = []
+
+        for idx, wallet in wallet_list:
+            if wallet.get("fidelity_bond", {}).get("enabled", False):
+                fb_wallets.append((idx, wallet))
+            else:
+                regular_wallets.append((idx, wallet))
+
+        results = {}
+
+        # Start regular wallets in parallel (fast)
+        if regular_wallets:
+            regular_clients = pool.starmap(self.start_client, regular_wallets)
+            for (idx, _), client in zip(regular_wallets, regular_clients):
+                results[idx] = client
+
+        # Start FB wallets in batches (slow, avoid RPC overload)
+        if fb_wallets:
+            for batch_start in range(0, len(fb_wallets), fb_batch_size):
+                batch_end = min(batch_start + fb_batch_size, len(fb_wallets))
+                batch = fb_wallets[batch_start:batch_end]
+
+                batch_clients = pool.starmap(self.start_client, batch)
+                for (idx, _), client in zip(batch, batch_clients):
+                    results[idx] = client
+
+                # Wait before next batch (unless last batch)
+                if batch_end < len(fb_wallets) and fb_batch_delay > 0:
+                    print(f"  - waiting {fb_batch_delay}s before next batch")
+                    sleep(fb_batch_delay)
+
+        return results
+
     def start_clients(self, wallets):
         print("Starting clients")
+
+        fb_batch_size = 5   # FB wallets per batch
+        fb_batch_delay = 15  # Seconds between FB batches
+
+        # Build initial wallet list with indices
+        wallet_list = [(idx, wallet) for idx, wallet in enumerate(wallets, start=len(self.clients))]
+
+        # Count wallet types for logging
+        fb_count = sum(1 for _, w in wallet_list if w.get("fidelity_bond", {}).get("enabled", False))
+        print(f"- {len(wallet_list) - fb_count} regular wallets, {fb_count} fidelity bond wallets")
+
         with multiprocessing.pool.ThreadPool() as pool:
-            new_clients = pool.starmap(self.start_client, enumerate(wallets, start=len(self.clients)))
+            new_clients = [None] * len(wallets)
 
-            for _ in range(3):
-                restart_idx = list(
-                    map(
-                        lambda x: x[0],
-                        filter(
-                            lambda x: x[1] is None,
-                            enumerate(new_clients, start=len(self.clients)),
-                        ),
-                    )
-                )
+            # Initial startup
+            print(f"- starting {len(wallet_list)} wallets")
+            if fb_count > 0:
+                print(f"  - FB wallets will be started in batches of {fb_batch_size}")
 
-                if not restart_idx:
+            startup_results = self._start_classified_wallets(pool, wallet_list, fb_batch_size, fb_batch_delay)
+            for idx, client in startup_results.items():
+                new_clients[idx - len(self.clients)] = client
+
+            # Retry logic (uses same classification/batching)
+            for retry_attempt in range(3):
+                failed_indices = [
+                    idx for idx, client in enumerate(new_clients, start=len(self.clients))
+                    if client is None
+                ]
+
+                if not failed_indices:
                     break
-                print(f"- failed to start {len(restart_idx)} clients; retrying ...")
-                for idx in restart_idx:
+
+                print(f"- failed to start {len(failed_indices)} clients; retrying ...")
+
+                # Stop and rebuild wallet list for failed clients
+                for idx in failed_indices:
                     self.stop_client(idx)
                 sleep(60)
-                restarted_clients = pool.starmap(
-                    self.start_client,
-                    ((idx, wallets[idx - len(self.clients)]) for idx in restart_idx),
-                )
-                for idx, client in enumerate(restarted_clients):
-                    if client is not None:
-                        new_clients[restart_idx[idx]] = client
+
+                retry_wallet_list = [(idx, wallets[idx - len(self.clients)]) for idx in failed_indices]
+
+                # Retry with same smart batching
+                retry_results = self._start_classified_wallets(pool, retry_wallet_list, fb_batch_size, fb_batch_delay)
+                for idx, client in retry_results.items():
+                    new_clients[idx - len(self.clients)] = client
             else:
+                # After 3 retries, filter out None values
                 new_clients = list(filter(lambda x: x is not None, new_clients))
                 print(f"- failed to start {len(wallets) - len(new_clients)} clients; continuing ...")
+
         self.clients.extend(new_clients)
 
     def fund_distributor(self, btc_amount):
@@ -169,10 +238,20 @@ class EngineBase:
         with open(os.path.join(client_path, "keys.json"), "w") as f:
             json.dump(client.list_keys(), f, indent=2)
             print(f"- stored {client.name} keys")
+
+        # Store fidelity bonds data if available
+        if hasattr(client, 'export_fidelity_bonds_data') and hasattr(client, 'fidelity_bonds'):
+            bonds_data = client.export_fidelity_bonds_data(self.current_block)
+            with open(os.path.join(client_path, "fidelity_bonds.json"), "w") as f:
+                json.dump(bonds_data, f, indent=2)
+                if bonds_data['total_bonds'] > 0:
+                    print(f"- stored {client.name} fidelity bonds ({bonds_data['total_bonds']} bonds)")
+                else:
+                    print(f"- stored {client.name} fidelity bonds (none)")
+
         try:
             self.driver.download(client.name, self.log_src_path, client_path)
-
-            print(f"- stored {client.name} logs")
+            print(f"- stored {client.name} logs, {self.log_src_path}, {client_path}")
         except:
             print(f"- could not store {client.name} logs")
 
@@ -192,31 +271,53 @@ class EngineBase:
         os.mkdir(node_path)
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
-        while stored_blocks < self.node.get_block_count():  # type: ignore
-            block_hash = self.node.get_block_hash(stored_blocks)
-            block = self.node.get_block_info(block_hash)
-            with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
-                json.dump(block, f, indent=2)
-            stored_blocks += 1
+        try:
+            while stored_blocks < self.node.get_block_count():  # type: ignore
+                block_hash = self.node.get_block_hash(stored_blocks)
+                block = self.node.get_block_info(block_hash)
+                with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
+                    json.dump(block, f, indent=2)
+                stored_blocks += 1
+        except TypeError:
+            print("Failed to get block count")
+
         print(f"- stored {stored_blocks} blocks")
 
+        print("- storing engine logs")
+        print(f"{self.store_engine_logs}")
         self.store_engine_logs(data_path)
+        print("- finished storing engine logs")
 
-        # TODO parallelize (driver cannot be simply passed to new threads)
-        for client in self.clients:
-            self.store_client_logs(client, data_path)
+        print(f"- storing logs for {len(self.clients)} clients in parallel")
+        with multiprocessing.pool.ThreadPool() as pool:
+            pool.starmap(self.store_client_logs, [(client, data_path) for client in self.clients])
 
         shutil.make_archive(experiment_path, "zip", *os.path.split(experiment_path))
         print("- zip archive created")
 
     def store_engine_logs(self, data_path):
+        print("Storing engine logs / NOT IMPLEMENTED")
         raise NotImplementedError
 
     def stop_coinjoins(self):
         print("Stopping coinjoins")
-        for client in self.clients:
-            client.stop_coinjoin()
-            print(f"- stopped mixing {client.name}")
+        
+        # Helper function to stop a single client's coinjoin
+        def stop_single_client(client):
+            try:
+                client.stop_coinjoin()
+                print(f"- stopped mixing {client.name}")
+                return True
+            except Exception as e:
+                print(f"- could not stop mixing {client.name}: {e}")
+                return False
+        
+        # Use ThreadPool to parallelize stopping coinjoins
+        with multiprocessing.pool.ThreadPool() as pool:
+            results = pool.map(stop_single_client, self.clients)
+            
+        success_count = sum(1 for r in results if r)
+        print(f"- stopped mixing for {success_count}/{len(self.clients)} clients")
 
     def update_invoice_payments(self):
         due = list(filter(lambda x: x[0] <= self.current_block and x[1] <= self.current_round, self.invoices.keys()))
@@ -275,16 +376,34 @@ class EngineBase:
 
         except Exception as e:
             print("- invoice payment failed")
-            pass
-            sleep(360)
+            raise e
 
+    def prepare_additional_funding(self, wallets):
+        """
+        Hook for engines to perform additional post-funding setup.
+        Default implementation does nothing.
+
+        Args:
+            wallets: List of wallet configurations
+        """
+        pass
+    
     def run(self):
         print(f"=== Scenario {self.scenario.name} ===")
         self.prepare_images()
         self.start_infrastructure()
-        self.fund_distributor(500)
+        self.fund_distributor(5000)
         self.start_clients(self.scenario.wallets)
+        time.sleep(60)
         self.prepare_invoices(self.scenario.wallets)
+
+        # Pay initial wallet funding invoices before additional funding
+        print("Paying initial wallet funding")
+        self.update_invoice_payments()
+
+        # Allow engines to perform additional post-funding setup (e.g., fidelity bonds)
+        self.prepare_additional_funding(self.scenario.wallets)
+
         print("Running simulation")
         self.run_engine()
 

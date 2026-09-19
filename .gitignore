@@ -4,3 +4,11 @@ logs/
 
 .python-version
 pyrightconfig.json
+logs_selected
+*.idea/
+.secrets/
+scenarios/joinmarket/experiments/
+scenarios/joinmarket/test
+scenarios/joinmarket/basic
+logs_download
+.simulation*

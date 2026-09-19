@@ -1,0 +1,56 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: emulation-manager
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/exec
+      - services
+      - configmaps
+      - persistentvolumeclaims
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups: [""]
+    resources:
+      - pods/log
+    verbs:
+      - get
+      - list
+  - apiGroups: [ "" ]
+    resources:
+      - pods/status  # This is the special case
+    verbs:
+      - get          # Your emulation manager needs this to check if btc-node is ready
+      - list
+      - watch
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete

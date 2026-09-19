@@ -1,0 +1,12 @@
+*.log
+runner_logs
+logs/
+.github
+.secrets
+.venv
+containers
+shadowsocks
+logs*
+logs_download
+logs_download/
+.simulation*

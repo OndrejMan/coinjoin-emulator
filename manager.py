@@ -1,35 +1,59 @@
 from traceback import print_exception
+import time
+import signal
+
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
 from manager.engine.engine_base import EngineBase
 import manager.commands.genscen
+import manager.commands.genscen_joinmarket
 import sys
 import argparse
+import os
 
 
 args: argparse.Namespace | None = None
 engine: EngineBase | None = None
 versions = set()
 
+def handle_shutdown_signal(signum, frame):
+    """Convert SIGTERM to SystemExit to ensure finally block runs"""
+    signal_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+    print(f"\n[manager.py] Received {signal_name}, triggering cleanup...", flush=True)
+    # Raise SystemExit which will trigger the finally block
+    sys.exit(1)
+
 def run():
     if engine is None:
         raise RuntimeError("Engine is not initialized")
     if args is None:
         raise RuntimeError("Arguments are not initialized")
-    
+
+    # Register signal handlers to ensure finally block runs on SIGTERM/SIGINT
+    signal.signal(signal.SIGTERM, handle_shutdown_signal)
+    signal.signal(signal.SIGINT, handle_shutdown_signal)
+
     try:
         engine.run()
     except KeyboardInterrupt:
         print()
-        print("KeyboardInterrupt received")
+        print("KeyboardInterrupt received", flush=True)
+    except SystemExit:
+        print("[manager.py] SystemExit caught, proceeding to cleanup...", flush=True)
+        raise  # Re-raise to ensure finally runs
     except Exception as e:
-        print(f"Terminating exception: {e}", file=sys.stderr)
+        print(f"Terminating exception: {e}", file=sys.stderr, flush=True)
         print_exception(e)
     finally:
+        print("[manager.py] Starting cleanup phase...", flush=True)
         engine.stop_coinjoins()
         if not args.no_logs:
+            print("[manager.py] Storing logs...", flush=True)
             engine.store_logs()
+            # time.sleep(10)
+        print("[manager.py] Cleaning up resources...", flush=True)
         driver.cleanup(args.image_prefix)
+        print("[manager.py] Cleanup complete", flush=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run coinjoin simulation setup")
@@ -44,29 +68,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--driver",
         type=str,
-        choices=["docker", "podman", "kubernetes"],
+        choices=["docker", "podman", "kubernetes", "openshift"],
         default="docker",
     )
     parser.add_argument("--no-logs", action="store_true", default=False)
 
-    console_subparser = subparsers.add_parser("console", help="run console")
-    console_subparser.add_argument(
-        "--force-rebuild", action="store_true", help="force rebuild of images"
+    parser.add_argument(
+        "--in-cluster",
+        action="store_true",
+        default=False,
+        help="Running inside Kubernetes cluster (uses service account)"
     )
-    console_subparser.add_argument("--namespace", type=str, default="coinjoin")
-    console_subparser.add_argument(
-        "--image-prefix", type=str, default="", help="image prefix"
-    )
-    console_subparser.add_argument("--proxy", type=str, default="")
-    console_subparser.add_argument(
-        "--btc-node-ip", type=str, help="override btc-node ip", default=""
-    )
-    console_subparser.add_argument(
-        "--control-ip", type=str, help="control ip", default="localhost"
-    )
-    console_subparser.add_argument("--reuse-namespace", action="store_true", default=False)
-
-
 
     build_subparser = subparsers.add_parser("build", help="build images")
     build_subparser.add_argument(
@@ -102,6 +114,7 @@ if __name__ == "__main__":
     run_subparser.add_argument("--proxy", type=str, default="")
     run_subparser.add_argument("--namespace", type=str, default="coinjoin")
     run_subparser.add_argument("--reuse-namespace", action="store_true", default=False)
+    run_subparser.add_argument("--k8s-pull-secret", type=str, default=None, help="Path to Docker config.json for k8s imagePullSecret (or set K8S_PULL_SECRET env var)")
 
     clean_subparser = subparsers.add_parser("clean", help="clean up")
     clean_subparser.add_argument("--namespace", type=str, default="coinjoin")
@@ -112,21 +125,27 @@ if __name__ == "__main__":
     clean_subparser.add_argument(
         "--image-prefix", type=str, default="", help="image prefix"
     )
+    clean_subparser.add_argument("--k8s-pull-secret", type=str, default=None, help="Path to Docker config.json for k8s imagePullSecret (or set K8S_PULL_SECRET env var)")
 
     genscen_subparser = subparsers.add_parser("genscen", help="generate scenario file")
     manager.commands.genscen.setup_parser(genscen_subparser)
+
+    genscen_jm_subparser = subparsers.add_parser("genscen-joinmarket", help="generate JoinMarket scenario file")
+    manager.commands.genscen_joinmarket.setup_parser(genscen_jm_subparser)
 
     args = parser.parse_args()
 
     if args.command == "genscen":
         manager.commands.genscen.handler(args)
         exit(0)
+    if args.command == "genscen-joinmarket":
+        manager.commands.genscen_joinmarket.handler(args)
+        exit(0)
 
     match args.driver:
         case "docker":
             from manager.driver.docker import DockerDriver
 
-            driver = DockerDriver("coinjoin")
             driver = DockerDriver(args.namespace)
         case "podman":
             from manager.driver.podman import PodmanDriver
@@ -135,7 +154,16 @@ if __name__ == "__main__":
         case "kubernetes":
             from manager.driver.kubernetes import KubernetesDriver
 
-            driver = KubernetesDriver(args.namespace, args.reuse_namespace)
+            # Support for k8s image pull secret
+            k8s_pull_secret = args.k8s_pull_secret or os.environ.get("K8S_PULL_SECRET")
+            driver = KubernetesDriver(args.namespace,
+                                      args.reuse_namespace,
+                                      k8s_pull_secret,
+                                      in_cluster=args.in_cluster)
+        case "openshift":
+            from manager.driver.openshift import OpenshiftDriver
+            k8s_pull_secret = args.k8s_pull_secret or os.environ.get("K8S_PULL_SECRET")
+            driver = OpenshiftDriver(args.namespace, args.reuse_namespace, k8s_pull_secret)
         case _:
             print(f"Unknown driver '{args.driver}'")
             exit(1)

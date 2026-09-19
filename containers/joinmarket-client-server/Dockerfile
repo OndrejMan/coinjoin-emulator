@@ -1,10 +1,15 @@
-FROM joinmarket-test
+FROM joinmarket-latest:taker-logs
 
 
 # Copy the config file to the right place
 
 # Starts the RPC server
 # RUN python3 /jm/clientserver/scripts/jmwalletd.py
+
+RUN apt-get update -qq && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        socat ca-certificates iproute2 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -ms /bin/sh joinmarket
 USER 1000:1000
@@ -22,5 +27,6 @@ COPY --chown=joinmarket:joinmarket joinmarket.cfg /home/joinmarket/.joinmarket/
 RUN chmod +x /home/joinmarket/run.sh
 WORKDIR /home/joinmarket
 
-CMD ["./run.sh"]
+ENV MODE=walletd
 
+CMD ["./run.sh"]

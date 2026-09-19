@@ -29,11 +29,11 @@ class PodmanDriver(Driver):
         image,
         env=None,
         ports=None,
-        skip_ip=False,
-        cpu=0.1,
-        memory=768,
+        cpu=None,
+        memory=None,
+        **kwargs
     ):
-        self.client.containers.run(
+        container = self.client.containers.run(
             image,
             detach=True,
             auto_remove=True,
@@ -42,7 +42,9 @@ class PodmanDriver(Driver):
             ports=ports or {},
             environment=env or {},
         )
-        return "", ports
+        container_ip = container.network_settings["IPAddress"]
+        port_mapping = container.ports
+        return container_ip, port_mapping, None
 
     def stop(self, name):
         try:
