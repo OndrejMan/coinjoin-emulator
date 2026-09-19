@@ -83,6 +83,17 @@ def test_failed_artifact_upload_raises(driver_and_client, tmp_path) -> None:
         driver.upload("client", str(source), "/app/scenario.json")
 
 
+def test_logs_include_stdout_and_stderr(driver_and_client) -> None:
+    driver, client = driver_and_client
+    container = client.containers.get.return_value
+    container.logs.return_value = b"startup output\nerror: \xff\n"
+
+    assert driver.logs("wasabi-coordinator") == "startup output\nerror: \ufffd\n"
+
+    client.containers.get.assert_called_once_with("wasabi-coordinator")
+    container.logs.assert_called_once_with(stdout=True, stderr=True)
+
+
 @pytest.mark.parametrize("status_code", [204, 304])
 def test_stop_accepts_running_and_already_stopped_containers(driver_and_client, status_code) -> None:
     driver, client = driver_and_client

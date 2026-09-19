@@ -138,7 +138,10 @@ class PodmanDriver(Driver):
             return tar.extractfile(os.path.basename(path)).read().decode()
 
     def logs(self, name: str) -> str:
-        return self.client.containers.get(name).logs().decode()
+        return self.client.containers.get(name).logs(
+            stdout=True,
+            stderr=True,
+        ).decode(errors="replace")
 
     def upload(self, name, src_path, dst_path):
         fo = BytesIO()
