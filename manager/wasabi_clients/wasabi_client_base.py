@@ -83,11 +83,26 @@ class WasabiClientBase:
         res = self._rpc(request, repeat=3)["address"]
         return res
 
-    def get_balance(self, timeout=None, wallet_name=None):
+    def get_wallet_info(self, timeout=None, wallet_name=None):
         request = {
             "method": "getwalletinfo",
         }
-        return self._rpc(request, timeout=timeout, wallet_name=wallet_name)["balance"]
+        return self._rpc(request, timeout=timeout, wallet_name=wallet_name)
+
+    def get_balance(self, timeout=None, wallet_name=None):
+        return self.get_wallet_info(timeout=timeout, wallet_name=wallet_name)["balance"]
+
+    def wallet_started(self, timeout=None) -> bool:
+        """Whether the wallet is loaded far enough for the wallet RPCs to work.
+
+        ``getwalletinfo`` answers as soon as the wallet is added, while
+        ``getnewaddress`` and the coin RPCs assert ``WalletState.Started``; a
+        distributor funded right after the first answer hit that gap
+        (2026-09-20, ``Sequence contains no elements`` from the key manager).
+        Versions whose ``getwalletinfo`` carries no ``state`` count as started.
+        """
+        info = self.get_wallet_info(timeout=timeout)
+        return "balance" in info and info.get("state", "Started") == "Started"
 
     def wait_wallet(self, timeout=None):
         start = time()
@@ -98,8 +113,8 @@ class WasabiClientBase:
                 pass
 
             try:
-                self.get_balance(timeout=5)
-                return True
+                if self.wallet_started(timeout=5):
+                    return True
             except Exception:
                 pass
 
