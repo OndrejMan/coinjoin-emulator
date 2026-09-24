@@ -78,6 +78,36 @@ def _check_tar_stderr(name, src_path, stderr):
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
 RUN_ID_LABEL = "coinjoin.run-id"
+OWNER_POD_NAME_ENV = "COINJOIN_OWNER_POD_NAME"
+OWNER_POD_UID_ENV = "COINJOIN_OWNER_POD_UID"
+OWNER_POD_NAMESPACE_ENV = "COINJOIN_OWNER_POD_NAMESPACE"
+
+
+def _controller_owner_reference(namespace):
+    """Return the controller pod as an owner, or None when it cannot own this namespace's resources.
+
+    Kubernetes resolves a namespaced owner in the dependent's own namespace, so
+    an owner from any other namespace would look missing and the garbage
+    collector would delete the freshly created pod at once.
+    """
+    name = os.environ.get(OWNER_POD_NAME_ENV, "").strip()
+    uid = os.environ.get(OWNER_POD_UID_ENV, "").strip()
+    owner_namespace = os.environ.get(OWNER_POD_NAMESPACE_ENV, "").strip()
+    if not name or not uid:
+        return None
+    if owner_namespace != namespace:
+        print(
+            f"[WARNING] controller pod {name} runs in namespace '{owner_namespace}', not "
+            f"'{namespace}'; emulation resources will not be owned by it"
+        )
+        return None
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "name": name,
+        "uid": uid,
+        "blockOwnerDeletion": False,
+    }
 
 
 def _strip_reserved_ports_sysctl(pod_manifest):
@@ -143,6 +173,9 @@ class KubernetesDriver(Driver):
         self.pull_secret_path = pull_secret_path
         self.in_cluster = in_cluster
         self.run_id = run_id
+        # In-cluster, the controller pod owns what it creates, so deleting or
+        # killing it (Job deletion, deadline, SIGKILL) cannot leave pods behind.
+        self.owner_reference = _controller_owner_reference(namespace) if in_cluster else None
 
     def _create_image_pull_secret(self):
         secret_name = "regcred"
@@ -213,6 +246,14 @@ class KubernetesDriver(Driver):
             labels[RUN_ID_LABEL] = self.run_id
         return labels
 
+    def resource_metadata(self, name):
+        """Name, labels and, in-cluster, the controller pod as owner."""
+        metadata = {"name": name, "labels": self.resource_labels(name)}
+        owner_reference = getattr(self, "owner_reference", None)
+        if owner_reference:
+            metadata["ownerReferences"] = [dict(owner_reference)]
+        return metadata
+
     def cleanup_selector(self):
         """Select this run's own resources, or every managed one when no run ID is set."""
         selector = f"{MANAGED_BY_LABEL}={MANAGED_BY_VALUE}"
@@ -246,7 +287,7 @@ class KubernetesDriver(Driver):
         return {
             "apiVersion": "v1",
             "kind": "Pod",
-            "metadata": {"name": name, "labels": self.resource_labels(name)},
+            "metadata": self.resource_metadata(name),
             "spec": {
                 "restartPolicy": "Never",
                 "containers": [
@@ -314,7 +355,7 @@ class KubernetesDriver(Driver):
         service_manifest = {
             "apiVersion": "v1",
             "kind": "Service",
-            "metadata": {"name": f"{name}", "labels": self.resource_labels(name)},
+            "metadata": self.resource_metadata(name),
             "spec": {
                 "type": "NodePort",
                 "selector": {"app": name},

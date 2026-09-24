@@ -22,6 +22,7 @@ from manager.driver.kubernetes import (
     UPLOAD_COMMAND_CHUNK_SIZE,
     KubernetesDriver,
     _Base64StreamDecoder,
+    _controller_owner_reference,
 )
 from manager.exceptions import KubernetesResourceQuotaError, StartupError
 
@@ -52,6 +53,61 @@ def test_pods_and_services_are_labelled_with_the_run() -> None:
         MANAGED_BY_LABEL: MANAGED_BY_VALUE,
         "coinjoin.run-id": "run-42",
     }
+
+
+OWNER = {
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "name": "controller-abc",
+    "uid": "1234-5678",
+    "blockOwnerDeletion": False,
+}
+
+
+def test_in_cluster_pods_and_services_are_owned_by_the_controller_pod() -> None:
+    instance = driver(in_cluster=True, owner_reference=OWNER)
+    instance._wait_for_pod_ip = Mock(return_value="10.0.0.7")  # pylint: disable=protected-access
+
+    manifest = instance.build_pod_manifest(
+        "btc-node", "btc-node:latest", {}, {18443: 18443}, 1.0, 512
+    )
+    instance.run("btc-node", "btc-node:latest", ports={18443: 18443}, cpu=1.0, memory=512)
+    service = instance.client.create_namespaced_service.call_args.kwargs["body"]
+
+    assert manifest["metadata"]["ownerReferences"] == [OWNER]
+    assert service["metadata"]["ownerReferences"] == [OWNER]
+
+
+def test_resources_have_no_owner_without_a_controller_pod() -> None:
+    manifest = driver().build_pod_manifest(
+        "btc-node", "btc-node:latest", {}, {18443: 18443}, 1.0, 512
+    )
+
+    assert "ownerReferences" not in manifest["metadata"]
+
+
+def test_the_controller_pod_is_read_from_the_downward_api(monkeypatch) -> None:
+    monkeypatch.setenv("COINJOIN_OWNER_POD_NAME", "controller-abc")
+    monkeypatch.setenv("COINJOIN_OWNER_POD_UID", "1234-5678")
+    monkeypatch.setenv("COINJOIN_OWNER_POD_NAMESPACE", "coinjoin")
+
+    assert _controller_owner_reference("coinjoin") == OWNER
+
+
+def test_a_controller_pod_in_another_namespace_owns_nothing(monkeypatch) -> None:
+    monkeypatch.setenv("COINJOIN_OWNER_POD_NAME", "controller-abc")
+    monkeypatch.setenv("COINJOIN_OWNER_POD_UID", "1234-5678")
+    monkeypatch.setenv("COINJOIN_OWNER_POD_NAMESPACE", "elsewhere")
+
+    assert _controller_owner_reference("coinjoin") is None
+
+
+def test_an_incomplete_downward_api_owns_nothing(monkeypatch) -> None:
+    monkeypatch.setenv("COINJOIN_OWNER_POD_NAME", "controller-abc")
+    monkeypatch.delenv("COINJOIN_OWNER_POD_UID", raising=False)
+    monkeypatch.setenv("COINJOIN_OWNER_POD_NAMESPACE", "coinjoin")
+
+    assert _controller_owner_reference("coinjoin") is None
 
 
 def test_a_host_path_is_mounted_and_a_command_overrides_the_entrypoint() -> None:
