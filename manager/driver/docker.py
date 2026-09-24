@@ -14,6 +14,7 @@ from . import (
     managed_label_filters,
     managed_labels,
     preserve_stopped_container,
+    warn_if_host_ports_unreserved,
 )
 from .archive import extract_tar_stream
 
@@ -26,6 +27,7 @@ class DockerDriver(Driver):
         self._namespace = namespace
         self._run_id = run_id or f"local-{uuid4().hex}"
         self._network_created = False
+        warn_if_host_ports_unreserved(os.environ.get("DOCKER_HOST"))
 
     @cached_property
     def network(self):
