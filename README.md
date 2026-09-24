@@ -12,6 +12,44 @@ A container-based setup for the emulation of CoinJoin transactions on RegTest ne
 
 For more complex setups see section [Advanced usage](#advanced-usage).
 
+## Historical replay tests
+
+To replay **every ZIP** in `../testing_data` sequentially using Docker:
+
+```bash
+RUN_HISTORICAL_ARCHIVE_INTEGRATION=1 uv run python -m pytest -v -m integration tests/test_historical_archive_integration.py
+```
+
+These are long live emulations (potentially many hours for the full corpus).
+Each test reads the archived scenario, migrates legacy wallet settings, and
+runs the current emulator with the archived Wasabi version and funding schedule.
+Do not run them with pytest-xdist or alongside another emulator on the same Docker host.
+The host must reserve the published service ports, otherwise clients fail with
+`address already in use` (retried, then the run aborts):
+add `37127-37260` to the host's `net.ipv4.ip_local_reserved_ports` value,
+preserving any ranges already listed there (and persist the combined value in `/etc/sysctl.d/`).
+`TESTING_DATA_DIR` overrides the corpus directory; `-k` selects archive names.
+
+The exported scenario and wallet identities must match exactly. The tests also
+validate the output archive contract and compare the counts of broadcast CoinJoins,
+mined CoinJoins, and total inputs/outputs of mined CoinJoins against that ZIP.
+Labels come from the legacy backend's `CoinJoinIdStore.txt`, intersected with the
+exported chain for mined metrics. TXIDs, addresses and block hashes are not compared
+across runs. Exported block counts are diagnostic only because startup/settlement
+mining has changed. These checks do not prove identical transactions or balances.
+
+`HISTORICAL_ARCHIVE_REL_TOLERANCE` defaults to `0.25` (each metric must be within
+±25% of its reference); `0` requires exact metric counts. This initial threshold
+has **not** been calibrated with repeated live runs: a mismatch requires inspection
+and is not by itself proof of a bug. `HISTORICAL_ARCHIVE_INTEGRATION_TIMEOUT`
+defaults to `86400` seconds **per archive**. A timeout stops the batch so remaining
+containers can be inspected before another run.
+
+Each run preserves `replay-scenario.json`, `replay.log`, `artifact-contract.log`,
+`historical-comparison.json` and the new emulator artifacts under `logs/hist-<id>-<archive>` (the archive name is truncated to fit the 63-character run ID).
+Without the opt-in variable, live tests skip; the offline archive checks and
+comparison unit tests remain available without Docker.
+
 ## Scenarios
 
 Scenario definition files can be passed to the simulation script using the `--scenario` option. The scenario definition is a JSON file with the following structure:

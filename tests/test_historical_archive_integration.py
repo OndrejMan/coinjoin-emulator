@@ -1,11 +1,12 @@
-"""Opt-in live regression test using a scenario from the historical corpus.
+"""Opt-in live regression tests for every ZIP in the historical corpus.
 
-Run with ``RUN_HISTORICAL_ARCHIVE_INTEGRATION=1``.  The test intentionally
-compares the new archive's structure, not its transaction IDs, because live
-CoinJoin runs are nondeterministic.
+Run with ``RUN_HISTORICAL_ARCHIVE_INTEGRATION=1``. Compare archive contracts
+and aggregate CoinJoin outcomes with a configurable
+tolerance. The tolerance is a regression threshold, not a statistical guarantee.
 """
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -17,25 +18,33 @@ from zipfile import ZipFile
 import pytest
 
 from manager.engine.configuration import ScenarioConfig, WasabiConfig
+from tests.historical_archive_results import archive_results, compare_results
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = PROJECT_ROOT.parent
-DEFAULT_ARCHIVE = "2025-04-02_12-15_dynamic-0.0paranoid-0seed--wallets--50.zip"
 INTEGRATION_ENABLED = "RUN_HISTORICAL_ARCHIVE_INTEGRATION"
 LEGACY_WASABI_FIELDS = ("anon_score_target", "redcoin_isolation", "skip_rounds")
+MAX_RUN_ID_LENGTH = 63
 
 
 def _testing_data_dir() -> Path:
     return Path(os.environ.get("TESTING_DATA_DIR", WORKSPACE_ROOT / "testing_data"))
 
 
-def _require_integration_archive() -> Path:
+def _require_integration_archive(archive_path: Path | None) -> Path:
     if os.environ.get(INTEGRATION_ENABLED) != "1":
         pytest.skip(f"set {INTEGRATION_ENABLED}=1 to run the Docker integration test")
-    archive_path = _testing_data_dir() / DEFAULT_ARCHIVE
-    if not archive_path.is_file():
-        pytest.skip(f"historical integration scenario is unavailable: {archive_path}")
+    if archive_path is None or not archive_path.is_file():
+        pytest.fail(f"no historical integration archives available in {_testing_data_dir()}")
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        pytest.fail("historical Docker replays must run sequentially (without pytest-xdist)")
     return archive_path
+
+
+def _replay_run_id(source_archive: Path, suffix: str) -> str:
+    """Keep the unique suffix while fitting manager.py's 63-character run ID limit."""
+    prefix = f"hist-{suffix}-"
+    return (prefix + source_archive.stem)[:MAX_RUN_ID_LENGTH].rstrip("-._")
 
 
 def _migrate_legacy_wasabi_settings(scenario: dict[str, object]) -> None:
@@ -77,7 +86,7 @@ def test_legacy_wasabi_settings_are_migrated_before_replay(tmp_path: Path) -> No
                 "redcoin_isolation": False,
                 "skip_rounds": [0, 2],
             }
-        ]
+        ],
     }
 
     archive_path = tmp_path / "historical.zip"
@@ -107,36 +116,85 @@ def test_legacy_wasabi_settings_are_migrated_before_replay(tmp_path: Path) -> No
     )
 
 
+def test_replay_run_id_fits_manager_limit() -> None:
+    archive = Path("2025-03-22_06-11_dynamic-0.0paranoid-10seed--wallets--25.zip")
+
+    run_id = _replay_run_id(archive, "f7907728")
+
+    assert run_id.startswith("hist-f7907728-2025-03-22_06-11_dynamic")
+    assert len(run_id) <= MAX_RUN_ID_LENGTH
+    assert run_id[-1].isalnum()
+
+
 @pytest.mark.integration
-def test_current_emulator_exports_a_valid_archive_for_a_historical_scenario(tmp_path: Path) -> None:
-    """Run the current emulator and validate its newly exported archive."""
-    source_archive = _require_integration_archive()
-    run_id = f"historical-archive-regression-{uuid.uuid4().hex[:8]}"
+@pytest.mark.parametrize(
+    "source_archive",
+    sorted(_testing_data_dir().glob("*.zip")) or [None],
+    ids=lambda path: path.stem if path is not None else "missing-corpus",
+)
+def test_current_emulator_replays_historical_results(source_archive: Path | None, tmp_path: Path) -> None:
+    """Replay each historical scenario and compare the newly exported outcome."""
+    source_archive = _require_integration_archive(source_archive)
+    tolerance = float(os.environ.get("HISTORICAL_ARCHIVE_REL_TOLERANCE", "0.25"))
+    assert math.isfinite(tolerance) and 0 <= tolerance < 1, "tolerance must be finite and in [0, 1)"
+    timeout_seconds = int(os.environ.get("HISTORICAL_ARCHIVE_INTEGRATION_TIMEOUT", "86400"))
+    assert timeout_seconds > 0
+    reference = archive_results(source_archive)
+    run_id = _replay_run_id(source_archive, uuid.uuid4().hex[:8])
+    run_path = PROJECT_ROOT / "logs" / run_id
+    run_path.mkdir(parents=True)
     scenario = _load_replay_scenario(source_archive, run_id)
-    scenario_path = tmp_path / "scenario.json"
+    scenario_path = run_path / "replay-scenario.json"
     scenario_path.write_text(json.dumps(scenario), encoding="utf-8")
+    expected_scenario = ScenarioConfig.from_json_config(scenario_path).to_dict()
+    command = [
+        sys.executable,
+        "-u",
+        "manager.py",
+        "--engine",
+        "wasabi",
+        "--driver",
+        "docker",
+        "run",
+        "--run-id",
+        run_id,
+        "--scenario",
+        str(scenario_path),
+    ]
+    report_path = run_path / "historical-comparison.json"
+    report = {
+        "source_archive": str(source_archive.resolve()),
+        "command": command,
+        "relative_tolerance": tolerance,
+        "reference": reference,
+        "status": "running",
+    }
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    log_path = run_path / "replay.log"
+    with log_path.open("w", encoding="utf-8") as log:
+        try:
+            completed = subprocess.run(
+                command, cwd=PROJECT_ROOT, stdout=log, stderr=subprocess.STDOUT, timeout=timeout_seconds, check=False
+            )
+        except subprocess.TimeoutExpired:
+            report["status"] = "timeout"
+            report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            pytest.exit(
+                f"Replay timed out; inspect {log_path} and remaining containers before restarting", returncode=1
+            )
+    report["status"] = "failed"
+    report["returncode"] = completed.returncode
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    assert completed.returncode == 0, f"emulator failed; see {log_path}"
 
-    timeout_seconds = int(os.environ.get("HISTORICAL_ARCHIVE_INTEGRATION_TIMEOUT", "1800"))
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "manager.py",
-            "run",
-            "--run-id",
-            run_id,
-            "--scenario",
-            str(scenario_path),
-        ],
-        cwd=PROJECT_ROOT,
-        text=True,
-        capture_output=True,
-        timeout=timeout_seconds,
-        check=False,
-    )
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-
-    created_archive = PROJECT_ROOT / "logs" / run_id / "coinjoin_emulator_data" / "emulation_logs.zip"
+    created_archive = run_path / "coinjoin_emulator_data" / "emulation_logs.zip"
     assert created_archive.is_file(), f"expected emulator archive at {created_archive}"
+    actual_scenario = ScenarioConfig.from_json_config(created_archive.parent / "scenario.json").to_dict()
+    comparison = compare_results(reference, archive_results(created_archive), tolerance)
+    if actual_scenario != expected_scenario:
+        comparison["differences"].append("exported scenario differs from the replay scenario")
+    report.update(comparison)
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     corpus_dir = tmp_path / "generated-corpus"
     corpus_dir.mkdir()
@@ -150,4 +208,9 @@ def test_current_emulator_exports_a_valid_archive_for_a_historical_scenario(tmp_
         check=False,
         env={**os.environ, "TESTING_DATA_DIR": str(corpus_dir)},
     )
-    assert contract.returncode == 0, contract.stdout + contract.stderr
+    (run_path / "artifact-contract.log").write_text(contract.stdout + contract.stderr, encoding="utf-8")
+    if contract.returncode:
+        report["differences"].append("artifact contract failed; see artifact-contract.log")
+    report["status"] = "passed" if not report["differences"] else "failed"
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    assert not report["differences"], f"{report['differences']}; see {report_path}"
