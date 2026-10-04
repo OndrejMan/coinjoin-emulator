@@ -184,8 +184,6 @@ class WasabiEngine(EngineBase):
                 cpu=4.0,
                 memory=4096,
             )
-            sleep(1)
-
             self.upload_coordinator_config(version)
 
             coordinator_host, coordinator_port = self.service_endpoint(
@@ -234,19 +232,22 @@ class WasabiEngine(EngineBase):
         coordinator_config = json.loads(raw)
         coordinator_config.update(self.scenario.backend or {})
 
-        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-            scenario_file = tmp_file.name
-            tmp_file.write(json.dumps(coordinator_config, indent=2).encode())
-
-        try:
+        with tempfile.TemporaryDirectory() as staging_dir:
+            staged_config = Path(staging_dir) / "coordinator-config.json"
+            staged_config.write_text(json.dumps(coordinator_config, indent=2), encoding="utf-8")
+            staged_config.chmod(0o644)
             self.driver.upload(
                 "wasabi-coordinator",
-                scenario_file,
-                "/home/wasabi/.walletwasabi/coordinator/Config.json",
+                str(staged_config),
+                "/home/wasabi/coordinator-config.json",
             )
-        except Exception as e:
-            print_exception(e)
-            raise
+            ready_file = Path(staging_dir) / "coordinator-config.ready"
+            ready_file.touch()
+            self.driver.upload(
+                "wasabi-coordinator",
+                str(ready_file),
+                "/home/wasabi/coordinator-config.ready",
+            )
 
     def start_distributor(self):
         if self.node is None:
