@@ -1,5 +1,6 @@
 """Coordinator startup: a known transient failure must not lose the whole run."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -17,6 +18,7 @@ def engine() -> WasabiEngine:
     instance.driver = Mock()
     instance.driver.run.return_value = ("wasabi-coordinator", {37128: 37128}, None)
     instance.versions = {"2.6.0"}
+    instance.scenario = SimpleNamespace(backend=None)
     return instance
 
 
@@ -40,6 +42,7 @@ def test_the_coordinator_is_restarted_after_a_transient_failure() -> None:
 
     instance.driver.stop.assert_called_once_with("wasabi-coordinator")
     assert instance.driver.run.call_count == 2
+    assert instance.driver.upload.call_count == 2
 
 
 def test_an_unknown_startup_failure_fails_the_run_with_the_logs() -> None:
@@ -56,6 +59,21 @@ def test_an_unknown_startup_failure_fails_the_run_with_the_logs() -> None:
             instance.start_wasabi_coordinator()
 
     instance.driver.stop.assert_not_called()
+
+
+def test_the_coordinator_config_carries_the_scenario_backend_overrides() -> None:
+    instance = engine()
+    instance.scenario = SimpleNamespace(backend={"MiningFeeRate": 5})
+
+    instance.upload_coordinator_config("2.6.0")
+
+    name, source, destination = instance.driver.upload.call_args.args
+    assert name == "wasabi-coordinator"
+    assert destination == "/home/wasabi/.walletwasabi/coordinator/Config.json"
+    with open(source, encoding="utf-8") as config_file:
+        config = json.load(config_file)
+    assert config["MiningFeeRate"] == 5
+    assert config["BitcoinCoreRpcEndPoint"] == "10.0.0.2:18443"
 
 
 def test_the_split_distributor_is_pointed_at_the_coordinator() -> None:
