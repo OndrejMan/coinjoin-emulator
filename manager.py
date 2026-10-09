@@ -106,18 +106,20 @@ def run():
         exit_code = 1
     finally:
         print("[manager.py] Starting cleanup phase...", flush=True)
-        engine.stop_coinjoins()
-        if not args.no_logs:
-            print("[manager.py] Storing logs...", flush=True)
-            try:
-                engine.store_logs()
-            except Exception as e:
-                print(f"- failed to store logs: {e}", file=sys.stderr, flush=True)
-                print_exception(e)
-                exit_code = 1
-        print("[manager.py] Cleaning up resources...", flush=True)
-        driver.cleanup(args.image_prefix)
-        print("[manager.py] Cleanup complete", flush=True)
+        try:
+            engine.stop_coinjoins()
+            if not args.no_logs:
+                print("[manager.py] Storing logs...", flush=True)
+                try:
+                    engine.store_logs()
+                except Exception as e:
+                    print(f"- failed to store logs: {e}", file=sys.stderr, flush=True)
+                    print_exception(e)
+                    exit_code = 1
+        finally:
+            print("[manager.py] Cleaning up resources...", flush=True)
+            driver.cleanup(args.image_prefix)
+            print("[manager.py] Cleanup complete", flush=True)
 
     return finalize_controller_marker(exit_code)
 
