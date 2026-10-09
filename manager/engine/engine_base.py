@@ -8,6 +8,7 @@ import random
 import shutil
 import time
 from time import sleep
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from manager import utils
@@ -213,12 +214,13 @@ class EngineBase:
                 retry_results = self._start_classified_wallets(pool, retry_wallet_list, fb_batch_size, fb_batch_delay)
                 for idx, client in retry_results.items():
                     new_clients[idx - len(self.clients)] = client
-            else:
-                # After 3 retries, filter out None values
-                new_clients = list(filter(lambda x: x is not None, new_clients))
-                print(f"- failed to start {len(wallets) - len(new_clients)} clients; continuing ...")
 
-        self.clients.extend(new_clients)
+        # keep each client paired with its own wallet, so failed clients do not shift the funding
+        started = [(client, wallet) for client, wallet in zip(new_clients, wallets) if client is not None]
+        if len(started) < len(wallets):
+            print(f"- failed to start {len(wallets) - len(started)} clients; continuing ...")
+        self.clients.extend(client for client, _ in started)
+        return started
 
     def fund_distributor(self, btc_amount):
         print("Funding distributor")
@@ -365,12 +367,10 @@ class EngineBase:
             self.pay_invoices(self.invoices[schedule])
             del self.invoices[schedule]
 
-    def prepare_invoices(self, wallets: list[WalletConfig]):
+    def prepare_invoices(self, client_wallets: list[tuple[Any, WalletConfig]]):
         print("Preparing invoices")
-        client_invoices = [(client, wallet.funds) for client, wallet in zip(self.clients, wallets)]
-
-        for client, funds in client_invoices:
-            for fund in funds:
+        for client, wallet in client_wallets:
+            for fund in wallet.funds:
                 block = 0
                 round = 0
                 if isinstance(fund, int):
@@ -438,9 +438,9 @@ class EngineBase:
         self.prepare_images()
         self.start_infrastructure()
         self.fund_distributor(5000)
-        self.start_clients(self.scenario.wallets)
+        started = self.start_clients(self.scenario.wallets)
         time.sleep(60)
-        self.prepare_invoices(self.scenario.wallets)
+        self.prepare_invoices(started)
 
         # Pay initial wallet funding invoices before additional funding
         print("Paying initial wallet funding")
