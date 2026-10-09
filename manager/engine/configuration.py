@@ -114,26 +114,24 @@ class ScenarioConfig:
         
         # Extract Wasabi-specific fields
         wasabi_config = None
-        wasabi_fields = {
-            "anon_score_target": wallet_data.get("anon_score_target"),
-            "redcoin_isolation": wallet_data.get("redcoin_isolation"),
-            "skip_rounds": wallet_data.get("skip_rounds")
-        }
-        if any(v is not None for v in wasabi_fields.values()):
-            wasabi_config = WasabiConfig(**wasabi_fields)
+        if (wasabi_data := wallet_data.get("wasabi")) is not None:
+            wasabi_config = WasabiConfig(
+                anon_score_target=wasabi_data.get("anon_score_target"),
+                redcoin_isolation=wasabi_data.get("redcoin_isolation"),
+                skip_rounds=wasabi_data.get("skip_rounds"),
+            )
         
         # Extract JoinMarket-specific fields
         joinmarket_config = None
-        if "type" in wallet_data:
-            role_str = wallet_data["type"]
-            role = JoinMarketRole.MAKER if role_str == "maker" else JoinMarketRole.TAKER
+        if (joinmarket_data := wallet_data.get("joinmarket")) is not None:
+            role = joinmarket_data.get("role")
             joinmarket_config = JoinMarketConfig(
-                role=role,
-                offers=wallet_data.get("offers"),
-                tumbler_options=wallet_data.get("tumbler_options"),
-                time_between_rounds=wallet_data.get("time_between_rounds"),
-                fidelity_bond=wallet_data.get("fidelity_bond"),
-                max_coinjoins=wallet_data.get("max_coinjoins"),
+                role=JoinMarketRole(role) if role is not None else None,
+                offers=joinmarket_data.get("offers"),
+                tumbler_options=joinmarket_data.get("tumbler_options"),
+                time_between_rounds=joinmarket_data.get("time_between_rounds"),
+                fidelity_bond=joinmarket_data.get("fidelity_bond"),
+                max_coinjoins=joinmarket_data.get("max_coinjoins"),
             )
         
         return WalletConfig(
