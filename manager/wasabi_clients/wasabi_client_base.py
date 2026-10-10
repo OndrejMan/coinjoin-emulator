@@ -195,6 +195,12 @@ class WasabiClientBase:
         }
         return self._rpc(request, timeout=10, repeat=3)
 
+    def get_history(self):
+        request = {
+            "method": "gethistory",
+        }
+        return self._rpc(request, timeout=10, repeat=3)
+
     def wait_ready(self, timeout=120):
         deadline = monotonic() + timeout
         while monotonic() < deadline:
