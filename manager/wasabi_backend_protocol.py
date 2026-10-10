@@ -1,6 +1,6 @@
 """Protocol definition for Wasabi backend implementations."""
 
-from typing import Protocol, Any
+from typing import Any, Protocol
 
 
 class WasabiBackendProtocol(Protocol):
@@ -30,6 +30,6 @@ class WasabiBackendProtocol(Protocol):
         """
         ...
     
-    def wait_ready(self) -> None:
+    def wait_ready(self, timeout: int = 120) -> None:
         """Wait until the backend is ready to accept requests."""
         ...

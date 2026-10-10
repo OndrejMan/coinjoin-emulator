@@ -4,9 +4,10 @@ logs/
 .github
 .secrets
 .venv
-containers
 shadowsocks
 logs*
 logs_download
 logs_download/
 .simulation*
+# vendor/ carries the JoinMarket source the client image is built from;
+# excluding it left the manager unable to build joinmarket-base in DinD.

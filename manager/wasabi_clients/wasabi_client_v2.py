@@ -1,5 +1,6 @@
-from .wasabi_client_base import WasabiClientBase, WALLET_NAME
 from time import sleep, time
+
+from .wasabi_client_base import WALLET_NAME, WasabiClientBase
 
 
 class WasabiClientV2(WasabiClientBase):
@@ -13,8 +14,9 @@ class WasabiClientV2(WasabiClientBase):
         version="2.0.3",
         delay=(0, 0),
         stop=(0, 0),
+        skip_rounds=(),
     ):
-        super().__init__(host, port, name, proxy, version, delay, stop)
+        super().__init__(host, port, name, proxy, version, delay, stop, skip_rounds)
 
     def select(self, timeout=5, repeat=10):
         request = {"method": "selectwallet", "params": [WALLET_NAME]}
@@ -25,14 +27,14 @@ class WasabiClientV2(WasabiClientBase):
         while timeout is None or time() - start < timeout:
             try:
                 self._create_wallet()
-            except:
+            except Exception:
                 pass
 
             try:
                 self.select(timeout=5)
                 self.get_balance(timeout=5)
                 return True
-            except:
+            except Exception:
                 pass
 
             sleep(0.1)

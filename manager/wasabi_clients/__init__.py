@@ -1,7 +1,7 @@
 from manager.wasabi_clients.wasabi_client_v1 import WasabiClientV1
 from manager.wasabi_clients.wasabi_client_v2 import WasabiClientV2
-from manager.wasabi_clients.wasabi_client_v204 import WasabiClientV204
 from manager.wasabi_clients.wasabi_client_v26 import WasabiClientV26
+from manager.wasabi_clients.wasabi_client_v204 import WasabiClientV204
 
 
 def WasabiClient(version):

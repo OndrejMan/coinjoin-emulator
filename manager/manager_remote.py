@@ -3,15 +3,16 @@
 Remote Simulation Manager - CLI interface for orchestrator commands
 """
 
-import sys
 import argparse
-from kubernetes_local_proxy import KubernetesLocalProxy
+import sys
+
+from manager.kubernetes_local_proxy import KubernetesLocalProxy
 
 
 def deploy_manager(args):
     """Deploy the simulation manager to the remote cluster"""
     try:
-        proxy = KubernetesLocalProxy(
+        KubernetesLocalProxy(
             namespace=args.namespace,
             kubectl_context=args.kubectl_context,
             auto_deploy=True,
@@ -189,7 +190,7 @@ def download_logs_remote(args):
 
         if success:
             print(f"\n✓ Logs downloaded successfully to {args.destination}")
-            print(f"You can now analyze the logs locally")
+            print("You can now analyze the logs locally")
         else:
             print("\n✗ Failed to download logs")
 

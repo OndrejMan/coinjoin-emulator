@@ -1,6 +1,7 @@
 __pycache__/
 mounts/
 logs/
+venv/
 
 .python-version
 pyrightconfig.json
@@ -12,3 +13,8 @@ scenarios/joinmarket/test
 scenarios/joinmarket/basic
 logs_download
 .simulation*
+emucoinjoin.egg-info/
+.runner*
+.run-*
+*.logs
+runner_logs/
