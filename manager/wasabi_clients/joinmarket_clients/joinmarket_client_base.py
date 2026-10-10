@@ -1080,6 +1080,9 @@ class JoinMarketClientServer:
                     keys.append(key)
         return keys
 
+    def get_history(self):
+        return "This method is not available in joinmarket"
+
     def get_offer(self, round=0):
         return self.offers[round % len(self.offers)]
 
