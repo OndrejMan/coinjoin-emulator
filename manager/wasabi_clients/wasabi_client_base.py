@@ -1,6 +1,7 @@
 import json
 import random
 from time import monotonic, sleep, time
+from typing import TypedDict
 
 import requests
 
@@ -15,6 +16,15 @@ TRANSIENT_INTERNAL_ERRORS = (
     "Destination array was not long enough",
     "Collection was modified",
 )
+
+
+class WasabiCoin(TypedDict):
+    """The ``listunspentcoins`` fields that mixed-coin selection reads."""
+    txid: str
+    index: int
+    amount: int
+    anonymityScore: float
+    confirmed: bool
 
 
 def _is_transient(error) -> bool:
@@ -163,6 +173,66 @@ class WasabiClientBase:
             },
         }
         return self._rpc(request, timeout=None)
+
+    def send_mixed_coins(
+        self, destination: str, value: int | None = None, min_anon_score: float | None = None
+    ) -> dict[str, object]:
+        """Spend mixed coins to ``destination`` in one transaction without change.
+
+        Confirmed coins with an anonymity score of at least ``min_anon_score``
+        (default: above 1, i.e. coins that went through a coinjoin) are taken from
+        the most private down until they cover ``value``, or all of them when
+        ``value`` is None. The whole selection is paid out with the fee subtracted,
+        so no change output re-enters the wallet as fresh liquidity.
+        """
+        selected, total = self._select_mixed_coins(value, min_anon_score)
+        request = {
+            "method": "send",
+            "params": {
+                "payments": [{"sendto": destination, "amount": total, "label": "postmix", "subtractFee": True}],
+                "coins": [{"transactionid": coin["txid"], "index": coin["index"]} for coin in selected],
+                "feeTarget": 2,
+                "password": "",
+            },
+        }
+        result = self._rpc(request, timeout=None)
+        return {
+            "txid": result.get("txid") if isinstance(result, dict) else None,
+            "amount_sats": total,
+            "coins": [
+                {
+                    "txid": coin["txid"],
+                    "index": coin["index"],
+                    "amount": coin["amount"],
+                    "anonymity_score": coin["anonymityScore"],
+                }
+                for coin in selected
+            ],
+        }
+
+    def _select_mixed_coins(
+        self, value: int | None = None, min_anon_score: float | None = None
+    ) -> tuple[list[WasabiCoin], int]:
+        """Most private confirmed mixed coins covering ``value`` (all of them when None), and their sum."""
+        def is_mixed(coin: WasabiCoin) -> bool:
+            score = coin.get("anonymityScore") or 0
+            return score > 1 if min_anon_score is None else score >= min_anon_score
+
+        candidates = sorted(
+            (coin for coin in self._list_unspent_coins() if coin.get("confirmed") and is_mixed(coin)),
+            key=lambda coin: coin["anonymityScore"],
+            reverse=True,
+        )
+        selected = []
+        total = 0
+        for coin in candidates:
+            if value is not None and total >= value:
+                break
+            selected.append(coin)
+            total += coin["amount"]
+        if not selected or (value is not None and total < value):
+            raise RuntimeError(f"{self.name} has {total} sats of mixed coins, {value or 'any'} sats requested")
+        return selected, total
 
     def start_coinjoin(self):
         request = {
