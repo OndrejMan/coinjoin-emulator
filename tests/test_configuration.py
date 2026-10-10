@@ -128,3 +128,47 @@ def test_round_limited_tumbler_requires_a_block_limit(tmp_path: Path) -> None:
 def test_regular_taker_can_still_use_only_a_round_limit(tmp_path: Path) -> None:
     config = load_scenario(tmp_path, base_scenario({"funds": [1000], "joinmarket": {"role": "taker"}}))
     config.validate_for_engine("joinmarket")
+
+
+def test_postmix_spend_schedule_round_trips(tmp_path: Path) -> None:
+    spends = [
+        {"value": 50_000_000, "delay_rounds": 12},
+        {"all": True, "delay_blocks": 30, "delay_rounds": 20, "min_anon_score": 5},
+    ]
+    config = load_scenario(tmp_path, base_scenario({"funds": [1000], "wasabi": {"postmix_spends": spends}}))
+
+    reloaded = load_scenario(tmp_path, config.to_dict()).wallets[0].wasabi
+
+    assert reloaded is not None
+    assert reloaded.postmix_spends == config.wallets[0].wasabi.postmix_spends
+    assert [spend.all for spend in reloaded.postmix_spends] == [False, True]
+    assert reloaded.postmix_spends[0].value == 50_000_000
+    assert reloaded.postmix_spends[1].min_anon_score == 5
+
+
+@pytest.mark.parametrize(
+    ("spend", "message"),
+    [
+        ({"delay_rounds": 3}, "exactly one of 'value' and 'all'"),
+        ({"value": 1000, "all": True}, "exactly one of 'value' and 'all'"),
+        ({"value": 0}, "positive integer of satoshis"),
+        ({"value": True}, "positive integer of satoshis"),
+        ({"all": "yes"}, "must be a boolean"),
+        ({"all": True, "delay_rounds": -1}, "delay_rounds must be a non-negative integer"),
+        ({"all": True, "min_anon_score": 0}, "min_anon_score must be a positive number"),
+        ({"all": True, "destination": "x"}, "unknown fields: destination"),
+    ],
+)
+def test_invalid_postmix_spends_are_rejected(tmp_path: Path, spend: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        load_scenario(tmp_path, base_scenario({"funds": [1000], "wasabi": {"postmix_spends": [spend]}}))
+
+
+@pytest.mark.parametrize("wasabi", [{"postmix_spends": [{"all": True}]}, {"anon_score_target": 5}])
+def test_wasabi_settings_are_rejected_for_joinmarket(tmp_path: Path, wasabi: dict[str, object]) -> None:
+    wallet = {"funds": [1000], "joinmarket": {"role": "taker"}, "wasabi": wasabi}
+    config = load_scenario(tmp_path, base_scenario(wallet))
+
+    config.validate_for_engine("wasabi")
+    with pytest.raises(ValueError, match="ignored by the JoinMarket engine; remove them at indexes: 0"):
+        config.validate_for_engine("joinmarket")
