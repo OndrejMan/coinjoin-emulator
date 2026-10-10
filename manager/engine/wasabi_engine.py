@@ -365,31 +365,12 @@ class WasabiEngine(EngineBase):
 
     def store_engine_logs(self, data_path: str) -> ProducerLabelEvidence:
         try:
-            if self.backend_architecture == BackendArchitecture.SPLIT:
-                self.driver.download(
-                    "wasabi-backend",
-                    "/home/wasabi/.walletwasabi/backend/",
-                    os.path.join(data_path, "wasabi-backend-2.6"),
-                )
-                print("- stored backend-2.6 logs")
-
-                try:
-                    self.driver.download(
-                        "wasabi-coordinator",
-                        "/home/wasabi/.walletwasabi/coordinator/",
-                        os.path.join(data_path, "wasabi-coordinator"),
-                    )
-                    print("- stored coordinator logs")
-                except Exception:
-                    print("- could not store coordinator logs")
-            else:
-                # Store logs from legacy backend
-                self.driver.download(
-                    "wasabi-backend",
-                    "/home/wasabi/.walletwasabi/backend/",
-                    os.path.join(data_path, "wasabi-backend"),
-                )
-                print("- stored backend logs")
+            self.driver.download(
+                "wasabi-backend",
+                "/home/wasabi/.walletwasabi/backend/",
+                os.path.join(data_path, "wasabi-backend"),
+            )
+            print("- stored backend logs")
         except Exception:
             print("- could not store backend logs")
             return {
@@ -399,6 +380,17 @@ class WasabiEngine(EngineBase):
                 "positive_rule": "transaction id appears in a successful coordinator broadcast record",
                 "sources": [],
             }
+
+        if self.backend_architecture == BackendArchitecture.SPLIT:
+            try:
+                self.driver.download(
+                    "wasabi-coordinator",
+                    "/home/wasabi/.walletwasabi/coordinator/",
+                    os.path.join(data_path, "wasabi-coordinator"),
+                )
+                print("- stored coordinator logs")
+            except Exception:
+                print("- could not store coordinator logs")
 
         label_root = os.path.join(
             data_path,
