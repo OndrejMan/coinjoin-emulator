@@ -19,6 +19,11 @@ class FundConfig:
     delay_rounds: int | None = None
 
 
+def _is_integer(value: Any) -> bool:
+    """JSON integers only; ``bool`` is an ``int`` subclass and must not pass."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 @dataclass
 class WasabiConfig:
     """Wasabi-specific wallet settings."""
@@ -175,14 +180,7 @@ class ScenarioConfig:
             "max_coinjoins": nested_joinmarket.get("max_coinjoins"),
         }
         timeout_blocks = joinmarket_fields["coinjoin_timeout_blocks"]
-        if (
-            timeout_blocks is not None
-            and (
-                not isinstance(timeout_blocks, int)
-                or isinstance(timeout_blocks, bool)
-                or timeout_blocks <= 0
-            )
-        ):
+        if timeout_blocks is not None and (not _is_integer(timeout_blocks) or timeout_blocks <= 0):
             raise ValueError("JoinMarket coinjoin_timeout_blocks must be a positive integer")
         joinmarket_config = None
         if role_value is not None or any(value is not None for value in joinmarket_fields.values()):
