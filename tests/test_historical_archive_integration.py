@@ -22,7 +22,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = PROJECT_ROOT.parent
 DEFAULT_ARCHIVE = "2025-04-02_12-15_dynamic-0.0paranoid-0seed--wallets--50.zip"
 INTEGRATION_ENABLED = "RUN_HISTORICAL_ARCHIVE_INTEGRATION"
-LEGACY_WASABI_FIELDS = ("anon_score_target", "redcoin_isolation", "skip_rounds")
+LEGACY_WASABI_FIELDS = ("anon_score_target", "redcoin_isolation")
 
 
 def _testing_data_dir() -> Path:
@@ -75,7 +75,6 @@ def test_legacy_wasabi_settings_are_migrated_before_replay(tmp_path: Path) -> No
                 "funds": [1000],
                 "anon_score_target": 5,
                 "redcoin_isolation": False,
-                "skip_rounds": [0, 2],
             }
         ]
     }
@@ -96,14 +95,12 @@ def test_legacy_wasabi_settings_are_migrated_before_replay(tmp_path: Path) -> No
             "wasabi": {
                 "anon_score_target": 5,
                 "redcoin_isolation": False,
-                "skip_rounds": [0, 2],
             },
         }
     ]
     assert parsed.wallets[0].wasabi == WasabiConfig(
         anon_score_target=5,
         redcoin_isolation=False,
-        skip_rounds=[0, 2],
     )
 
 

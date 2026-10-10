@@ -65,7 +65,6 @@ The fields are as follows:
   - `wasabi` is an optional object with Wasabi-specific wallet settings:
     - `anon_score_target` is the target anon score of the wallet.
     - `redcoin_isolation` is a boolean value indicating whether the wallet should use redcoin isolation.
-    - `skip_rounds` is a list of round numbers the wallet skips.
 
 ## Engine
 You can run the simulation with different CoinJoin protocols. Currently, Wasabi and Joinmarket are supported. 
