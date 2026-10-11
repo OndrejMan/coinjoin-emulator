@@ -39,6 +39,36 @@ def test_nested_wasabi_config_round_trips(tmp_path: Path) -> None:
 
     assert reloaded.wallets[0].wasabi == config.wallets[0].wasabi
 
+
+def test_optional_description_is_metadata_and_does_not_change_engine_validation(tmp_path: Path) -> None:
+    scenario = base_scenario({"funds": [1000]})
+    scenario["description"] = "A human-facing catalogue label"
+    scenario["category"] = "liquidity"
+
+    config = load_scenario(tmp_path, scenario)
+
+    assert config.description == scenario["description"]
+    assert config.to_dict()["description"] == scenario["description"]
+    assert config.category == scenario["category"]
+    assert config.to_dict()["category"] == scenario["category"]
+    config.validate_for_engine("wasabi")
+
+
+def test_description_must_be_a_string_when_present(tmp_path: Path) -> None:
+    scenario = base_scenario({"funds": [1000]})
+    scenario["description"] = 42
+
+    with pytest.raises(ValueError, match="description must be a string"):
+        load_scenario(tmp_path, scenario)
+
+
+def test_category_must_be_a_non_empty_string_when_present(tmp_path: Path) -> None:
+    scenario = base_scenario({"funds": [1000]})
+    scenario["category"] = ""
+
+    with pytest.raises(ValueError, match="category must be a non-empty string"):
+        load_scenario(tmp_path, scenario)
+
 @pytest.mark.parametrize("field", ["anon_score_target", "redcoin_isolation", "skip_rounds"])
 def test_flat_wasabi_settings_are_rejected(tmp_path: Path, field: str) -> None:
     with pytest.raises(ValueError, match="flat Wasabi wallet settings"):

@@ -78,7 +78,7 @@ class WalletConfig:
 
 @dataclass
 class ScenarioConfig:
-    """Main scenario configuration."""
+    """Main scenario configuration; description and category are display-only metadata."""
     name: str
     
     rounds: int  # 0 for unlimited
@@ -87,7 +87,9 @@ class ScenarioConfig:
     default_version: str
     
     wallets: list[WalletConfig]
-    
+
+    description: str | None = None
+    category: str | None = None
     distributor_version: str | None = None
     default_anon_score_target: int | None = None
     default_redcoin_isolation: bool | None = None
@@ -98,6 +100,13 @@ class ScenarioConfig:
         """Load scenario configuration from JSON file."""
         with open(filepath) as f:
             data = json.load(f)
+
+        description = data.get("description")
+        if description is not None and not isinstance(description, str):
+            raise ValueError("scenario description must be a string")
+        category = data.get("category")
+        if category is not None and (not isinstance(category, str) or not category.strip()):
+            raise ValueError("scenario category must be a non-empty string")
         
         # Parse wallets with engine-specific configurations
         wallets = []
@@ -111,6 +120,8 @@ class ScenarioConfig:
             blocks=data["blocks"],
             default_version=data["default_version"],
             wallets=wallets,
+            description=description,
+            category=category,
             distributor_version=data.get("distributor_version"),
             default_anon_score_target=data.get("default_anon_score_target"),
             default_redcoin_isolation=data.get("default_redcoin_isolation"),
