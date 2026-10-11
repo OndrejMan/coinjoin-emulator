@@ -1,9 +1,14 @@
 """Scheduled postmix spends: wallets move mixed coins out of the pool once due."""
 
+import json
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+from manager.engine.configuration import PostmixSpendConfig, WalletConfig, WasabiConfig
+from manager.engine.wasabi.postmix_spends import PostmixSpendSchedule
 from manager.wasabi_clients.wasabi_client_base import WasabiClientBase
 
 
@@ -57,3 +62,29 @@ def test_insufficient_mixed_coins_do_not_send() -> None:
 
     client._rpc.assert_not_called()  # type: ignore[attr-defined]
 
+
+def test_stored_schedule_lists_every_spend(tmp_path: Path) -> None:
+    client = SimpleNamespace(name="wasabi-client-000")
+    spends = [PostmixSpendConfig(value=7), PostmixSpendConfig(all=True, delay_rounds=99)]
+    schedule = PostmixSpendSchedule([client], [WalletConfig(funds=[1], wasabi=WasabiConfig(postmix_spends=spends))])
+
+    schedule.store(str(tmp_path))
+
+    stored = json.loads((tmp_path / "postmix_spends.json").read_text())
+    assert stored["schema_version"] == "1.0"
+    assert [(spend["value"], spend["all"], spend["delay_rounds"]) for spend in stored["spends"]] == [
+        (7, False, 0),
+        (None, True, 99),
+    ]
+    assert {spend["wallet"] for spend in stored["spends"]} == {"wasabi-client-000"}
+    assert {spend["status"] for spend in stored["spends"]} == {"not_due"}
+
+
+def test_wallets_without_a_schedule_add_nothing() -> None:
+    clients = [SimpleNamespace(name="wasabi-client-000"), SimpleNamespace(name="wasabi-client-001")]
+
+    schedule = PostmixSpendSchedule(
+        clients, [WalletConfig(funds=[1]), WalletConfig(funds=[1], wasabi=WasabiConfig(anon_score_target=5))]
+    )
+
+    assert schedule.spends == []
