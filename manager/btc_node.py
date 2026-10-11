@@ -93,6 +93,10 @@ class BtcNode:
 
         return isinstance(mined, list) and len(mined) == count
 
+    def get_new_address(self):
+        """Return a fresh address of the funding wallet, outside every mixing wallet."""
+        return self._rpc({"method": "getnewaddress", "params": []}, WALLET)
+
     def fund_address(self, address, amount):
         request = {
             "method": "sendtoaddress",

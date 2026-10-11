@@ -3,12 +3,12 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
 from manager.engine.configuration import PostmixSpendConfig, WalletConfig, WasabiConfig
-from manager.engine.wasabi.postmix_spends import PostmixSpendSchedule
+from manager.engine.wasabi.postmix_spends import POSTMIX_RETRY_SECONDS, PostmixSpendSchedule
 from manager.wasabi_clients.wasabi_client_base import WasabiClientBase
 
 
@@ -61,6 +61,64 @@ def test_insufficient_mixed_coins_do_not_send() -> None:
         client.send_mixed_coins("bcrt1external", 5_000)
 
     client._rpc.assert_not_called()  # type: ignore[attr-defined]
+
+
+def spending_schedule(spends: list[PostmixSpendConfig]) -> tuple[PostmixSpendSchedule, Mock, Mock]:
+    node = Mock()
+    node.get_new_address.return_value = "bcrt1external"
+    client = Mock()
+    client.name = "wasabi-client-000"
+    client.send_mixed_coins.return_value = {"txid": "e" * 64, "amount_sats": 7, "coins": []}
+    schedule = PostmixSpendSchedule([client], [WalletConfig(funds=[1], wasabi=WasabiConfig(postmix_spends=spends))])
+    return schedule, client, node
+
+
+def test_spend_waits_for_both_delays_then_stops_mixing_and_sends() -> None:
+    schedule, client, node = spending_schedule([PostmixSpendConfig(value=7, delay_rounds=3, delay_blocks=5)])
+
+    schedule.update(node, current_block=4, current_round=3)
+    client.send_mixed_coins.assert_not_called()
+
+    schedule.update(node, current_block=5, current_round=3)
+    schedule.update(node, current_block=5, current_round=3)
+
+    client.stop_coinjoin.assert_called_once_with()
+    client.send_mixed_coins.assert_called_once_with("bcrt1external", 7, None)
+    spend = schedule.spends[0]
+    assert spend.status == "sent"
+    assert (spend.sent["txid"], spend.sent["round"], spend.sent["block"], spend.sent["destination"]) == ("e" * 64, 3, 5, "bcrt1external")
+
+
+def test_failed_spend_is_retried_after_a_pause() -> None:
+    schedule, client, node = spending_schedule([PostmixSpendConfig(all=True)])
+    client.send_mixed_coins.side_effect = [RuntimeError("coin in round"), {"txid": "d" * 64, "amount_sats": 1, "coins": []}]
+
+    with patch(
+        "manager.engine.wasabi.postmix_spends.time.time",
+        side_effect=[100.0, 100.0, 101.0, 100.0 + POSTMIX_RETRY_SECONDS],
+    ):
+        schedule.update(node, 0, 0)
+        assert schedule.spends[0].status == "failed"
+        assert schedule.spends[0].last_error == "coin in round"
+        schedule.update(node, 0, 0)
+        assert client.send_mixed_coins.call_count == 1
+        schedule.update(node, 0, 0)
+
+    client.send_mixed_coins.assert_called_with("bcrt1external", None, None)
+    assert schedule.spends[0].status == "sent"
+    assert schedule.spends[0].attempts == 2
+
+
+def test_stored_schedule_records_every_outcome(tmp_path: Path) -> None:
+    schedule, _, node = spending_schedule([PostmixSpendConfig(value=7), PostmixSpendConfig(all=True, delay_rounds=99)])
+    schedule.update(node, current_block=0, current_round=1)
+
+    schedule.store(str(tmp_path))
+
+    stored = json.loads((tmp_path / "postmix_spends.json").read_text())
+    assert [spend["status"] for spend in stored["spends"]] == ["sent", "not_due"]
+    assert (stored["spends"][0]["txid"], stored["spends"][0]["attempts"]) == ("e" * 64, 1)
+    assert "next_attempt_at" not in stored["spends"][0]
 
 
 def test_stored_schedule_lists_every_spend(tmp_path: Path) -> None:

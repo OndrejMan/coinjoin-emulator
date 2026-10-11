@@ -484,6 +484,13 @@ class WasabiEngine(EngineBase):
     def prepare_wallet_schedules(self, wallets: list[WalletConfig]):
         self.postmix_spends = PostmixSpendSchedule(self.clients, wallets)
 
+    def update_postmix_spends(self):
+        if self.postmix_spends is None:
+            return
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        self.postmix_spends.update(self.node, self.current_block, self.current_round)
+
     def store_engine_data(self, data_path: str):
         if self.postmix_spends is not None:
             self.postmix_spends.store(data_path)
@@ -544,6 +551,7 @@ class WasabiEngine(EngineBase):
                         raise RuntimeError("Could not refresh Wasabi block count after 3 attempts") from e
 
             self.update_invoice_payments()
+            self.update_postmix_spends()
             self.update_coinjoins()
             print(
                 f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60),

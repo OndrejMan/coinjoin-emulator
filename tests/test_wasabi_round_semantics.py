@@ -60,6 +60,7 @@ def test_the_run_stops_clients_before_settlement_after_the_round_limit() -> None
     engine.current_block = 0
     engine._get_current_round = Mock(return_value=1)  # pylint: disable=protected-access
     engine.update_invoice_payments = Mock()
+    engine.update_postmix_spends = Mock()
 
     with patch("manager.engine.wasabi_engine.sleep"):
         engine.run_engine()
