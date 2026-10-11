@@ -16,6 +16,7 @@ import requests
 from manager.engine.base.manifest import ProducerLabelEvidence
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
 from manager.engine.engine_base import EngineBase
+from manager.engine.wasabi.postmix_spends import PostmixSpendSchedule
 from manager.wasabi_backend_factory import (
     BackendArchitecture,
     create_backend,
@@ -63,6 +64,7 @@ class WasabiEngine(EngineBase):
         self.backend: WasabiBackendProtocol | None = None
         self.backend_architecture: BackendArchitecture | None = None
         self.round_ids: set[str] = set()
+        self.postmix_spends: PostmixSpendSchedule | None = None
         super().__init__(args, driver, WASABI_CLIENT_DATA_PATH)
 
     def default_scenario(self) -> ScenarioConfig:
@@ -478,6 +480,13 @@ class WasabiEngine(EngineBase):
         ) or (
             self.scenario.blocks > 0 and self.current_block >= self.scenario.blocks
         )
+
+    def prepare_wallet_schedules(self, wallets: list[WalletConfig]):
+        self.postmix_spends = PostmixSpendSchedule(self.clients, wallets)
+
+    def store_engine_data(self, data_path: str):
+        if self.postmix_spends is not None:
+            self.postmix_spends.store(data_path)
 
     def update_coinjoins(self):
         def start_condition(client):
