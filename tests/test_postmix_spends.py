@@ -109,6 +109,18 @@ def test_failed_spend_is_retried_after_a_pause() -> None:
     assert schedule.spends[0].attempts == 2
 
 
+def test_spend_short_of_mixed_coins_keeps_the_wallet_mixing() -> None:
+    schedule, client, node = spending_schedule([PostmixSpendConfig(value=7)])
+    client.check_mixed_coins.side_effect = RuntimeError("wasabi-client-000 has 3 sats of mixed coins, 7 sats requested")
+
+    schedule.update(node, current_block=0, current_round=0)
+
+    client.check_mixed_coins.assert_called_once_with(7, None)
+    client.stop_coinjoin.assert_not_called()
+    client.send_mixed_coins.assert_not_called()
+    assert schedule.spends[0].status == "failed"
+
+
 def test_stored_schedule_records_every_outcome(tmp_path: Path) -> None:
     schedule, _, node = spending_schedule([PostmixSpendConfig(value=7), PostmixSpendConfig(all=True, delay_rounds=99)])
     schedule.update(node, current_block=0, current_round=1)
