@@ -210,6 +210,10 @@ class WasabiClientBase:
             ],
         }
 
+    def check_mixed_coins(self, value: int | None = None, min_anon_score: float | None = None) -> None:
+        """Raise like ``send_mixed_coins`` when the mixed coins cannot cover ``value`` yet."""
+        self._select_mixed_coins(value, min_anon_score)
+
     def _select_mixed_coins(
         self, value: int | None = None, min_anon_score: float | None = None
     ) -> tuple[list[WasabiCoin], int]:

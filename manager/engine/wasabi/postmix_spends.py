@@ -29,6 +29,9 @@ class SpendingClient(Protocol):
     def stop_coinjoin(self) -> object:
         """Stop mixing so no coin is registered in a running round."""
 
+    def check_mixed_coins(self, value: int | None = None, min_anon_score: float | None = None) -> None:
+        """Raise when the wallet's mixed coins cannot cover ``value`` yet."""
+
     def send_mixed_coins(
         self, destination: str, value: int | None = None, min_anon_score: float | None = None
     ) -> dict[str, object]:
@@ -124,10 +127,14 @@ class PostmixSpendSchedule:
     @staticmethod
     def _pay_out(client: SpendingClient, spend: PostmixSpend, node: FundingNode) -> dict[str, object]:
         """Pay the spend's mixed coins to a fresh funding-wallet address."""
+        value = None if spend.all else spend.value
+        # Stopping cancels the wallet's round, so a wallet still short of mixed coins
+        # would never mix more if every retry stopped it.
+        client.check_mixed_coins(value, spend.min_anon_score)
         # A coin registered in a running round cannot be spent safely.
         client.stop_coinjoin()
         destination = node.get_new_address()
-        result = client.send_mixed_coins(destination, None if spend.all else spend.value, spend.min_anon_score)
+        result = client.send_mixed_coins(destination, value, spend.min_anon_score)
         return result | {"destination": destination}
 
     def store(self, data_path: str) -> None:
