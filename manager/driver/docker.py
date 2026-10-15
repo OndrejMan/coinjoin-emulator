@@ -11,6 +11,7 @@ from . import (
     Driver,
     managed_label_filters,
     managed_labels,
+    upload_archive,
     warn_if_host_ports_unreserved,
 )
 
@@ -160,11 +161,8 @@ class DockerDriver(Driver):
         return self.client.containers.get(name).logs(stdout=True, stderr=True).decode(errors="replace")
 
     def upload(self, name, src_path, dst_path):
-        fo = BytesIO()
-        with tarfile.open(fileobj=fo, mode="w") as tar:
-            tar.add(src_path, os.path.basename(dst_path))
-        fo.seek(0)
-        self.client.containers.get(name).put_archive(os.path.dirname(dst_path), fo)
+        container = self.client.containers.get(name)
+        container.put_archive(os.path.dirname(dst_path), upload_archive(container, src_path, dst_path))
 
     def cleanup(self, image_prefix=""):
         containers = self.client.containers.list(
