@@ -20,8 +20,13 @@ RUN dotnet build -c Release
 FROM mcr.microsoft.com/dotnet/aspnet:6.0
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
 
-# Install SkiaSharp dependencies
-RUN apt-get update && apt-get install -y \
+# Install SkiaSharp dependencies from the snapshot paired with this EOL base image.
+RUN sed -i \
+        -e 's|^# deb http://snapshot.debian.org/archive/|deb http://snapshot.debian.org/archive/|' \
+        -e 's|^deb http://deb.debian.org/|# deb http://deb.debian.org/|' \
+        /etc/apt/sources.list \
+    && apt-get -o Acquire::Check-Valid-Until=false update \
+    && apt-get install -y \
     libfontconfig1 \
     libharfbuzz0b \
     libfreetype6 \
@@ -42,8 +47,6 @@ RUN useradd -ms /bin/sh wasabi
 
 # Needs to be numeric for kubernetes security context
 USER 1000:1000
-RUN ls /usr/lib/x86_64-linux-gnu/
-#RUN chown wasabi:wasabi /usr/lib/x86_64-linux-gnu/libX11.so.6
 COPY --from=0 --chown=wasabi:wasabi /wasabi-src/WalletWasabi.Fluent.Desktop/bin/Release/net6.0 /home/wasabi/
 COPY --chown=wasabi:wasabi run.sh /home/wasabi/
 COPY --chown=wasabi:wasabi Config.json /home/wasabi/

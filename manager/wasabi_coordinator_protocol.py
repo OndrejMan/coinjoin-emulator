@@ -1,6 +1,6 @@
 """Protocol definition for Wasabi coordinator implementations."""
 
-from typing import Protocol, Any
+from typing import Any, Protocol
 
 
 class WasabiCoordinatorProtocol(Protocol):
@@ -27,6 +27,6 @@ class WasabiCoordinatorProtocol(Protocol):
         """
         ...
     
-    def wait_ready(self) -> None:
+    def wait_ready(self, timeout: int = 120) -> None:
         """Wait for coordinator to be ready."""
         ...

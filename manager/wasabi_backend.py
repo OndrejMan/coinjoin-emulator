@@ -1,6 +1,7 @@
 import json
+from time import monotonic, sleep
+
 import requests
-from time import sleep
 
 WALLET_NAME = "wallet"
 
@@ -38,11 +39,13 @@ class WasabiBackend:
         )
         return response.json()
 
-    def wait_ready(self):
-        while True:
+    def wait_ready(self, timeout=120):
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
             try:
                 self._get_status()
-                break
-            except:
+                return
+            except Exception:
                 pass
             sleep(0.1)
+        raise TimeoutError(f"{self.__class__.__name__} at {self.host}:{self.port} was not ready after {timeout}s")
