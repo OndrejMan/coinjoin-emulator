@@ -1,5 +1,6 @@
 import json
 import random
+from collections.abc import Callable
 from time import monotonic, sleep, time
 from typing import TypedDict
 
@@ -175,7 +176,11 @@ class WasabiClientBase:
         return self._rpc(request, timeout=None)
 
     def send_mixed_coins(
-        self, destination: str, value: int | None = None, min_anon_score: float | None = None
+        self,
+        destination: str,
+        value: int | None = None,
+        min_anon_score: float | None = None,
+        unspent: Callable[[str, int], bool] | None = None,
     ) -> dict[str, object]:
         """Spend mixed coins to ``destination`` in one transaction without change.
 
@@ -183,9 +188,10 @@ class WasabiClientBase:
         (default: above 1, i.e. coins that went through a coinjoin) are taken from
         the most private down until they cover ``value``, or all of them when
         ``value`` is None. The whole selection is paid out with the fee subtracted,
-        so no change output re-enters the wallet as fresh liquidity.
+        so no change output re-enters the wallet as fresh liquidity. ``unspent``
+        drops coins the node already sees spent; see ``_select_mixed_coins``.
         """
-        selected, total = self._select_mixed_coins(value, min_anon_score)
+        selected, total = self._select_mixed_coins(value, min_anon_score, unspent)
         request = {
             "method": "send",
             "params": {
@@ -210,20 +216,39 @@ class WasabiClientBase:
             ],
         }
 
-    def check_mixed_coins(self, value: int | None = None, min_anon_score: float | None = None) -> None:
+    def check_mixed_coins(
+        self,
+        value: int | None = None,
+        min_anon_score: float | None = None,
+        unspent: Callable[[str, int], bool] | None = None,
+    ) -> None:
         """Raise like ``send_mixed_coins`` when the mixed coins cannot cover ``value`` yet."""
-        self._select_mixed_coins(value, min_anon_score)
+        self._select_mixed_coins(value, min_anon_score, unspent)
 
     def _select_mixed_coins(
-        self, value: int | None = None, min_anon_score: float | None = None
+        self,
+        value: int | None = None,
+        min_anon_score: float | None = None,
+        unspent: Callable[[str, int], bool] | None = None,
     ) -> tuple[list[WasabiCoin], int]:
-        """Most private confirmed mixed coins covering ``value`` (all of them when None), and their sum."""
+        """Most private confirmed mixed coins covering ``value`` (all of them when None), and their sum.
+
+        The wallet sees no mempool, so a coinjoin it just signed leaves its inputs
+        listed as unspent until a block confirms it; spending them again is a
+        low-fee replacement the node rejects. ``unspent`` asks the node instead.
+        """
         def is_mixed(coin: WasabiCoin) -> bool:
             score = coin.get("anonymityScore") or 0
             return score > 1 if min_anon_score is None else score >= min_anon_score
 
         candidates = sorted(
-            (coin for coin in self._list_unspent_coins() if coin.get("confirmed") and is_mixed(coin)),
+            (
+                coin
+                for coin in self._list_unspent_coins()
+                if coin.get("confirmed")
+                and is_mixed(coin)
+                and (unspent is None or unspent(coin["txid"], coin["index"]))
+            ),
             key=lambda coin: coin["anonymityScore"],
             reverse=True,
         )

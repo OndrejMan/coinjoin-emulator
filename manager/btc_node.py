@@ -97,6 +97,10 @@ class BtcNode:
         """Return a fresh address of the funding wallet, outside every mixing wallet."""
         return self._rpc({"method": "getnewaddress", "params": []}, WALLET)
 
+    def is_unspent(self, txid: str, index: int) -> bool:
+        """Whether the output is unspent, counting spends still in the mempool."""
+        return self._rpc({"method": "gettxout", "params": [txid, index, True]}) is not None
+
     def fund_address(self, address, amount):
         request = {
             "method": "sendtoaddress",
