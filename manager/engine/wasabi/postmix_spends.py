@@ -3,7 +3,7 @@
 import json
 import os
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Protocol
 
@@ -20,6 +20,9 @@ class FundingNode(Protocol):
     def get_new_address(self) -> str:
         """Return a fresh address of the funding wallet."""
 
+    def is_unspent(self, txid: str, index: int) -> bool:
+        """Whether the output is unspent, counting spends still in the mempool."""
+
 
 class SpendingClient(Protocol):
     """The Wasabi client calls a postmix spend needs."""
@@ -29,11 +32,20 @@ class SpendingClient(Protocol):
     def stop_coinjoin(self) -> object:
         """Stop mixing so no coin is registered in a running round."""
 
-    def check_mixed_coins(self, value: int | None = None, min_anon_score: float | None = None) -> None:
+    def check_mixed_coins(
+        self,
+        value: int | None = None,
+        min_anon_score: float | None = None,
+        unspent: Callable[[str, int], bool] | None = None,
+    ) -> None:
         """Raise when the wallet's mixed coins cannot cover ``value`` yet."""
 
     def send_mixed_coins(
-        self, destination: str, value: int | None = None, min_anon_score: float | None = None
+        self,
+        destination: str,
+        value: int | None = None,
+        min_anon_score: float | None = None,
+        unspent: Callable[[str, int], bool] | None = None,
     ) -> dict[str, object]:
         """Pay mixed coins to ``destination`` without change and describe the transaction."""
 
@@ -130,11 +142,12 @@ class PostmixSpendSchedule:
         value = None if spend.all else spend.value
         # Stopping cancels the wallet's round, so a wallet still short of mixed coins
         # would never mix more if every retry stopped it.
-        client.check_mixed_coins(value, spend.min_anon_score)
+        # The node, unlike the wallet, already knows which coins a coinjoin spent.
+        client.check_mixed_coins(value, spend.min_anon_score, node.is_unspent)
         # A coin registered in a running round cannot be spent safely.
         client.stop_coinjoin()
         destination = node.get_new_address()
-        result = client.send_mixed_coins(destination, value, spend.min_anon_score)
+        result = client.send_mixed_coins(destination, value, spend.min_anon_score, node.is_unspent)
         return result | {"destination": destination}
 
     def store(self, data_path: str) -> None:

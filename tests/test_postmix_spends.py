@@ -63,6 +63,25 @@ def test_insufficient_mixed_coins_do_not_send() -> None:
     client._rpc.assert_not_called()  # type: ignore[attr-defined]
 
 
+def test_coins_the_node_sees_spent_are_skipped() -> None:
+    # The wallet still lists the inputs of a coinjoin waiting in the mempool.
+    client = wasabi_client(
+        [coin("in-coinjoin", 9_000_000, 9.0), coin("free", 3_000_000, 4.0), coin("also-free", 2_000_000, 3.0)]
+    )
+
+    result = client.send_mixed_coins("bcrt1external", 4_000_000, unspent=lambda txid, _index: txid != "in-coinjoin")
+
+    assert [item["txid"] for item in result["coins"]] == ["free", "also-free"]
+    assert result["amount_sats"] == 5_000_000
+
+
+def test_coins_spent_in_the_mempool_do_not_count_as_mixed() -> None:
+    client = wasabi_client([coin("in-coinjoin", 9_000_000, 9.0), coin("free", 1_000, 4.0)])
+
+    with pytest.raises(RuntimeError, match="1000 sats of mixed coins, 5000 sats requested"):
+        client.check_mixed_coins(5_000, unspent=lambda txid, _index: txid != "in-coinjoin")
+
+
 def spending_schedule(spends: list[PostmixSpendConfig]) -> tuple[PostmixSpendSchedule, Mock, Mock]:
     node = Mock()
     node.get_new_address.return_value = "bcrt1external"
@@ -83,7 +102,7 @@ def test_spend_waits_for_both_delays_then_stops_mixing_and_sends() -> None:
     schedule.update(node, current_block=5, current_round=3)
 
     client.stop_coinjoin.assert_called_once_with()
-    client.send_mixed_coins.assert_called_once_with("bcrt1external", 7, None)
+    client.send_mixed_coins.assert_called_once_with("bcrt1external", 7, None, node.is_unspent)
     spend = schedule.spends[0]
     assert spend.status == "sent"
     assert (spend.sent["txid"], spend.sent["round"], spend.sent["block"], spend.sent["destination"]) == ("e" * 64, 3, 5, "bcrt1external")
@@ -104,7 +123,7 @@ def test_failed_spend_is_retried_after_a_pause() -> None:
         assert client.send_mixed_coins.call_count == 1
         schedule.update(node, 0, 0)
 
-    client.send_mixed_coins.assert_called_with("bcrt1external", None, None)
+    client.send_mixed_coins.assert_called_with("bcrt1external", None, None, node.is_unspent)
     assert schedule.spends[0].status == "sent"
     assert schedule.spends[0].attempts == 2
 
@@ -115,7 +134,7 @@ def test_spend_short_of_mixed_coins_keeps_the_wallet_mixing() -> None:
 
     schedule.update(node, current_block=0, current_round=0)
 
-    client.check_mixed_coins.assert_called_once_with(7, None)
+    client.check_mixed_coins.assert_called_once_with(7, None, node.is_unspent)
     client.stop_coinjoin.assert_not_called()
     client.send_mixed_coins.assert_not_called()
     assert schedule.spends[0].status == "failed"
