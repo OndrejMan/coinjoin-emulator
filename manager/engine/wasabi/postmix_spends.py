@@ -46,6 +46,7 @@ class SpendingClient(Protocol):
         value: int | None = None,
         min_anon_score: float | None = None,
         unspent: Callable[[str, int], bool] | None = None,
+        coin_selection: str = "anon_score",
     ) -> dict[str, object]:
         """Pay mixed coins to ``destination`` without change and describe the transaction."""
 
@@ -61,6 +62,7 @@ class PostmixSpend:
     delay_blocks: int
     delay_rounds: int
     min_anon_score: float | None
+    coin_selection: str = "anon_score"
     status: str = "not_due"
     attempts: int = 0
     last_error: str | None = None
@@ -77,6 +79,7 @@ class PostmixSpend:
             delay_blocks=config.delay_blocks or 0,
             delay_rounds=config.delay_rounds or 0,
             min_anon_score=config.min_anon_score,
+            coin_selection=config.coin_selection,
         )
 
     def due(self, current_block: int, current_round: int) -> bool:
@@ -147,7 +150,9 @@ class PostmixSpendSchedule:
         # A coin registered in a running round cannot be spent safely.
         client.stop_coinjoin()
         destination = node.get_new_address()
-        result = client.send_mixed_coins(destination, value, spend.min_anon_score, node.is_unspent)
+        result = client.send_mixed_coins(
+            destination, value, spend.min_anon_score, node.is_unspent, spend.coin_selection
+        )
         return result | {"destination": destination}
 
     def store(self, data_path: str) -> None:

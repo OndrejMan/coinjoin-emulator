@@ -181,17 +181,18 @@ class WasabiClientBase:
         value: int | None = None,
         min_anon_score: float | None = None,
         unspent: Callable[[str, int], bool] | None = None,
+        coin_selection: str = "anon_score",
     ) -> dict[str, object]:
         """Spend mixed coins to ``destination`` in one transaction without change.
 
         Confirmed coins with an anonymity score of at least ``min_anon_score``
-        (default: above 1, i.e. coins that went through a coinjoin) are taken from
-        the most private down until they cover ``value``, or all of them when
-        ``value`` is None. The whole selection is paid out with the fee subtracted,
-        so no change output re-enters the wallet as fresh liquidity. ``unspent``
-        drops coins the node already sees spent; see ``_select_mixed_coins``.
+        (default: above 1, i.e. coins that went through a coinjoin) cover ``value``,
+        or all of them are taken when ``value`` is None; ``coin_selection`` decides
+        which coins cover it, see ``_select_mixed_coins``. The whole selection is
+        paid out with the fee subtracted, so no change output re-enters the wallet
+        as fresh liquidity. ``unspent`` drops coins the node already sees spent.
         """
-        selected, total = self._select_mixed_coins(value, min_anon_score, unspent)
+        selected, total = self._select_mixed_coins(value, min_anon_score, unspent, coin_selection)
         request = {
             "method": "send",
             "params": {
@@ -239,13 +240,32 @@ class WasabiClientBase:
             total += coin["amount"]
         return selected, total
 
+    @staticmethod
+    def _select_coins_by_amount(candidates: list[WasabiCoin], value: int) -> tuple[list[WasabiCoin], int]:
+        """Take coins that keep the amount above ``value`` small."""
+        remaining = sorted(candidates, key=lambda coin: coin["amount"])
+        selected = []
+        total = 0
+        while remaining and total < value:
+            covering = [coin for coin in remaining if coin["amount"] >= value - total]
+            coin = covering[0] if covering else remaining[-1]
+            remaining.remove(coin)
+            selected.append(coin)
+            total += coin["amount"]
+        return selected, total
+
     def _select_mixed_coins(
         self,
         value: int | None = None,
         min_anon_score: float | None = None,
         unspent: Callable[[str, int], bool] | None = None,
+        coin_selection: str = "anon_score",
     ) -> tuple[list[WasabiCoin], int]:
-        """Most private confirmed mixed coins covering ``value`` (all of them when None), and their sum.
+        """Confirmed mixed coins covering ``value`` (all of them when None), and their sum.
+
+        ``anon_score`` takes the most private coins first, so one big coin can pay
+        out far more than ``value``. ``amount`` keeps the overshoot small: it takes
+        the smallest coin that covers what is left, or the largest coin when none does.
 
         The wallet sees no mempool, so a coinjoin it just signed leaves its inputs
         listed as unspent until a block confirms it; spending them again is a
@@ -271,8 +291,12 @@ class WasabiClientBase:
         if value is None:
             selected = candidates
             total = sum(coin["amount"] for coin in selected)
-        else:
+        elif coin_selection == "amount":
+            selected, total = self._select_coins_by_amount(candidates, value)
+        elif coin_selection == "anon_score":
             selected, total = self._select_coins_by_anon_score(candidates, value)
+        else:
+            raise ValueError(f"unsupported coin selection: {coin_selection}")
         if not selected or (value is not None and total < value):
             raise RuntimeError(f"{self.name} has {total} sats of mixed coins, {value or 'any'} sats requested")
         return selected, total

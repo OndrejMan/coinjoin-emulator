@@ -164,6 +164,8 @@ def test_postmix_spend_schedule_round_trips(tmp_path: Path) -> None:
     spends = [
         {"value": 50_000_000, "delay_rounds": 12},
         {"all": True, "delay_blocks": 30, "delay_rounds": 20, "min_anon_score": 5},
+        {"value": 19_800_000, "coin_selection": "amount"},
+        {"value": 1_000},
     ]
     config = load_scenario(tmp_path, base_scenario({"funds": [1000], "wasabi": {"postmix_spends": spends}}))
 
@@ -171,9 +173,10 @@ def test_postmix_spend_schedule_round_trips(tmp_path: Path) -> None:
 
     assert reloaded is not None
     assert reloaded.postmix_spends == config.wallets[0].wasabi.postmix_spends
-    assert [spend.all for spend in reloaded.postmix_spends] == [False, True]
+    assert [spend.all for spend in reloaded.postmix_spends] == [False, True, False, False]
     assert reloaded.postmix_spends[0].value == 50_000_000
     assert reloaded.postmix_spends[1].min_anon_score == 5
+    assert [spend.coin_selection for spend in reloaded.postmix_spends] == ["anon_score", "anon_score", "amount", "anon_score"]
 
 
 @pytest.mark.parametrize(
@@ -186,6 +189,9 @@ def test_postmix_spend_schedule_round_trips(tmp_path: Path) -> None:
         ({"all": "yes"}, "must be a boolean"),
         ({"all": True, "delay_rounds": -1}, "delay_rounds must be a non-negative integer"),
         ({"all": True, "min_anon_score": 0}, "min_anon_score must be a positive number"),
+        ({"value": 1000, "coin_selection": None}, "coin_selection must be one of: anon_score, amount"),
+        ({"value": 1000, "coin_selection": ""}, "coin_selection must be one of: anon_score, amount"),
+        ({"value": 1000, "coin_selection": "fifo"}, "coin_selection must be one of: anon_score, amount"),
         ({"all": True, "destination": "x"}, "unknown fields: destination"),
     ],
 )

@@ -24,19 +24,25 @@ def _is_integer(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+COIN_SELECTIONS = ("anon_score", "amount")
+
+
 @dataclass
 class PostmixSpendConfig:
     """One spend of mixed coins to an address outside the mix.
 
     Exactly one of ``value`` (spend at least this many satoshis) and ``all``
     (spend every mixed coin) is set. The spend becomes due once both delays
-    are reached, like a delayed fund.
+    are reached, like a delayed fund. ``coin_selection`` picks the coins that
+    cover ``value``: ``anon_score`` (the most private first) or ``amount``
+    (the least overshoot).
     """
     value: int | None = None
     all: bool = False
     delay_blocks: int | None = None
     delay_rounds: int | None = None
     min_anon_score: float | None = None  # coins at or above count as mixed; default: above 1
+    coin_selection: str = "anon_score"
 
 
 @dataclass
@@ -248,7 +254,7 @@ class ScenarioConfig:
         """Parse and validate one postmix spend; ``index`` names it in errors."""
         if not isinstance(entry, dict):
             raise ValueError(f"postmix spend {index} must be an object")
-        unknown = set(entry) - {"value", "all", "delay_blocks", "delay_rounds", "min_anon_score"}
+        unknown = set(entry) - {"value", "all", "delay_blocks", "delay_rounds", "min_anon_score", "coin_selection"}
         if unknown:
             raise ValueError(f"postmix spend {index} has unknown fields: {', '.join(sorted(unknown))}")
         value = entry.get("value")
@@ -268,12 +274,16 @@ class ScenarioConfig:
             isinstance(min_anon_score, bool) or not isinstance(min_anon_score, (int, float)) or min_anon_score <= 0
         ):
             raise ValueError(f"postmix spend {index} min_anon_score must be a positive number")
+        coin_selection = entry.get("coin_selection", "anon_score")
+        if coin_selection not in COIN_SELECTIONS:
+            raise ValueError(f"postmix spend {index} coin_selection must be one of: {', '.join(COIN_SELECTIONS)}")
         return PostmixSpendConfig(
             value=value,
             all=spend_all,
             delay_blocks=entry.get("delay_blocks"),
             delay_rounds=entry.get("delay_rounds"),
             min_anon_score=min_anon_score,
+            coin_selection=coin_selection,
         )
 
     def to_dict(self) -> dict[str, Any]:
