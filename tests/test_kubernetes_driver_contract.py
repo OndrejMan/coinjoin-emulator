@@ -682,3 +682,41 @@ def test_long_names_stay_within_the_dns_label_limit() -> None:
 
     assert len(name) == 63
     assert len(name.rsplit("-", maxsplit=1)[1]) == 16
+
+
+def test_a_pending_pod_reports_why_it_cannot_be_scheduled() -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod_status.return_value = SimpleNamespace(status=SimpleNamespace(
+        phase="Pending",
+        reason=None,
+        message=None,
+        conditions=[SimpleNamespace(
+            type="PodScheduled",
+            status="False",
+            reason="Unschedulable",
+            message="0/6 nodes are available: 6 Insufficient cpu.",
+        )],
+        container_statuses=None,
+    ))
+
+    assert instance.container_state("wasabi-backend") == (
+        "pod phase Pending; unschedulable: Unschedulable: 0/6 nodes are available: 6 Insufficient cpu."
+    )
+
+
+def test_an_exited_container_reports_its_reason_and_exit_code() -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod_status.return_value = SimpleNamespace(status=SimpleNamespace(
+        phase="Failed",
+        reason=None,
+        message=None,
+        conditions=[SimpleNamespace(type="PodScheduled", status="True", reason=None, message=None)],
+        container_statuses=[SimpleNamespace(state=SimpleNamespace(
+            waiting=None,
+            terminated=SimpleNamespace(reason="OOMKilled", exit_code=137),
+        ))],
+    ))
+
+    assert instance.container_state("wasabi-backend") == (
+        "pod phase Failed; container terminated: OOMKilled (exit code 137)"
+    )

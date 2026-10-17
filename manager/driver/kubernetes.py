@@ -129,6 +129,28 @@ def _host_path_volumes(volumes):
     return volume_mounts, pod_volumes
 
 
+def _format_pod_status(status):
+    phase = getattr(status, "phase", None)
+    if phase is None:
+        return None
+    details = [f"pod phase {phase}"]
+    details += [str(value) for value in (getattr(status, "reason", None), getattr(status, "message", None)) if value]
+    # A Pending pod's only explanation is its scheduling condition, and an
+    # exited container's reason and exit code are what tell OOMKilled from a crash.
+    for condition in getattr(status, "conditions", None) or []:
+        if condition.type == "PodScheduled" and condition.status == "False":
+            details.append(f"unschedulable: {condition.reason}: {condition.message}")
+    for container in getattr(status, "container_statuses", None) or []:
+        state = getattr(container, "state", None)
+        waiting = getattr(state, "waiting", None)
+        terminated = getattr(state, "terminated", None)
+        if waiting is not None:
+            details.append(f"container waiting: {waiting.reason}: {waiting.message}")
+        elif terminated is not None:
+            details.append(f"container terminated: {terminated.reason} (exit code {terminated.exit_code})")
+    return "; ".join(details)
+
+
 class KubernetesDriver(Driver):
     def __init__(self, namespace="coinjoin", reuse_namespace=False, pull_secret_path=None, in_cluster=False,
                  run_id=None):
@@ -552,10 +574,7 @@ class KubernetesDriver(Driver):
             pod = self.client.read_namespaced_pod_status(name=resource, namespace=self.namespace)
         except Exception:  # pylint: disable=broad-exception-caught
             return None
-        phase = getattr(getattr(pod, "status", None), "phase", None)
-        if phase is None:
-            return None
-        return f"pod phase {phase}"
+        return _format_pod_status(getattr(pod, "status", None))
 
     def _require_exec_ready(self, name):
         pod = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace)
