@@ -26,6 +26,7 @@ from manager.engine.configuration import (  # noqa: E402
 )
 from manager.engine.engine_base import EngineBase, write_producer_label_manifest  # noqa: E402
 from manager.engine.joinmarket_engine import JoinmarketEngine  # noqa: E402
+from manager.run_log import RunLog  # noqa: E402
 
 
 def load_entrypoint():
@@ -169,6 +170,23 @@ def test_store_logs_writes_the_emulator_artifact_layout(tmp_path, monkeypatch):
     with zipfile.ZipFile(experiment / "emulation_logs.zip") as archive:
         roots = {name.split("/")[0] for name in archive.namelist()}
     assert roots == {"coinjoin_emulator_data"}
+
+
+def test_store_logs_archives_the_manager_output(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    engine = make_engine(run_id="my-run")
+    engine.run_log = RunLog().install()
+    try:
+        print("- could not start distributor (application timeout 900 seconds)")
+        engine.store_logs()
+    finally:
+        engine.run_log.close()
+
+    experiment = tmp_path / "logs" / "my-run" / "coinjoin_emulator_data"
+    manager_log = (experiment / "manager.log").read_text(encoding="utf-8")
+    assert "- could not start distributor (application timeout 900 seconds)" in manager_log
+    with zipfile.ZipFile(experiment / "emulation_logs.zip") as archive:
+        assert "coinjoin_emulator_data/manager.log" in archive.namelist()
 
 
 def test_store_logs_skips_block_export_when_tip_is_unavailable(tmp_path, monkeypatch):

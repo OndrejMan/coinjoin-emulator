@@ -14,6 +14,7 @@ from manager.btc_node import BtcNode
 from manager.engine.base.manifest import write_producer_label_manifest
 from manager.engine.configuration import FundConfig, ScenarioConfig, WalletConfig
 from manager.exceptions import RpcError
+from manager.run_log import RunLog
 from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 
 DISTRIBUTOR_UTXOS = 200
@@ -61,6 +62,7 @@ class EngineBase:
         self.invoices = {}
         self.current_block = 0
         self.current_round = 0
+        self.run_log: RunLog | None = None
 
     def default_scenario(self) -> ScenarioConfig:
         raise NotImplementedError
@@ -455,6 +457,10 @@ class EngineBase:
         print(f"- storing logs for {len(self.clients)} clients in parallel")
         with multiprocessing.pool.ThreadPool(LOG_DOWNLOAD_WORKERS) as pool:
             pool.starmap(self.store_client_logs, [(client, data_path) for client in self.clients])
+
+        if self.run_log is not None:
+            self.run_log.copy_to(os.path.join(experiment_path, "manager.log"))
+            print("- stored manager log")
 
         archive_base = os.path.join(run_path, ".emulation_logs")
         archive_path = shutil.make_archive(archive_base, "zip", run_path, "coinjoin_emulator_data")
