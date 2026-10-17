@@ -63,6 +63,53 @@ def test_insufficient_mixed_coins_do_not_send() -> None:
     client._rpc.assert_not_called()  # type: ignore[attr-defined]
 
 
+def test_most_private_coin_can_pay_out_far_more_than_the_value() -> None:
+    client = wasabi_client([coin("whale", 87_889_843, 9.0), coin("fits", 25_000_000, 3.0)])
+
+    result = client.send_mixed_coins("bcrt1external", 19_800_000)
+
+    assert result["amount_sats"] == 87_889_843
+
+
+def test_amount_selection_takes_the_smallest_coin_that_covers_the_value() -> None:
+    client = wasabi_client(
+        [coin("whale", 87_889_843, 9.0), coin("fits", 25_000_000, 3.0), coin("short", 10_000_000, 5.0)]
+    )
+
+    result = client.send_mixed_coins("bcrt1external", 19_800_000, coin_selection="amount")
+
+    assert [item["txid"] for item in result["coins"]] == ["fits"]
+    assert result["amount_sats"] == 25_000_000
+
+
+def test_amount_selection_adds_the_largest_coins_until_one_covers_the_rest() -> None:
+    client = wasabi_client(
+        [coin("a", 1_000_000, 9.0), coin("b", 5_000_000, 2.0), coin("c", 8_000_000, 3.0), coin("d", 6_000_000, 4.0)]
+    )
+
+    result = client.send_mixed_coins("bcrt1external", 12_000_000, coin_selection="amount")
+
+    assert [item["txid"] for item in result["coins"]] == ["c", "b"]
+    assert result["amount_sats"] == 13_000_000
+
+
+def test_amount_selection_keeps_every_coin_for_all() -> None:
+    client = wasabi_client([coin("a", 1_000, 5.0), coin("b", 2_000, 7.5)])
+
+    result = client.send_mixed_coins("bcrt1external", None, coin_selection="amount")
+
+    assert result["amount_sats"] == 3_000
+
+
+def test_amount_selection_does_not_send_short_of_the_value() -> None:
+    client = wasabi_client([coin("a", 3_000, 5.0), coin("b", 1_000, 7.5)])
+
+    with pytest.raises(RuntimeError, match="4000 sats of mixed coins, 5000 sats requested"):
+        client.send_mixed_coins("bcrt1external", 5_000, coin_selection="amount")
+
+    client._rpc.assert_not_called()  # type: ignore[attr-defined]
+
+
 def test_coins_the_node_sees_spent_are_skipped() -> None:
     # The wallet still lists the inputs of a coinjoin waiting in the mempool.
     client = wasabi_client(
@@ -102,10 +149,18 @@ def test_spend_waits_for_both_delays_then_stops_mixing_and_sends() -> None:
     schedule.update(node, current_block=5, current_round=3)
 
     client.stop_coinjoin.assert_called_once_with()
-    client.send_mixed_coins.assert_called_once_with("bcrt1external", 7, None, node.is_unspent)
+    client.send_mixed_coins.assert_called_once_with("bcrt1external", 7, None, node.is_unspent, "anon_score")
     spend = schedule.spends[0]
     assert spend.status == "sent"
     assert (spend.sent["txid"], spend.sent["round"], spend.sent["block"], spend.sent["destination"]) == ("e" * 64, 3, 5, "bcrt1external")
+
+
+def test_spend_passes_its_coin_selection_to_the_wallet() -> None:
+    schedule, client, node = spending_schedule([PostmixSpendConfig(value=7, coin_selection="amount")])
+
+    schedule.update(node, current_block=0, current_round=0)
+
+    client.send_mixed_coins.assert_called_once_with("bcrt1external", 7, None, node.is_unspent, "amount")
 
 
 def test_failed_spend_is_retried_after_a_pause() -> None:
@@ -123,7 +178,7 @@ def test_failed_spend_is_retried_after_a_pause() -> None:
         assert client.send_mixed_coins.call_count == 1
         schedule.update(node, 0, 0)
 
-    client.send_mixed_coins.assert_called_with("bcrt1external", None, None, node.is_unspent)
+    client.send_mixed_coins.assert_called_with("bcrt1external", None, None, node.is_unspent, "anon_score")
     assert schedule.spends[0].status == "sent"
     assert schedule.spends[0].attempts == 2
 
