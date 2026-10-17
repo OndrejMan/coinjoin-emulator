@@ -17,6 +17,7 @@ def polling_engine() -> WasabiEngine:
     engine.node.get_block_count.return_value = 100
     engine._get_current_round = Mock(return_value=5)
     engine.update_invoice_payments = Mock()
+    engine.update_postmix_spends = Mock()
     engine.update_coinjoins = Mock()
     engine.mine_settlement_blocks = Mock()
     return engine
@@ -41,6 +42,7 @@ def test_exhausted_retries_abort_before_using_stale_state(counter: str) -> None:
     assert engine._get_current_round.call_count == (3 if counter == "round" else 1)
     assert engine.node.get_block_count.call_count == (1 if counter == "round" else 4)
     engine.update_invoice_payments.assert_not_called()
+    engine.update_postmix_spends.assert_not_called()
     engine.update_coinjoins.assert_not_called()
     engine.mine_settlement_blocks.assert_not_called()
 
@@ -57,4 +59,5 @@ def test_third_attempt_can_refresh_both_counters() -> None:
 
     assert observed == [(5, 3)]
     engine.update_invoice_payments.assert_called_once_with()
+    engine.update_postmix_spends.assert_called_once_with()
     engine.mine_settlement_blocks.assert_called_once_with()

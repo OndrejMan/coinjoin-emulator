@@ -16,6 +16,7 @@ import requests
 from manager.engine.base.manifest import ProducerLabelEvidence
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
 from manager.engine.engine_base import EngineBase
+from manager.engine.wasabi.postmix_spends import PostmixSpendSchedule
 from manager.wasabi_backend_factory import (
     BackendArchitecture,
     create_backend,
@@ -63,6 +64,7 @@ class WasabiEngine(EngineBase):
         self.backend: WasabiBackendProtocol | None = None
         self.backend_architecture: BackendArchitecture | None = None
         self.round_ids: set[str] = set()
+        self.postmix_spends: PostmixSpendSchedule | None = None
         super().__init__(args, driver, WASABI_CLIENT_DATA_PATH)
 
     def default_scenario(self) -> ScenarioConfig:
@@ -330,6 +332,17 @@ class WasabiEngine(EngineBase):
                 f"Redcoin isolation is ignored for wallet {idx} as it is curently supported only for version 2.0.3 and newer"
             )
 
+        # Only the patched 2.0.3-2.0.5 clients read these variables; 2.6.0 runs
+        # Wasabi unmodified, so its wallets keep the default privacy profile.
+        if (anon_score_target is not None or redcoin_isolation is not None) and version >= "2.6.0":
+            anon_score_target = None
+            redcoin_isolation = None
+            print(
+                f"WARNING: Anon Score Target and redcoin isolation are ignored for wallet {idx}: the {version} client "
+                "keeps Wasabi's default profile (anon score target 10, red coin isolation on, so at most one "
+                "fresh coin per round)"
+            )
+
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         if self.backend is None:
@@ -343,7 +356,7 @@ class WasabiEngine(EngineBase):
             "ADDR_BTC_NODE": self.args.btc_node_ip or self.node.internal_ip,
             "ADDR_WASABI_BACKEND": self.args.wasabi_backend_ip or backend_address,
             "WASABI_ANON_SCORE_TARGET": (str(anon_score_target) if anon_score_target else None),
-            "WASABI_REDCOIN_ISOLATION": (str(redcoin_isolation) if redcoin_isolation else None),
+            "WASABI_REDCOIN_ISOLATION": (str(redcoin_isolation) if redcoin_isolation is not None else None),
         }
 
         if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
@@ -479,6 +492,20 @@ class WasabiEngine(EngineBase):
             self.scenario.blocks > 0 and self.current_block >= self.scenario.blocks
         )
 
+    def prepare_wallet_schedules(self, wallets: list[WalletConfig]):
+        self.postmix_spends = PostmixSpendSchedule(self.clients, wallets)
+
+    def update_postmix_spends(self):
+        if self.postmix_spends is None:
+            return
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        self.postmix_spends.update(self.node, self.current_block, self.current_round)
+
+    def store_engine_data(self, data_path: str):
+        if self.postmix_spends is not None:
+            self.postmix_spends.store(data_path)
+
     def update_coinjoins(self):
         def start_condition(client):
             if self._run_limit_reached():
@@ -535,6 +562,7 @@ class WasabiEngine(EngineBase):
                         raise RuntimeError("Could not refresh Wasabi block count after 3 attempts") from e
 
             self.update_invoice_payments()
+            self.update_postmix_spends()
             self.update_coinjoins()
             print(
                 f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60),

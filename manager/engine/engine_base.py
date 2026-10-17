@@ -425,6 +425,8 @@ class EngineBase:
             json.dump(self.scenario.to_dict(), f, indent=2)
             print("- stored scenario")
 
+        self.store_engine_data(data_path)
+
         stored_blocks = 0
         node_path = os.path.join(data_path, "btc-node")
         os.mkdir(node_path)
@@ -553,6 +555,12 @@ class EngineBase:
             print("- invoice payment failed")
             raise e
 
+    def prepare_wallet_schedules(self, wallets: list[WalletConfig]):
+        """Hook for engines to schedule wallet actions beyond the funding invoices."""
+
+    def store_engine_data(self, data_path: str):
+        """Hook for engines to store their own records in the run's data directory."""
+
     def prepare_additional_funding(self, wallets):
         """
         Hook for engines to perform additional post-funding setup.
@@ -574,6 +582,7 @@ class EngineBase:
         self.validate_clients()
         time.sleep(60)
         self.prepare_invoices(self.scenario.wallets)
+        self.prepare_wallet_schedules(self.scenario.wallets)
 
         # Pay initial wallet funding invoices before additional funding
         print("Paying initial wallet funding")

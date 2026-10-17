@@ -19,12 +19,33 @@ class FundConfig:
     delay_rounds: int | None = None
 
 
+def _is_integer(value: Any) -> bool:
+    """JSON integers only; ``bool`` is an ``int`` subclass and must not pass."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+@dataclass
+class PostmixSpendConfig:
+    """One spend of mixed coins to an address outside the mix.
+
+    Exactly one of ``value`` (spend at least this many satoshis) and ``all``
+    (spend every mixed coin) is set. The spend becomes due once both delays
+    are reached, like a delayed fund.
+    """
+    value: int | None = None
+    all: bool = False
+    delay_blocks: int | None = None
+    delay_rounds: int | None = None
+    min_anon_score: float | None = None  # coins at or above count as mixed; default: above 1
+
+
 @dataclass
 class WasabiConfig:
     """Wasabi-specific wallet settings."""
     anon_score_target: int | str | None = None  # requires version >= 2.0.3
     redcoin_isolation: bool | None = None  # requires version >= 2.0.3
     skip_rounds: list[int] | None = None
+    postmix_spends: list[PostmixSpendConfig] | None = None
 
 
 @dataclass
@@ -57,7 +78,7 @@ class WalletConfig:
 
 @dataclass
 class ScenarioConfig:
-    """Main scenario configuration."""
+    """Main scenario configuration; description and category are display-only metadata."""
     name: str
     
     rounds: int  # 0 for unlimited
@@ -66,7 +87,9 @@ class ScenarioConfig:
     default_version: str
     
     wallets: list[WalletConfig]
-    
+
+    description: str | None = None
+    category: str | None = None
     distributor_version: str | None = None
     default_anon_score_target: int | None = None
     default_redcoin_isolation: bool | None = None
@@ -77,6 +100,13 @@ class ScenarioConfig:
         """Load scenario configuration from JSON file."""
         with open(filepath) as f:
             data = json.load(f)
+
+        description = data.get("description")
+        if description is not None and not isinstance(description, str):
+            raise ValueError("scenario description must be a string")
+        category = data.get("category")
+        if category is not None and (not isinstance(category, str) or not category.strip()):
+            raise ValueError("scenario category must be a non-empty string")
         
         # Parse wallets with engine-specific configurations
         wallets = []
@@ -90,6 +120,8 @@ class ScenarioConfig:
             blocks=data["blocks"],
             default_version=data["default_version"],
             wallets=wallets,
+            description=description,
+            category=category,
             distributor_version=data.get("distributor_version"),
             default_anon_score_target=data.get("default_anon_score_target"),
             default_redcoin_isolation=data.get("default_redcoin_isolation"),
@@ -100,6 +132,12 @@ class ScenarioConfig:
         """Validate the constraints that depend on the selected CoinJoin engine."""
         if engine != "joinmarket":
             return
+        wasabi_wallets = [str(index) for index, wallet in enumerate(self.wallets) if wallet.wasabi is not None]
+        if wasabi_wallets:
+            raise ValueError(
+                "Wasabi wallet settings are ignored by the JoinMarket engine; remove them at indexes: "
+                + ", ".join(wasabi_wallets)
+            )
         missing_roles = [
             str(index)
             for index, wallet in enumerate(self.wallets)
@@ -143,10 +181,12 @@ class ScenarioConfig:
             raise ValueError("flat Wasabi wallet settings are unsupported; use the wasabi object")
 
         nested_wasabi = wallet_data.get("wasabi") or {}
+        postmix_spends = nested_wasabi.get("postmix_spends")
         wasabi_fields = {
             "anon_score_target": nested_wasabi.get("anon_score_target"),
             "redcoin_isolation": nested_wasabi.get("redcoin_isolation"),
             "skip_rounds": nested_wasabi.get("skip_rounds"),
+            "postmix_spends": None if postmix_spends is None else cls._parse_postmix_spends(postmix_spends),
         }
         wasabi_config = None
         if any(v is not None for v in wasabi_fields.values()):
@@ -175,14 +215,7 @@ class ScenarioConfig:
             "max_coinjoins": nested_joinmarket.get("max_coinjoins"),
         }
         timeout_blocks = joinmarket_fields["coinjoin_timeout_blocks"]
-        if (
-            timeout_blocks is not None
-            and (
-                not isinstance(timeout_blocks, int)
-                or isinstance(timeout_blocks, bool)
-                or timeout_blocks <= 0
-            )
-        ):
+        if timeout_blocks is not None and (not _is_integer(timeout_blocks) or timeout_blocks <= 0):
             raise ValueError("JoinMarket coinjoin_timeout_blocks must be a positive integer")
         joinmarket_config = None
         if role_value is not None or any(value is not None for value in joinmarket_fields.values()):
@@ -203,6 +236,46 @@ class ScenarioConfig:
             joinmarket=joinmarket_config
         )
     
+    @staticmethod
+    def _parse_postmix_spends(entries: Any) -> list[PostmixSpendConfig]:
+        """Parse the Wasabi postmix spend schedule of one wallet."""
+        if not isinstance(entries, list):
+            raise ValueError("Wasabi postmix_spends must be a list")
+        return [ScenarioConfig._parse_postmix_spend(index, entry) for index, entry in enumerate(entries)]
+
+    @staticmethod
+    def _parse_postmix_spend(index: int, entry: Any) -> PostmixSpendConfig:
+        """Parse and validate one postmix spend; ``index`` names it in errors."""
+        if not isinstance(entry, dict):
+            raise ValueError(f"postmix spend {index} must be an object")
+        unknown = set(entry) - {"value", "all", "delay_blocks", "delay_rounds", "min_anon_score"}
+        if unknown:
+            raise ValueError(f"postmix spend {index} has unknown fields: {', '.join(sorted(unknown))}")
+        value = entry.get("value")
+        spend_all = entry.get("all", False)
+        if not isinstance(spend_all, bool):
+            raise ValueError(f"postmix spend {index} field 'all' must be a boolean")
+        if value is not None and (not _is_integer(value) or value <= 0):
+            raise ValueError(f"postmix spend {index} value must be a positive integer of satoshis")
+        if (value is not None) == spend_all:
+            raise ValueError(f"postmix spend {index} must set exactly one of 'value' and 'all'")
+        for field in ("delay_blocks", "delay_rounds"):
+            delay = entry.get(field)
+            if delay is not None and (not _is_integer(delay) or delay < 0):
+                raise ValueError(f"postmix spend {index} {field} must be a non-negative integer")
+        min_anon_score = entry.get("min_anon_score")
+        if min_anon_score is not None and (
+            isinstance(min_anon_score, bool) or not isinstance(min_anon_score, (int, float)) or min_anon_score <= 0
+        ):
+            raise ValueError(f"postmix spend {index} min_anon_score must be a positive number")
+        return PostmixSpendConfig(
+            value=value,
+            all=spend_all,
+            delay_blocks=entry.get("delay_blocks"),
+            delay_rounds=entry.get("delay_rounds"),
+            min_anon_score=min_anon_score,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Convert the scenario configuration to a dictionary for JSON serialization."""
         def unwrap(items: list[tuple[str, Any]]) -> dict[str, Any]:
