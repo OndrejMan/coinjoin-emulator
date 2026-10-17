@@ -118,6 +118,12 @@ def run_engine(engine, driver, args):
         print_exception(e)
         exit_code = 1
 
+    if exit_code:
+        try:
+            engine.report_infrastructure_state()
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            print(f"- could not report infrastructure state: {e}", file=sys.stderr, flush=True)
+
     if cleanup(engine, driver, args):
         exit_code = 1
     return finalize_controller_marker(exit_code)

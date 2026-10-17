@@ -354,6 +354,61 @@ class CleanupEngine:
         self._step("store_logs")
 
 
+class FailingSetupEngine(CleanupEngine):
+    """A run whose setup fails, keeping what the manager logged until store_logs."""
+
+    def __init__(self, log_path):
+        super().__init__()
+        self.log_path = log_path
+        self.run_log = None
+
+    def run(self):
+        print("- started wasabi-backend (split architecture)")
+        raise RuntimeError("Could not start distributor")
+
+    def report_infrastructure_state(self):
+        self.calls.append("report_infrastructure_state")
+        print("- wasabi-backend: pod phase Failed; container terminated: OOMKilled (exit code 137)")
+
+    def store_logs(self):
+        super().store_logs()
+        self.run_log.copy_to(self.log_path)
+
+
+def test_a_failed_setup_leaves_its_exception_and_pod_states_in_the_manager_log(tmp_path):
+    entrypoint = load_entrypoint()
+    stdout = sys.stdout
+    engine = FailingSetupEngine(str(tmp_path / "manager.log"))
+    entrypoint.engine = engine
+    entrypoint.driver = types.SimpleNamespace(cleanup=lambda prefix: engine.calls.append("driver_cleanup"))
+    entrypoint.args = types.SimpleNamespace(
+        no_logs=False, image_prefix="", download_btc_data="", download_path="",
+        controller_done_marker="", controller_failed_marker="",
+    )
+
+    assert entrypoint.run() == 1
+
+    assert engine.calls[:2] == ["report_infrastructure_state", "stop_coinjoins"]
+    manager_log = (tmp_path / "manager.log").read_text(encoding="utf-8")
+    assert "- started wasabi-backend (split architecture)" in manager_log
+    assert "Terminating exception: Could not start distributor" in manager_log
+    assert "OOMKilled (exit code 137)" in manager_log
+    assert sys.stdout is stdout
+    assert engine.run_log is None
+
+
+def test_a_successful_run_does_not_report_infrastructure_state():
+    entrypoint = load_entrypoint()
+    engine = CleanupEngine()
+    engine.run = lambda: None
+    engine.report_infrastructure_state = lambda: engine.calls.append("report_infrastructure_state")
+    driver = types.SimpleNamespace(cleanup=lambda prefix: engine.calls.append("driver_cleanup"))
+    args = types.SimpleNamespace(no_logs=False, image_prefix="", download_btc_data="", download_path="")
+
+    assert entrypoint.run_engine(engine, driver, args) == 0
+    assert "report_infrastructure_state" not in engine.calls
+
+
 def test_cleanup_runs_every_step_even_when_one_fails():
     entrypoint = load_entrypoint()
     engine = CleanupEngine(failing={"stop_coinjoins"})

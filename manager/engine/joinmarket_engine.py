@@ -200,6 +200,9 @@ class JoinmarketEngine(EngineBase):
             print(f"- could not start orderbook watcher ({e})")
 
 
+    def infrastructure_names(self) -> list[str]:
+        return [*super().infrastructure_names(), "irc-server", "joinmarket-distributor"]
+
     def start_irc_server(self):
         # TODO: When the container fails to start, the exception is not thrown and it is not recognized.
         name = "irc-server"

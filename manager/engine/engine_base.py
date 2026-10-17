@@ -471,6 +471,20 @@ class EngineBase:
         print("Storing engine logs / NOT IMPLEMENTED")
         raise NotImplementedError
 
+    def infrastructure_names(self) -> list[str]:
+        """The shared containers a run starts before its clients."""
+        return ["btc-node"]
+
+    def report_infrastructure_state(self):
+        """Print each infrastructure container's state so a failed setup names the stuck one."""
+        print("Infrastructure state")
+        for name in self.infrastructure_names():
+            try:
+                state = self.driver.container_state(name)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                state = f"unknown ({e})"
+            print(f"- {name}: {state or 'unknown'}", flush=True)
+
     def stop_coinjoins(self):
         print("Stopping coinjoins")
         

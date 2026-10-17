@@ -98,6 +98,12 @@ class WasabiEngine(EngineBase):
             path = f"./containers/{base}/{version}"
             self.prepare_image(image_name, path)
 
+    def infrastructure_names(self) -> list[str]:
+        names = [*super().infrastructure_names(), "wasabi-backend"]
+        if (self.backend_architecture or self.determine_backend_architecture()) == BackendArchitecture.SPLIT:
+            names.append("wasabi-coordinator")
+        return [*names, "wasabi-client-distributor"]
+
     def prepare_client_images(self):
         for version in self.versions:
             name = f"wasabi-client:{version}"
