@@ -332,6 +332,17 @@ class WasabiEngine(EngineBase):
                 f"Redcoin isolation is ignored for wallet {idx} as it is curently supported only for version 2.0.3 and newer"
             )
 
+        # Only the patched 2.0.3-2.0.5 clients read these variables; 2.6.0 runs
+        # Wasabi unmodified, so its wallets keep the default privacy profile.
+        if (anon_score_target is not None or redcoin_isolation is not None) and version >= "2.6.0":
+            anon_score_target = None
+            redcoin_isolation = None
+            print(
+                f"WARNING: Anon Score Target and redcoin isolation are ignored for wallet {idx}: the {version} client "
+                "keeps Wasabi's default profile (anon score target 10, red coin isolation on, so at most one "
+                "fresh coin per round)"
+            )
+
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         if self.backend is None:
@@ -345,7 +356,7 @@ class WasabiEngine(EngineBase):
             "ADDR_BTC_NODE": self.args.btc_node_ip or self.node.internal_ip,
             "ADDR_WASABI_BACKEND": self.args.wasabi_backend_ip or backend_address,
             "WASABI_ANON_SCORE_TARGET": (str(anon_score_target) if anon_score_target else None),
-            "WASABI_REDCOIN_ISOLATION": (str(redcoin_isolation) if redcoin_isolation else None),
+            "WASABI_REDCOIN_ISOLATION": (str(redcoin_isolation) if redcoin_isolation is not None else None),
         }
 
         if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
