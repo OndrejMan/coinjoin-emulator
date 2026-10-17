@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
-from manager.engine.configuration import ScenarioConfig, WalletConfig
+from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
 from manager.engine.wasabi_engine import WasabiEngine, successful_broadcast_txids
 from manager.wasabi_backend_factory import BackendArchitecture
 
@@ -66,3 +66,43 @@ def test_the_run_stops_clients_before_settlement_after_the_round_limit() -> None
 
     engine._get_current_round.assert_called_once_with()  # pylint: disable=protected-access
     assert lifecycle.method_calls == [call.stop(client), call.mine(3)]
+
+
+def client_env(version: str, wasabi: WasabiConfig) -> dict[str, str]:
+    engine = split_engine()
+    engine.args = SimpleNamespace(
+        image_prefix="",
+        btc_node_ip="",
+        wasabi_backend_ip="",
+        proxy="",
+        in_cluster=False,
+        control_ip="localhost",
+    )
+    engine.node = SimpleNamespace(internal_ip="btc-node")
+    engine.backend = SimpleNamespace(internal_ip="wasabi-backend")
+    engine.coordinator = SimpleNamespace(internal_ip="wasabi-coordinator")
+    engine.scenario = ScenarioConfig("test", 10, 0, version, [])
+    engine.driver.run.return_value = ("client-ip", {37128: 37132}, None)
+    client = Mock(name="wasabi-client-000")
+    client.wait_wallet.return_value = True
+    engine.init_wasabi_client = Mock(return_value=client)  # type: ignore[method-assign]
+
+    with patch("manager.engine.wasabi_engine.sleep"):
+        engine.start_client(0, WalletConfig(funds=[1], wasabi=wasabi))
+
+    return engine.driver.run.call_args.kwargs["env"]
+
+
+def test_unpatched_2_6_client_gets_no_privacy_settings(capsys) -> None:
+    env = client_env("2.6.0", WasabiConfig(anon_score_target=50, redcoin_isolation=False))
+
+    assert "WASABI_ANON_SCORE_TARGET" not in env
+    assert "WASABI_REDCOIN_ISOLATION" not in env
+    assert "WARNING: Anon Score Target and redcoin isolation are ignored for wallet 0" in capsys.readouterr().out
+
+
+def test_disabled_redcoin_isolation_reaches_the_patched_client() -> None:
+    env = client_env("2.0.5", WasabiConfig(anon_score_target=50, redcoin_isolation=False))
+
+    assert env["WASABI_ANON_SCORE_TARGET"] == "50"
+    assert env["WASABI_REDCOIN_ISOLATION"] == "False"
