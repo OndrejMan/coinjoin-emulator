@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import os
 import re
 import shlex
@@ -86,6 +87,8 @@ class _Base64Spool:
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
 RUN_ID_LABEL = "coinjoin.run-id"
+MAX_RESOURCE_NAME_LENGTH = 63
+RUN_SUFFIX_LENGTH = 16
 
 
 def _strip_reserved_ports_sysctl(pod_manifest):
@@ -151,6 +154,7 @@ class KubernetesDriver(Driver):
         self.pull_secret_path = pull_secret_path
         self.in_cluster = in_cluster
         self.run_id = run_id
+        self._service_aliases = {}
 
     def _create_image_pull_secret(self):
         secret_name = "regcred"
@@ -235,8 +239,26 @@ class KubernetesDriver(Driver):
             )
         return {"apiVersion": "v1", "kind": "Pod", "name": name, "uid": uid}
 
+    def resource_name(self, name):
+        """The pod and Service name of the emulator's ``name``.
+
+        In a shared namespace a run ID suffix keeps runs that start at the same
+        time from creating, reading or deleting each other's pods.
+        """
+        if not (self.reuse_namespace and self.run_id):
+            return name
+        suffix = hashlib.sha256(self.run_id.encode("utf-8")).hexdigest()[:RUN_SUFFIX_LENGTH]
+        return f"{name[:MAX_RESOURCE_NAME_LENGTH - RUN_SUFFIX_LENGTH - 1]}-{suffix}"
+
+    def service_selector(self, name):
+        """Select only this run's pod, since another run's pod has the same app label."""
+        selector = {"app": name}
+        if self.run_id:
+            selector[RUN_ID_LABEL] = self.run_id
+        return selector
+
     def resource_metadata(self, name):
-        metadata = {"name": name, "labels": self.resource_labels(name)}
+        metadata = {"name": self.resource_name(name), "labels": self.resource_labels(name)}
         owner = self.owner_reference()
         if owner:
             metadata["ownerReferences"] = [owner]
@@ -272,17 +294,23 @@ class KubernetesDriver(Driver):
                             "runAsGroup": user_id if group_id is None else group_id,
                         }
 
+        aliases = (
+            [{"ip": ip, "hostnames": [service]} for service, ip in self._service_aliases.items()]
+            if self.resource_name(name) != name
+            else []
+        )
         return {
             "apiVersion": "v1",
             "kind": "Pod",
             "metadata": self.resource_metadata(name),
             "spec": {
                 "restartPolicy": "Never",
+                **({"hostAliases": aliases} if aliases else {}),
                 "containers": [
                     {
                         "image": image,
                         "imagePullPolicy": os.environ.get("KUBERNETES_IMAGE_PULL_POLICY", "Always"),
-                        "name": name,
+                        "name": self.resource_name(name),
                         "ports": [
                             {"containerPort": container_port}
                             for container_port in ports.keys()
@@ -325,17 +353,18 @@ class KubernetesDriver(Driver):
             name, image, env, ports, cpu, memory, run_as_user,
             kwargs.get("volumes"), kwargs.get("command"), kwargs.get("run_as_group"),
         )
-        self._create_pod(name, pod_manifest)
+        resource = self.resource_name(name)
+        self._create_pod(resource, pod_manifest)
 
         try:
-            pod_ip = self._wait_for_pod_ip(name)
+            pod_ip = self._wait_for_pod_ip(resource)
         except StartupError as error:
             if "SysctlForbidden" not in str(error) or not _strip_reserved_ports_sysctl(pod_manifest):
                 raise
-            print(f"[WARNING] kubelet forbade {RESERVED_PORTS_SYSCTL} for pod {name}; recreating it without it")
-            self.stop(name)
-            self._create_pod(name, pod_manifest)
-            pod_ip = self._wait_for_pod_ip(name)
+            print(f"[WARNING] kubelet forbade {RESERVED_PORTS_SYSCTL} for pod {resource}; recreating it without it")
+            self._delete(resource)
+            self._create_pod(resource, pod_manifest)
+            pod_ip = self._wait_for_pod_ip(resource)
         except Exception as e:
             print(f"Failed to get pod IP: {e}")
             raise
@@ -346,7 +375,7 @@ class KubernetesDriver(Driver):
             "metadata": self.resource_metadata(name),
             "spec": {
                 "type": "NodePort",
-                "selector": {"app": name},
+                "selector": self.service_selector(name),
                 "ports": [
                     {
                         "name": f"{name}-{container_port}",
@@ -365,11 +394,13 @@ class KubernetesDriver(Driver):
         except Exception as e:
             print(f"Failed to create service: {e}")
             raise
+        if resource != name and resp.spec.cluster_ip:
+            self._service_aliases[name] = resp.spec.cluster_ip
 
         if self.in_cluster:
             # For in-cluster: return service DNS name, original port mapping, no route
             port_mapping = {target_port: container_port for target_port, container_port in ports.items()}
-            service_dns_name = f"{name}.{self.namespace}.svc.cluster.local"
+            service_dns_name = f"{resource}.{self.namespace}.svc.cluster.local"
             return service_dns_name, port_mapping, None
         else:
             # For external: return pod IP, node port mapping, no route (existing behavior)
@@ -416,6 +447,9 @@ class KubernetesDriver(Driver):
             sleep(1)
 
     def stop(self, name):
+        self._delete(self.resource_name(name))
+
+    def _delete(self, name):
         """Delete the pod and service and return once the name can be reused.
 
         A DELETE only starts the pod's termination; creating the same name
@@ -450,7 +484,8 @@ class KubernetesDriver(Driver):
         return True
 
     def download(self, name, src_path, dst_path):
-        self._require_exec_ready(name)
+        resource = self.resource_name(name)
+        self._require_exec_ready(resource)
         if src_path[-1] == "/":
             src_path = src_path[:-1]
         src_parent, src_target = os.path.split(src_path)
@@ -459,18 +494,18 @@ class KubernetesDriver(Driver):
             "sh", "-c",
             f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64 | tr -d '\\n'",
         ]
-        resp = self._exec_stream(name, exec_command, f"download {src_path}")
+        resp = self._exec_stream(resource, exec_command, f"download {src_path}")
         stderr_chunks = []
         deadline = time.monotonic() + DOWNLOAD_TIMEOUT_SECONDS
         # Decode into a temporary file as chunks arrive: log gathering downloads several pods
         # at once, and holding each archive in memory (encoded and decoded) OOMKilled the
         # manager during the teardown of a 136-client run.
         with tempfile.TemporaryFile() as archive:
-            decoder = _Base64Spool(archive, name, src_path)
+            decoder = _Base64Spool(archive, resource, src_path)
             try:
                 while resp.is_open():
                     if time.monotonic() >= deadline:
-                        raise TimeoutError(f"Timed out downloading {name}:{src_path}")
+                        raise TimeoutError(f"Timed out downloading {resource}:{src_path}")
                     resp.update(timeout=1)
                     if resp.peek_stdout():
                         decoder.feed(resp.read_stdout())
@@ -479,27 +514,30 @@ class KubernetesDriver(Driver):
             finally:
                 resp.close()
 
-            _check_tar_stderr(name, src_path, "".join(stderr_chunks))
+            _check_tar_stderr(resource, src_path, "".join(stderr_chunks))
             decoder.finish()
             archive.seek(0)
             with tarfile.open(fileobj=archive) as tar:
                 tar.extractall(dst_path)
 
     def pause(self, name):
+        resource = self.resource_name(name)
         # Kubernetes has no container freezer; stop every process but the
         # container's init and the signalling shell itself.
-        self._exec_checked(name, f"pause {name}", self._signal_deadline(), ["sh", "-c", "kill -STOP -1"])
+        self._exec_checked(resource, f"pause {resource}", self._signal_deadline(), ["sh", "-c", "kill -STOP -1"])
 
     def unpause(self, name):
-        self._exec_checked(name, f"unpause {name}", self._signal_deadline(), ["sh", "-c", "kill -CONT -1"])
+        resource = self.resource_name(name)
+        self._exec_checked(resource, f"unpause {resource}", self._signal_deadline(), ["sh", "-c", "kill -CONT -1"])
 
     @staticmethod
     def _signal_deadline():
         return time.monotonic() + UPLOAD_TIMEOUT_SECONDS
 
     def peek(self, name, path):
-        self._require_exec_ready(name)
-        resp = self._exec_stream(name, ["cat", path], f"read {path}")
+        resource = self.resource_name(name)
+        self._require_exec_ready(resource)
+        resp = self._exec_stream(resource, ["cat", path], f"read {path}")
         output = ""
         while resp.is_open():
             resp.update(timeout=1)
@@ -509,8 +547,9 @@ class KubernetesDriver(Driver):
         return output
 
     def container_state(self, name):
+        resource = self.resource_name(name)
         try:
-            pod = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace)
+            pod = self.client.read_namespaced_pod_status(name=resource, namespace=self.namespace)
         except Exception:  # pylint: disable=broad-exception-caught
             return None
         phase = getattr(getattr(pod, "status", None), "phase", None)
@@ -545,16 +584,18 @@ class KubernetesDriver(Driver):
                 raise RuntimeError(f"could not {action} on pod {name}: {error}") from error
 
     def logs(self, name):
-        return str(self.client.read_namespaced_pod_log(name=name, namespace=self.namespace))
+        resource = self.resource_name(name)
+        return str(self.client.read_namespaced_pod_log(name=resource, namespace=self.namespace))
 
     def get_pod_resource_usage(self, name):
         """
         Get memory usage of a pod by reading /proc/self/status.
         Returns dict with memory_mb and memory_limit_mb, or None if failed.
         """
+        resource = self.resource_name(name)
         try:
             # Read process memory info from /proc
-            resp = self._exec_stream(name, ["cat", "/proc/self/status"], "read /proc/self/status")
+            resp = self._exec_stream(resource, ["cat", "/proc/self/status"], "read /proc/self/status")
 
             output = ""
             while resp.is_open():
@@ -577,7 +618,7 @@ class KubernetesDriver(Driver):
                 return None
 
             # Get pod spec to find memory limit
-            pod = self.client.read_namespaced_pod(name=name, namespace=self.namespace)
+            pod = self.client.read_namespaced_pod(name=resource, namespace=self.namespace)
             memory_limit_str = pod.spec.containers[0].resources.limits.get('memory', '0Mi')
             # Parse memory limit (e.g., "128Mi" -> 128)
             memory_limit_mb = int(memory_limit_str.replace('Mi', '').replace('Gi', '000'))
@@ -592,8 +633,9 @@ class KubernetesDriver(Driver):
             return None
 
     def upload(self, name, src_path, dst_path):
+        resource = self.resource_name(name)
         deadline = time.monotonic() + UPLOAD_TIMEOUT_SECONDS
-        self._wait_for_running_container(name, deadline)
+        self._wait_for_running_container(resource, deadline)
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:tar") as tar:
             tar.add(src_path, arcname=dst_path)
@@ -606,11 +648,11 @@ class KubernetesDriver(Driver):
             for offset in range(0, len(payload), UPLOAD_COMMAND_CHUNK_SIZE):
                 chunk = payload[offset:offset + UPLOAD_COMMAND_CHUNK_SIZE]
                 redirect = ">" if offset == 0 else ">>"
-                self._append_upload_chunk(name, dst_path, deadline, chunk, remote_payload, redirect)
-            self._extract_staged_upload(name, dst_path, deadline, remote_payload)
+                self._append_upload_chunk(resource, dst_path, deadline, chunk, remote_payload, redirect)
+            self._extract_staged_upload(resource, dst_path, deadline, remote_payload)
         except Exception:
             try:
-                self._remove_staged_upload(name, dst_path, deadline, remote_payload)
+                self._remove_staged_upload(resource, dst_path, deadline, remote_payload)
             except Exception:  # pylint: disable=broad-exception-caught
                 pass
             raise
