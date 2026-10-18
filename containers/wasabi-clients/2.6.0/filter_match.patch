@@ -1,0 +1,13 @@
+diff --git a/WalletWasabi/Wallets/WalletFilterProcessor.cs b/WalletWasabi/Wallets/WalletFilterProcessor.cs
+index 514c000..9a0da3d 100644
+--- a/WalletWasabi/Wallets/WalletFilterProcessor.cs
++++ b/WalletWasabi/Wallets/WalletFilterProcessor.cs
+@@ -234,7 +234,7 @@ public class WalletFilterProcessor : BackgroundService
+ 	{
+ 		var height = new Height(filter.Header.Height);
+ 
+-		var toTestKeys = GetScriptPubKeysToTest(height, syncType, filter.Filter.IsBip158());
++		var toTestKeys = GetScriptPubKeysToTest(height, syncType, filter.Filter.IsBip158()).ToArray();
+ 
+ 		var matchFound = false;
+ 		if (toTestKeys.Any())
