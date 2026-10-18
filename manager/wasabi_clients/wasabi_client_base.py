@@ -227,13 +227,13 @@ class WasabiClientBase:
 
     @staticmethod
     def _select_coins_by_anon_score(
-        candidates: list[WasabiCoin], value: int | None
+        candidates: list[WasabiCoin], value: int
     ) -> tuple[list[WasabiCoin], int]:
         """Take the most private coins until they cover ``value``."""
         selected = []
         total = 0
         for coin in candidates:
-            if value is not None and total >= value:
+            if total >= value:
                 break
             selected.append(coin)
             total += coin["amount"]
@@ -266,7 +266,13 @@ class WasabiClientBase:
             key=lambda coin: coin["anonymityScore"],
             reverse=True,
         )
-        selected, total = self._select_coins_by_anon_score(candidates, value)
+        selected: list[WasabiCoin]
+        total: int
+        if value is None:
+            selected = candidates
+            total = sum(coin["amount"] for coin in selected)
+        else:
+            selected, total = self._select_coins_by_anon_score(candidates, value)
         if not selected or (value is not None and total < value):
             raise RuntimeError(f"{self.name} has {total} sats of mixed coins, {value or 'any'} sats requested")
         return selected, total
