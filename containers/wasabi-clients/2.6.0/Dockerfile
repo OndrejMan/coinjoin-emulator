@@ -20,6 +20,11 @@ RUN patch --binary -p1 < global.patch
 COPY broadcast_error.patch /home/wasabi/wasabi-src/broadcast_error.patch
 RUN patch --binary -p1 < broadcast_error.patch
 
+# Test a block filter against one snapshot of the wallet's scripts; a key added
+# while NBitcoin enumerates them twice crashed the client mid-round.
+COPY filter_match.patch /home/wasabi/wasabi-src/filter_match.patch
+RUN patch --binary -p1 < filter_match.patch
+
 WORKDIR /home/wasabi/wasabi-src/WalletWasabi.Daemon
 # NuGet Audit flags NU1903 for a transitive dependency pinned by this release and
 # warnings are errors here, so an unchanged rebuild fails. run.sh calls `dotnet
