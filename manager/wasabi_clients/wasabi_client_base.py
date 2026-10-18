@@ -225,6 +225,20 @@ class WasabiClientBase:
         """Raise like ``send_mixed_coins`` when the mixed coins cannot cover ``value`` yet."""
         self._select_mixed_coins(value, min_anon_score, unspent)
 
+    @staticmethod
+    def _select_coins_by_anon_score(
+        candidates: list[WasabiCoin], value: int | None
+    ) -> tuple[list[WasabiCoin], int]:
+        """Take the most private coins until they cover ``value``."""
+        selected = []
+        total = 0
+        for coin in candidates:
+            if value is not None and total >= value:
+                break
+            selected.append(coin)
+            total += coin["amount"]
+        return selected, total
+
     def _select_mixed_coins(
         self,
         value: int | None = None,
@@ -252,13 +266,7 @@ class WasabiClientBase:
             key=lambda coin: coin["anonymityScore"],
             reverse=True,
         )
-        selected = []
-        total = 0
-        for coin in candidates:
-            if value is not None and total >= value:
-                break
-            selected.append(coin)
-            total += coin["amount"]
+        selected, total = self._select_coins_by_anon_score(candidates, value)
         if not selected or (value is not None and total < value):
             raise RuntimeError(f"{self.name} has {total} sats of mixed coins, {value or 'any'} sats requested")
         return selected, total
