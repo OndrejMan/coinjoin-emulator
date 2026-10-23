@@ -189,6 +189,32 @@ def test_store_logs_archives_the_manager_output(tmp_path, monkeypatch):
         assert "coinjoin_emulator_data/manager.log" in archive.namelist()
 
 
+def test_store_logs_keeps_manager_output_when_block_export_fails(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    engine = make_engine(run_id="my-run")
+
+    def get_block_hash(height):
+        if height == 1:
+            raise TimeoutError("Bitcoin RPC timed out")
+        return f"hash-{height}"
+
+    monkeypatch.setattr(engine.node, "get_block_hash", get_block_hash)
+    engine.run_log = RunLog().install()
+    try:
+        print("Terminating exception: distributor DNS lookup failed", file=sys.stderr)
+        with pytest.raises(TimeoutError, match="Bitcoin RPC timed out"):
+            engine.store_logs()
+    finally:
+        engine.run_log.close()
+
+    experiment = tmp_path / "logs" / "my-run" / "coinjoin_emulator_data"
+    assert "Terminating exception: distributor DNS lookup failed" in (
+        experiment / "manager.log"
+    ).read_text(encoding="utf-8")
+    assert (experiment / "data" / "btc-node" / "block_0.json").is_file()
+    assert not (experiment / "emulation_logs.zip").exists()
+
+
 def test_store_logs_skips_block_export_when_tip_is_unavailable(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     engine = make_engine(run_id="my-run")
