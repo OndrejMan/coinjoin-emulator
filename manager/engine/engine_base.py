@@ -423,44 +423,45 @@ class EngineBase:
         data_path = os.path.join(experiment_path, "data")
         os.makedirs(data_path)
 
-        with open(os.path.join(experiment_path, "scenario.json"), "w") as f:
-            json.dump(self.scenario.to_dict(), f, indent=2)
-            print("- stored scenario")
-
-        self.store_engine_data(data_path)
-
-        stored_blocks = 0
-        node_path = os.path.join(data_path, "btc-node")
-        os.mkdir(node_path)
-        if self.node is None:
-            raise RuntimeError("Bitcoin node is not initialized")
         try:
-            block_count = self.node.get_block_count()
-        except (TypeError, RpcError) as error:
-            # Only the block count is optional: without it there is nothing to export.
-            print(f"Failed to get block count: {error}")
-        else:
-            while stored_blocks <= block_count:
-                block_hash = self.node.get_block_hash(stored_blocks)
-                block = self.node.get_block_info(block_hash)
-                with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
-                    json.dump(block, f, indent=2)
-                stored_blocks += 1
+            with open(os.path.join(experiment_path, "scenario.json"), "w") as f:
+                json.dump(self.scenario.to_dict(), f, indent=2)
+                print("- stored scenario")
 
-        print(f"- stored {stored_blocks} blocks")
+            self.store_engine_data(data_path)
 
-        print("- storing engine logs")
-        producer_label_evidence = self.store_engine_logs(data_path)
-        write_producer_label_manifest(data_path, producer_label_evidence)
-        print("- finished storing engine logs, stored producer-label manifest")
+            stored_blocks = 0
+            node_path = os.path.join(data_path, "btc-node")
+            os.mkdir(node_path)
+            if self.node is None:
+                raise RuntimeError("Bitcoin node is not initialized")
+            try:
+                block_count = self.node.get_block_count()
+            except (TypeError, RpcError) as error:
+                # Only the block count is optional: without it there is nothing to export.
+                print(f"Failed to get block count: {error}")
+            else:
+                while stored_blocks <= block_count:
+                    block_hash = self.node.get_block_hash(stored_blocks)
+                    block = self.node.get_block_info(block_hash)
+                    with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
+                        json.dump(block, f, indent=2)
+                    stored_blocks += 1
 
-        print(f"- storing logs for {len(self.clients)} clients in parallel")
-        with multiprocessing.pool.ThreadPool(LOG_DOWNLOAD_WORKERS) as pool:
-            pool.starmap(self.store_client_logs, [(client, data_path) for client in self.clients])
+            print(f"- stored {stored_blocks} blocks")
 
-        if self.run_log is not None:
-            self.run_log.copy_to(os.path.join(experiment_path, "manager.log"))
-            print("- stored manager log")
+            print("- storing engine logs")
+            producer_label_evidence = self.store_engine_logs(data_path)
+            write_producer_label_manifest(data_path, producer_label_evidence)
+            print("- finished storing engine logs, stored producer-label manifest")
+
+            print(f"- storing logs for {len(self.clients)} clients in parallel")
+            with multiprocessing.pool.ThreadPool(LOG_DOWNLOAD_WORKERS) as pool:
+                pool.starmap(self.store_client_logs, [(client, data_path) for client in self.clients])
+        finally:
+            if self.run_log is not None:
+                self.run_log.copy_to(os.path.join(experiment_path, "manager.log"))
+                print("- stored manager log")
 
         archive_base = os.path.join(run_path, ".emulation_logs")
         archive_path = shutil.make_archive(archive_base, "zip", run_path, "coinjoin_emulator_data")
