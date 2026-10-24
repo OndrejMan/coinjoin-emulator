@@ -16,7 +16,7 @@ import requests
 from manager.engine.base.manifest import ProducerLabelEvidence
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
 from manager.engine.engine_base import EngineBase
-from manager.engine.wasabi.postmix_spends import PostmixSpendSchedule
+from manager.engine.postmix_spends import PostmixSpendSchedule
 from manager.wasabi_backend_factory import (
     BackendArchitecture,
     create_backend,
@@ -499,7 +499,7 @@ class WasabiEngine(EngineBase):
         )
 
     def prepare_wallet_schedules(self, wallets: list[WalletConfig]):
-        self.postmix_spends = PostmixSpendSchedule(self.clients, wallets)
+        self.postmix_spends = PostmixSpendSchedule(self.clients, wallets, "wasabi")
 
     def update_postmix_spends(self):
         if self.postmix_spends is None:

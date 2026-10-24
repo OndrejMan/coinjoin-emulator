@@ -25,6 +25,8 @@ def _is_integer(value: Any) -> bool:
 
 
 COIN_SELECTIONS = ("anon_score", "amount")
+# JoinMarket coins carry no anonymity score, so only the overshoot can rank them.
+JOINMARKET_COIN_SELECTIONS = ("amount",)
 
 
 @dataclass
@@ -35,7 +37,8 @@ class PostmixSpendConfig:
     (spend every mixed coin) is set. The spend becomes due once both delays
     are reached, like a delayed fund. ``coin_selection`` picks the coins that
     cover ``value``: ``anon_score`` (the most private first) or ``amount``
-    (the least overshoot).
+    (the least overshoot). A JoinMarket wallet has no anonymity score, so it
+    has neither ``min_anon_score`` nor the ``anon_score`` selection.
     """
     value: int | None = None
     all: bool = False
@@ -64,6 +67,7 @@ class JoinMarketConfig:
     coinjoin_timeout_blocks: int | None = None
     fidelity_bond: dict[str, Any] | None = None
     max_coinjoins: int | None = None
+    postmix_spends: list[PostmixSpendConfig] | None = None
 
 
 @dataclass
@@ -192,7 +196,7 @@ class ScenarioConfig:
             "anon_score_target": nested_wasabi.get("anon_score_target"),
             "redcoin_isolation": nested_wasabi.get("redcoin_isolation"),
             "skip_rounds": nested_wasabi.get("skip_rounds"),
-            "postmix_spends": None if postmix_spends is None else cls._parse_postmix_spends(postmix_spends),
+            "postmix_spends": None if postmix_spends is None else cls._parse_postmix_spends(postmix_spends, "Wasabi"),
         }
         wasabi_config = None
         if any(v is not None for v in wasabi_fields.values()):
@@ -212,6 +216,7 @@ class ScenarioConfig:
 
         nested_joinmarket = wallet_data.get("joinmarket") or {}
         role_value = nested_joinmarket.get("role")
+        joinmarket_spends = nested_joinmarket.get("postmix_spends")
         joinmarket_fields = {
             "offers": nested_joinmarket.get("offers"),
             "tumbler_options": nested_joinmarket.get("tumbler_options"),
@@ -219,6 +224,9 @@ class ScenarioConfig:
             "coinjoin_timeout_blocks": nested_joinmarket.get("coinjoin_timeout_blocks"),
             "fidelity_bond": nested_joinmarket.get("fidelity_bond"),
             "max_coinjoins": nested_joinmarket.get("max_coinjoins"),
+            "postmix_spends": (
+                None if joinmarket_spends is None else cls._parse_postmix_spends(joinmarket_spends, "JoinMarket")
+            ),
         }
         timeout_blocks = joinmarket_fields["coinjoin_timeout_blocks"]
         if timeout_blocks is not None and (not _is_integer(timeout_blocks) or timeout_blocks <= 0):
@@ -243,14 +251,14 @@ class ScenarioConfig:
         )
     
     @staticmethod
-    def _parse_postmix_spends(entries: Any) -> list[PostmixSpendConfig]:
-        """Parse the Wasabi postmix spend schedule of one wallet."""
+    def _parse_postmix_spends(entries: Any, engine: str) -> list[PostmixSpendConfig]:
+        """Parse the postmix spend schedule of one ``engine`` ("Wasabi" or "JoinMarket") wallet."""
         if not isinstance(entries, list):
-            raise ValueError("Wasabi postmix_spends must be a list")
-        return [ScenarioConfig._parse_postmix_spend(index, entry) for index, entry in enumerate(entries)]
+            raise ValueError(f"{engine} postmix_spends must be a list")
+        return [ScenarioConfig._parse_postmix_spend(index, entry, engine) for index, entry in enumerate(entries)]
 
     @staticmethod
-    def _parse_postmix_spend(index: int, entry: Any) -> PostmixSpendConfig:
+    def _parse_postmix_spend(index: int, entry: Any, engine: str) -> PostmixSpendConfig:
         """Parse and validate one postmix spend; ``index`` names it in errors."""
         if not isinstance(entry, dict):
             raise ValueError(f"postmix spend {index} must be an object")
@@ -274,9 +282,15 @@ class ScenarioConfig:
             isinstance(min_anon_score, bool) or not isinstance(min_anon_score, (int, float)) or min_anon_score <= 0
         ):
             raise ValueError(f"postmix spend {index} min_anon_score must be a positive number")
-        coin_selection = entry.get("coin_selection", "anon_score")
-        if coin_selection not in COIN_SELECTIONS:
-            raise ValueError(f"postmix spend {index} coin_selection must be one of: {', '.join(COIN_SELECTIONS)}")
+        joinmarket = engine == "JoinMarket"
+        if joinmarket and min_anon_score is not None:
+            raise ValueError(f"JoinMarket postmix spend {index} cannot set min_anon_score: its coins have no anonymity score")
+        selections = JOINMARKET_COIN_SELECTIONS if joinmarket else COIN_SELECTIONS
+        coin_selection = entry.get("coin_selection", selections[0])
+        if coin_selection not in selections:
+            raise ValueError(
+                f"{engine} postmix spend {index} coin_selection must be one of: {', '.join(selections)}"
+            )
         return PostmixSpendConfig(
             value=value,
             all=spend_all,

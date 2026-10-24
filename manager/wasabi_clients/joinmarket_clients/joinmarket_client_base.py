@@ -1043,6 +1043,20 @@ class JoinMarketClientServer:
 
         return False
 
+    def freeze_utxo(self, utxo, freeze):
+        """Freeze (True) or unfreeze (False) one ``txid:index`` coin for direct sends and coinjoins."""
+        endpoint = f"/wallet/{self.walletname}/freeze"
+        return self._rpc("POST", endpoint, json_data={"utxo-string": utxo, "freeze": freeze})
+
+    def sweep_mixdepth(self, destination, mixdepth):
+        """Pay every unfrozen coin of ``mixdepth`` to ``destination``, fee subtracted, and return the transaction.
+
+        Not repeated on failure: the send may have been broadcast before the answer was lost.
+        """
+        endpoint = f"/wallet/{self.walletname}/taker/direct-send"
+        json_data = {"destination": destination, "amount_sats": 0, "mixdepth": mixdepth}
+        return self._rpc("POST", endpoint, json_data=json_data, repeat=1).get("txinfo") or {}
+
     def list_transactions_maker(self):
         """List all transactions in the wallet."""
         method = "GET"

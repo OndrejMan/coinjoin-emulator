@@ -208,3 +208,30 @@ def test_wasabi_settings_are_rejected_for_joinmarket(tmp_path: Path, wasabi: dic
     config.validate_for_engine("wasabi")
     with pytest.raises(ValueError, match="ignored by the JoinMarket engine; remove them at indexes: 0"):
         config.validate_for_engine("joinmarket")
+
+
+def test_joinmarket_postmix_spends_round_trip_with_amount_selection(tmp_path: Path) -> None:
+    spends = [{"value": 120_000, "delay_rounds": 4}, {"all": True, "delay_blocks": 30}]
+    wallet = {"funds": [1000], "joinmarket": {"role": "maker", "postmix_spends": spends}}
+    config = load_scenario(tmp_path, base_scenario(wallet))
+
+    reloaded = load_scenario(tmp_path, config.to_dict()).wallets[0].joinmarket
+
+    assert reloaded is not None and reloaded.postmix_spends == config.wallets[0].joinmarket.postmix_spends
+    assert [spend.coin_selection for spend in reloaded.postmix_spends] == ["amount", "amount"]
+    assert [spend.min_anon_score for spend in reloaded.postmix_spends] == [None, None]
+    config.validate_for_engine("joinmarket")
+
+
+@pytest.mark.parametrize(
+    ("spend", "message"),
+    [
+        ({"all": True, "min_anon_score": 5}, "cannot set min_anon_score: its coins have no anonymity score"),
+        ({"value": 1000, "coin_selection": "anon_score"}, "JoinMarket postmix spend 0 coin_selection must be one of: amount"),
+        ({"delay_rounds": 3}, "exactly one of 'value' and 'all'"),
+    ],
+)
+def test_invalid_joinmarket_postmix_spends_are_rejected(tmp_path: Path, spend: dict[str, object], message: str) -> None:
+    wallet = {"funds": [1000], "joinmarket": {"role": "taker", "postmix_spends": [spend]}}
+    with pytest.raises(ValueError, match=message):
+        load_scenario(tmp_path, base_scenario(wallet))

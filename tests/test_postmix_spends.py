@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from manager.engine.configuration import PostmixSpendConfig, WalletConfig, WasabiConfig
-from manager.engine.wasabi.postmix_spends import POSTMIX_RETRY_SECONDS, PostmixSpendSchedule
+from manager.engine.postmix_spends import POSTMIX_RETRY_SECONDS, PostmixSpendSchedule
 from manager.wasabi_clients.wasabi_client_base import WasabiClientBase
 
 
@@ -204,7 +204,7 @@ def spending_schedule(spends: list[PostmixSpendConfig]) -> tuple[PostmixSpendSch
     client = Mock()
     client.name = "wasabi-client-000"
     client.send_mixed_coins.return_value = {"txid": "e" * 64, "amount_sats": 7, "coins": []}
-    schedule = PostmixSpendSchedule([client], [WalletConfig(funds=[1], wasabi=WasabiConfig(postmix_spends=spends))])
+    schedule = PostmixSpendSchedule([client], [WalletConfig(funds=[1], wasabi=WasabiConfig(postmix_spends=spends))], "wasabi")
     return schedule, client, node
 
 
@@ -237,7 +237,7 @@ def test_failed_spend_is_retried_after_a_pause() -> None:
     client.send_mixed_coins.side_effect = [RuntimeError("coin in round"), {"txid": "d" * 64, "amount_sats": 1, "coins": []}]
 
     with patch(
-        "manager.engine.wasabi.postmix_spends.time.time",
+        "manager.engine.postmix_spends.time.time",
         side_effect=[100.0, 100.0, 101.0, 100.0 + POSTMIX_RETRY_SECONDS],
     ):
         schedule.update(node, 0, 0)
@@ -279,7 +279,7 @@ def test_stored_schedule_records_every_outcome(tmp_path: Path) -> None:
 def test_stored_schedule_lists_every_spend(tmp_path: Path) -> None:
     client = SimpleNamespace(name="wasabi-client-000")
     spends = [PostmixSpendConfig(value=7), PostmixSpendConfig(all=True, delay_rounds=99)]
-    schedule = PostmixSpendSchedule([client], [WalletConfig(funds=[1], wasabi=WasabiConfig(postmix_spends=spends))])
+    schedule = PostmixSpendSchedule([client], [WalletConfig(funds=[1], wasabi=WasabiConfig(postmix_spends=spends))], "wasabi")
 
     schedule.store(str(tmp_path))
 
@@ -297,7 +297,7 @@ def test_wallets_without_a_schedule_add_nothing() -> None:
     clients = [SimpleNamespace(name="wasabi-client-000"), SimpleNamespace(name="wasabi-client-001")]
 
     schedule = PostmixSpendSchedule(
-        clients, [WalletConfig(funds=[1]), WalletConfig(funds=[1], wasabi=WasabiConfig(anon_score_target=5))]
+        clients, [WalletConfig(funds=[1]), WalletConfig(funds=[1], wasabi=WasabiConfig(anon_score_target=5))], "wasabi"
     )
 
     assert schedule.spends == []
