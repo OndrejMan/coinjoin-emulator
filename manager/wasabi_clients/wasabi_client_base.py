@@ -12,6 +12,7 @@ WALLET_NAME = "wallet"
 
 RETRY_BACKOFF_SECONDS = 1
 JSON_RPC_INTERNAL_ERROR = -32603
+POSTMIX_SETTLEMENT_TIMEOUT_SECONDS = 300
 
 TRANSIENT_INTERNAL_ERRORS = (
     "Destination array was not long enough",
@@ -191,7 +192,11 @@ class WasabiClientBase:
         which coins cover it, see ``_select_mixed_coins``. The whole selection is
         paid out with the fee subtracted, so no change output re-enters the wallet
         as fresh liquidity. ``unspent`` drops coins the node already sees spent.
+        The schedule stops mixing before this call; a 2.6 all-spend waits for
+        settlement against the node before selecting its coins.
         """
+        if value is None and unspent is not None:
+            self._wait_for_postmix_settlement(unspent)
         selected, total = self._select_mixed_coins(value, min_anon_score, unspent, coin_selection)
         request = {
             "method": "send",
@@ -225,6 +230,43 @@ class WasabiClientBase:
     ) -> None:
         """Raise like ``send_mixed_coins`` when the mixed coins cannot cover ``value`` yet."""
         self._select_mixed_coins(value, min_anon_score, unspent)
+
+    def _wait_for_postmix_settlement(self, unspent: Callable[[str, int], bool]) -> None:
+        """A 2.6 sweep waits for its last round's confirmed outputs after stopping.
+
+        stopcoinjoin queues a stop during a critical phase. Until the wallet
+        processes the confirming block, its old inputs may still look unspent
+        and its new outputs are absent. Check every coin, including score-1
+        inputs, against the node before declaring the sweep ready.
+        """
+        if self.version < "2.6.0":
+            return
+        deadline = monotonic() + POSTMIX_SETTLEMENT_TIMEOUT_SECONDS
+        reason = "coinjoin has not stopped"
+        print(f"- {self.name} waiting for its last coinjoin and wallet confirmations before spending all mixed coins")
+        while monotonic() < deadline:
+            info = self.get_wallet_info(timeout=5)
+            if info.get("coinjoinStatus") != "Idle":
+                reason = f"coinjoin status is {info.get('coinjoinStatus', 'unavailable')}"
+            else:
+                coins = self._list_unspent_coins()
+                if any(not coin.get("confirmed") for coin in coins):
+                    reason = "wallet still has unconfirmed coins"
+                else:
+                    for coin in coins:
+                        if monotonic() >= deadline:
+                            reason = "checking the wallet's coins exceeded the timeout"
+                            break
+                        if not unspent(coin["txid"], coin["index"]):
+                            reason = "wallet still lists inputs already spent by the node"
+                            break
+                    else:
+                        return
+            sleep(1)
+        raise TimeoutError(
+            f"{self.name} could not settle its all-mixed-coins spend within "
+            f"{POSTMIX_SETTLEMENT_TIMEOUT_SECONDS} s: {reason}"
+        )
 
     @staticmethod
     def _select_coins_by_anon_score(

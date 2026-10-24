@@ -129,6 +129,75 @@ def test_coins_spent_in_the_mempool_do_not_count_as_mixed() -> None:
         client.check_mixed_coins(5_000, unspent=lambda txid, _index: txid != "in-coinjoin")
 
 
+def test_all_waits_for_the_last_coinjoin_and_wallet_confirmation() -> None:
+    client = wasabi_client([])
+    client.version = "2.6.0"
+    client.get_wallet_info = Mock(  # type: ignore[method-assign]
+        side_effect=[{"coinjoinStatus": "In critical phase"}, *[{"coinjoinStatus": "Idle"}] * 3]
+    )
+    # A score-1 input still listed by the wallet is already spent on the node.
+    # It must hold up the sweep even though mixed-coin selection would ignore it.
+    client._list_unspent_coins = Mock(  # type: ignore[method-assign]
+        side_effect=[
+            [coin("old-red-input", 9_000, 1)],
+            [coin("last-coinjoin", 8_000, 4, confirmed=False)],
+            [coin("last-coinjoin", 8_000, 4)],
+            [coin("last-coinjoin", 8_000, 4)],
+        ]
+    )
+    unspent = Mock(side_effect=lambda txid, _index: txid != "old-red-input")
+
+    with patch("manager.wasabi_clients.wasabi_client_base.sleep") as sleep:
+        result = client.send_mixed_coins("bcrt1external", unspent=unspent)
+
+    assert sleep.call_count == 3
+    assert result["amount_sats"] == 8_000
+    assert [item["txid"] for item in result["coins"]] == ["last-coinjoin"]
+
+
+def test_all_settlement_timeout_does_not_send() -> None:
+    client = wasabi_client([coin("ready", 1_000, 3)])
+    client.version = "2.6.0"
+    client.get_wallet_info = Mock(return_value={"coinjoinStatus": "In critical phase"})  # type: ignore[method-assign]
+
+    with (
+        patch("manager.wasabi_clients.wasabi_client_base.monotonic", side_effect=[0, 0, 301]),
+        patch("manager.wasabi_clients.wasabi_client_base.sleep"),
+        pytest.raises(TimeoutError, match="In critical phase"),
+    ):
+        client.send_mixed_coins("bcrt1external", unspent=Mock())
+
+    client._rpc.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_partial_spend_and_legacy_wasabi_do_not_wait_for_settlement() -> None:
+    for version, all_coins in [("2.6.0", False), ("2.0.4", True)]:
+        client = wasabi_client([coin("ready", 1_000, 3)])
+        client.version = version
+        client.get_wallet_info = Mock()  # type: ignore[method-assign]
+
+        client.send_mixed_coins("bcrt1external", None if all_coins else 1, unspent=Mock(return_value=True))
+
+        client.get_wallet_info.assert_not_called()
+        assert client._rpc.call_args.args[0]["method"] == "send"  # type: ignore[attr-defined]
+
+
+def test_all_settlement_deadline_also_bounds_the_node_checks() -> None:
+    client = wasabi_client([coin("first", 1_000, 3), coin("second", 2_000, 4)])
+    client.version = "2.6.0"
+    client.get_wallet_info = Mock(return_value={"coinjoinStatus": "Idle"})  # type: ignore[method-assign]
+    unspent = Mock(return_value=True)
+
+    with (
+        patch("manager.wasabi_clients.wasabi_client_base.monotonic", side_effect=[0, 0, 0, 301, 301]),
+        patch("manager.wasabi_clients.wasabi_client_base.sleep"),
+        pytest.raises(TimeoutError, match="checking the wallet's coins"),
+    ):
+        client.send_mixed_coins("bcrt1external", unspent=unspent)
+
+    unspent.assert_called_once_with("first", 0)
+
+
 def spending_schedule(spends: list[PostmixSpendConfig]) -> tuple[PostmixSpendSchedule, Mock, Mock]:
     node = Mock()
     node.get_new_address.return_value = "bcrt1external"
