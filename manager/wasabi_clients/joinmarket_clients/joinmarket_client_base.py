@@ -91,6 +91,7 @@ class JoinMarketClientServer:
         self.maker_running = False
         self.coinjoin_in_process = False
         self.coinjoin_start = 0
+        self.delay = delay
         self.next_coinjoin_allowed = delay[0]
         self.time_between_rounds = time_between_rounds
         if coinjoin_timeout_blocks <= 0:
@@ -337,8 +338,24 @@ class JoinMarketClientServer:
 
         raise RpcError(f"{method} {endpoint} stayed unauthorized after {repeat} attempts")
 
-    def is_paused(self, current_block):
-        # Check delay - "delay[0]" means "don't run until current_block >= delay[0]"
+    def outside_schedule(self, current_block, current_round=0):
+        """Whether the wallet's start and stop keep it from mixing now, as WasabiEngine's start_condition decides.
+
+        ``delay`` and ``stop`` are (blocks, rounds); a stop of 0 means none.
+        """
+        start_block, start_round = self.delay
+        stop_block, stop_round = self.stop
+        return (
+            current_block < start_block
+            or current_round < start_round
+            or 0 < stop_block <= current_block
+            or 0 < stop_round <= current_round
+        )
+
+    def is_paused(self, current_block, current_round=0):
+        if self.outside_schedule(current_block, current_round):
+            return True
+        # A timed-out attempt holds the next one back for time_between_rounds blocks.
         if current_block < self.next_coinjoin_allowed:
             return True
         # Check max coinjoins limit
@@ -1025,6 +1042,20 @@ class JoinMarketClientServer:
         print("Failed to send funds, attempt timed out.")
 
         return False
+
+    def freeze_utxo(self, utxo, freeze):
+        """Freeze (True) or unfreeze (False) one ``txid:index`` coin for direct sends and coinjoins."""
+        endpoint = f"/wallet/{self.walletname}/freeze"
+        return self._rpc("POST", endpoint, json_data={"utxo-string": utxo, "freeze": freeze})
+
+    def sweep_mixdepth(self, destination, mixdepth):
+        """Pay every unfrozen coin of ``mixdepth`` to ``destination``, fee subtracted, and return the transaction.
+
+        Not repeated on failure: the send may have been broadcast before the answer was lost.
+        """
+        endpoint = f"/wallet/{self.walletname}/taker/direct-send"
+        json_data = {"destination": destination, "amount_sats": 0, "mixdepth": mixdepth}
+        return self._rpc("POST", endpoint, json_data=json_data, repeat=1).get("txinfo") or {}
 
     def list_transactions_maker(self):
         """List all transactions in the wallet."""

@@ -19,12 +19,14 @@ from manager.engine.joinmarket.events import (
     match_round_events_to_blocks,
     producer_label_evidence,
 )
+from manager.engine.joinmarket.postmix import JoinMarketPostmixWallet
 from manager.engine.joinmarket.round_confirmation import (
     confirm_rounds_in_blocks,
     count_confirmed_rounds,
     mark_latest_started_round_failed,
 )
-from manager.engine.joinmarket.round_event_record import RoundEvent
+from manager.engine.joinmarket.round_event_record import RoundEvent, RoundEventRecord
+from manager.engine.postmix_spends import PostmixSpendSchedule
 from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import OrderbookWatchClient
 
@@ -42,6 +44,7 @@ class JoinmarketEngine(EngineBase):
         self.last_resource_check = 0  # Track when we last checked resources
         self._core_wallet_lock = threading.Lock()
         self._round_scan_height = -1
+        self.postmix_spends: PostmixSpendSchedule | None = None
 
     def default_scenario(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -199,6 +202,9 @@ class JoinmarketEngine(EngineBase):
         except Exception as e:
             print(f"- could not start orderbook watcher ({e})")
 
+
+    def infrastructure_names(self) -> list[str]:
+        return [*super().infrastructure_names(), "irc-server", "joinmarket-distributor"]
 
     def start_irc_server(self):
         # TODO: When the container fails to start, the exception is not thrown and it is not recognized.
@@ -379,6 +385,26 @@ class JoinmarketEngine(EngineBase):
         self.current_round = count_confirmed_rounds(events)
         return self.current_round
 
+    def confirmed_coinjoin_txids(self) -> set[str]:
+        """Transactions of the rounds confirmed so far: their outputs are the mixed coins."""
+        txids = (RoundEventRecord.from_data(event).confirmed_destination_txid() for event in self.live_round_events())
+        return {txid for txid in txids if txid is not None}
+
+    def prepare_wallet_schedules(self, wallets: list[WalletConfig]):
+        wallets_of_clients = [JoinMarketPostmixWallet(client, self.confirmed_coinjoin_txids) for client in self.clients]
+        self.postmix_spends = PostmixSpendSchedule(wallets_of_clients, wallets, "joinmarket")
+
+    def update_postmix_spends(self):
+        if self.postmix_spends is None or not self.postmix_spends.spends:
+            return
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        self.postmix_spends.update(self.node, self.current_block, self.current_round)
+
+    def store_engine_data(self, data_path: str):
+        if self.postmix_spends is not None:
+            self.postmix_spends.store(data_path)
+
     def _round_limit_reached(self) -> bool:
         """True once the confirmed rounds satisfy the scenario, so no taker may start another attempt."""
         return self.scenario.rounds > 0 and self.current_round >= self.scenario.rounds
@@ -536,9 +562,9 @@ class JoinmarketEngine(EngineBase):
         for client in self.clients:
             try:
                 # Check if client just reached its limit
-                was_active = not client.is_paused(self.current_block)
+                was_active = not client.is_paused(self.current_block, self.current_round)
                 delta = client.update(self.current_block, self.current_round)
-                now_paused = client.is_paused(self.current_block)
+                now_paused = client.is_paused(self.current_block, self.current_round)
 
                 # Log when a client reaches its coinjoin limit
                 if was_active and now_paused and hasattr(client, 'max_coinjoins') and client.max_coinjoins > 0:
@@ -719,6 +745,10 @@ class JoinmarketEngine(EngineBase):
                     self.update_invoice_payments()
                 except Exception as e:
                     print(f"- invoice update failed: {e}")
+                try:
+                    self.update_postmix_spends()
+                except Exception as e:
+                    print(f"- postmix spend update failed: {e}")
                 try:
                     if self.async_updates:
                         # Use async path for parallel client updates

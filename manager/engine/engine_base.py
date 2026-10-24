@@ -14,6 +14,7 @@ from manager.btc_node import BtcNode
 from manager.engine.base.manifest import write_producer_label_manifest
 from manager.engine.configuration import FundConfig, ScenarioConfig, WalletConfig
 from manager.exceptions import RpcError
+from manager.run_log import RunLog
 from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 
 DISTRIBUTOR_UTXOS = 200
@@ -61,6 +62,7 @@ class EngineBase:
         self.invoices = {}
         self.current_block = 0
         self.current_round = 0
+        self.run_log: RunLog | None = None
 
     def default_scenario(self) -> ScenarioConfig:
         raise NotImplementedError
@@ -421,38 +423,45 @@ class EngineBase:
         data_path = os.path.join(experiment_path, "data")
         os.makedirs(data_path)
 
-        with open(os.path.join(experiment_path, "scenario.json"), "w") as f:
-            json.dump(self.scenario.to_dict(), f, indent=2)
-            print("- stored scenario")
-
-        stored_blocks = 0
-        node_path = os.path.join(data_path, "btc-node")
-        os.mkdir(node_path)
-        if self.node is None:
-            raise RuntimeError("Bitcoin node is not initialized")
         try:
-            block_count = self.node.get_block_count()
-        except (TypeError, RpcError) as error:
-            # Only the block count is optional: without it there is nothing to export.
-            print(f"Failed to get block count: {error}")
-        else:
-            while stored_blocks <= block_count:
-                block_hash = self.node.get_block_hash(stored_blocks)
-                block = self.node.get_block_info(block_hash)
-                with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
-                    json.dump(block, f, indent=2)
-                stored_blocks += 1
+            with open(os.path.join(experiment_path, "scenario.json"), "w") as f:
+                json.dump(self.scenario.to_dict(), f, indent=2)
+                print("- stored scenario")
 
-        print(f"- stored {stored_blocks} blocks")
+            self.store_engine_data(data_path)
 
-        print("- storing engine logs")
-        producer_label_evidence = self.store_engine_logs(data_path)
-        write_producer_label_manifest(data_path, producer_label_evidence)
-        print("- finished storing engine logs, stored producer-label manifest")
+            stored_blocks = 0
+            node_path = os.path.join(data_path, "btc-node")
+            os.mkdir(node_path)
+            if self.node is None:
+                raise RuntimeError("Bitcoin node is not initialized")
+            try:
+                block_count = self.node.get_block_count()
+            except (TypeError, RpcError) as error:
+                # Only the block count is optional: without it there is nothing to export.
+                print(f"Failed to get block count: {error}")
+            else:
+                while stored_blocks <= block_count:
+                    block_hash = self.node.get_block_hash(stored_blocks)
+                    block = self.node.get_block_info(block_hash)
+                    with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
+                        json.dump(block, f, indent=2)
+                    stored_blocks += 1
 
-        print(f"- storing logs for {len(self.clients)} clients in parallel")
-        with multiprocessing.pool.ThreadPool(LOG_DOWNLOAD_WORKERS) as pool:
-            pool.starmap(self.store_client_logs, [(client, data_path) for client in self.clients])
+            print(f"- stored {stored_blocks} blocks")
+
+            print("- storing engine logs")
+            producer_label_evidence = self.store_engine_logs(data_path)
+            write_producer_label_manifest(data_path, producer_label_evidence)
+            print("- finished storing engine logs, stored producer-label manifest")
+
+            print(f"- storing logs for {len(self.clients)} clients in parallel")
+            with multiprocessing.pool.ThreadPool(LOG_DOWNLOAD_WORKERS) as pool:
+                pool.starmap(self.store_client_logs, [(client, data_path) for client in self.clients])
+        finally:
+            if self.run_log is not None:
+                self.run_log.copy_to(os.path.join(experiment_path, "manager.log"))
+                print("- stored manager log")
 
         archive_base = os.path.join(run_path, ".emulation_logs")
         archive_path = shutil.make_archive(archive_base, "zip", run_path, "coinjoin_emulator_data")
@@ -462,6 +471,20 @@ class EngineBase:
     def store_engine_logs(self, data_path: str) -> dict[str, object] | None:
         print("Storing engine logs / NOT IMPLEMENTED")
         raise NotImplementedError
+
+    def infrastructure_names(self) -> list[str]:
+        """The shared containers a run starts before its clients."""
+        return ["btc-node"]
+
+    def report_infrastructure_state(self):
+        """Print each infrastructure container's state so a failed setup names the stuck one."""
+        print("Infrastructure state")
+        for name in self.infrastructure_names():
+            try:
+                state = self.driver.container_state(name)
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                state = f"unknown ({e})"
+            print(f"- {name}: {state or 'unknown'}", flush=True)
 
     def stop_coinjoins(self):
         print("Stopping coinjoins")
@@ -553,6 +576,12 @@ class EngineBase:
             print("- invoice payment failed")
             raise e
 
+    def prepare_wallet_schedules(self, wallets: list[WalletConfig]):
+        """Hook for engines to schedule wallet actions beyond the funding invoices."""
+
+    def store_engine_data(self, data_path: str):
+        """Hook for engines to store their own records in the run's data directory."""
+
     def prepare_additional_funding(self, wallets):
         """
         Hook for engines to perform additional post-funding setup.
@@ -574,6 +603,7 @@ class EngineBase:
         self.validate_clients()
         time.sleep(60)
         self.prepare_invoices(self.scenario.wallets)
+        self.prepare_wallet_schedules(self.scenario.wallets)
 
         # Pay initial wallet funding invoices before additional funding
         print("Paying initial wallet funding")

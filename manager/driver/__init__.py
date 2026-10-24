@@ -1,4 +1,7 @@
+import os
+import tarfile
 from abc import ABC, abstractmethod
+from io import BytesIO
 from multiprocessing.pool import ThreadPool
 
 MANAGED_LABEL = "coinjoin-emulator.managed"
@@ -20,6 +23,46 @@ def managed_labels(namespace: str, run_id: str | None = None) -> dict[str, str]:
 def managed_label_filters(namespace: str, run_id: str | None = None) -> list[str]:
     """Return runtime label filters scoped like :func:`managed_labels`."""
     return [f"{key}={value}" for key, value in managed_labels(namespace, run_id).items()]
+
+
+def container_user_ids(container) -> tuple[int, int] | None:
+    """The uid and gid the container runs as, or None when they cannot be read.
+
+    Podman's SDK runs an exec as root unless told otherwise, so the user is
+    passed explicitly; a TTY keeps Podman from framing the output as a
+    multiplexed stream.
+    """
+    user = (container.attrs.get("Config") or {}).get("User") or ""
+    ids = []
+    for flag in ("-u", "-g"):
+        try:
+            exit_code, output = container.exec_run(["id", flag], user=user, tty=True)[:2]
+            ids.append(int(output.decode().strip()) if exit_code == 0 else None)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+    return (ids[0], ids[1]) if None not in ids else None
+
+
+def upload_archive(container, src_path: str, dst_path: str) -> bytes:
+    """Tar ``src_path`` as ``dst_path``'s basename, owned by the container's user.
+
+    The runtime unpacks the archive with the ownership it records, and the
+    manager runs as root, so without this a non-root service could not rewrite
+    the file it was given; ``kubectl cp`` writes as the container user already.
+    """
+    owner = container_user_ids(container)
+
+    def own(info: tarfile.TarInfo) -> tarfile.TarInfo:
+        if owner is not None:
+            info.uid, info.gid = owner
+            info.uname = info.gname = ""
+        return info
+
+    fo = BytesIO()
+    with tarfile.open(fileobj=fo, mode="w") as tar:
+        tar.add(src_path, os.path.basename(dst_path), filter=own)
+    return fo.getvalue()
+
 
 # The Wasabi backend, coordinator and clients bind fixed ports inside the
 # default ephemeral range, where the kernel can hand the same port to an

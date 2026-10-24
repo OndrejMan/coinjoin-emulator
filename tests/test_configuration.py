@@ -39,6 +39,36 @@ def test_nested_wasabi_config_round_trips(tmp_path: Path) -> None:
 
     assert reloaded.wallets[0].wasabi == config.wallets[0].wasabi
 
+
+def test_optional_description_is_metadata_and_does_not_change_engine_validation(tmp_path: Path) -> None:
+    scenario = base_scenario({"funds": [1000]})
+    scenario["description"] = "A human-facing catalogue label"
+    scenario["category"] = "liquidity"
+
+    config = load_scenario(tmp_path, scenario)
+
+    assert config.description == scenario["description"]
+    assert config.to_dict()["description"] == scenario["description"]
+    assert config.category == scenario["category"]
+    assert config.to_dict()["category"] == scenario["category"]
+    config.validate_for_engine("wasabi")
+
+
+def test_description_must_be_a_string_when_present(tmp_path: Path) -> None:
+    scenario = base_scenario({"funds": [1000]})
+    scenario["description"] = 42
+
+    with pytest.raises(ValueError, match="description must be a string"):
+        load_scenario(tmp_path, scenario)
+
+
+def test_category_must_be_a_non_empty_string_when_present(tmp_path: Path) -> None:
+    scenario = base_scenario({"funds": [1000]})
+    scenario["category"] = ""
+
+    with pytest.raises(ValueError, match="category must be a non-empty string"):
+        load_scenario(tmp_path, scenario)
+
 @pytest.mark.parametrize("field", ["anon_score_target", "redcoin_isolation", "skip_rounds"])
 def test_flat_wasabi_settings_are_rejected(tmp_path: Path, field: str) -> None:
     with pytest.raises(ValueError, match="flat Wasabi wallet settings"):
@@ -128,3 +158,80 @@ def test_round_limited_tumbler_requires_a_block_limit(tmp_path: Path) -> None:
 def test_regular_taker_can_still_use_only_a_round_limit(tmp_path: Path) -> None:
     config = load_scenario(tmp_path, base_scenario({"funds": [1000], "joinmarket": {"role": "taker"}}))
     config.validate_for_engine("joinmarket")
+
+
+def test_postmix_spend_schedule_round_trips(tmp_path: Path) -> None:
+    spends = [
+        {"value": 50_000_000, "delay_rounds": 12},
+        {"all": True, "delay_blocks": 30, "delay_rounds": 20, "min_anon_score": 5},
+        {"value": 19_800_000, "coin_selection": "amount"},
+        {"value": 1_000},
+    ]
+    config = load_scenario(tmp_path, base_scenario({"funds": [1000], "wasabi": {"postmix_spends": spends}}))
+
+    reloaded = load_scenario(tmp_path, config.to_dict()).wallets[0].wasabi
+
+    assert reloaded is not None
+    assert reloaded.postmix_spends == config.wallets[0].wasabi.postmix_spends
+    assert [spend.all for spend in reloaded.postmix_spends] == [False, True, False, False]
+    assert reloaded.postmix_spends[0].value == 50_000_000
+    assert reloaded.postmix_spends[1].min_anon_score == 5
+    assert [spend.coin_selection for spend in reloaded.postmix_spends] == ["anon_score", "anon_score", "amount", "anon_score"]
+
+
+@pytest.mark.parametrize(
+    ("spend", "message"),
+    [
+        ({"delay_rounds": 3}, "exactly one of 'value' and 'all'"),
+        ({"value": 1000, "all": True}, "exactly one of 'value' and 'all'"),
+        ({"value": 0}, "positive integer of satoshis"),
+        ({"value": True}, "positive integer of satoshis"),
+        ({"all": "yes"}, "must be a boolean"),
+        ({"all": True, "delay_rounds": -1}, "delay_rounds must be a non-negative integer"),
+        ({"all": True, "min_anon_score": 0}, "min_anon_score must be a positive number"),
+        ({"value": 1000, "coin_selection": None}, "coin_selection must be one of: anon_score, amount"),
+        ({"value": 1000, "coin_selection": ""}, "coin_selection must be one of: anon_score, amount"),
+        ({"value": 1000, "coin_selection": "fifo"}, "coin_selection must be one of: anon_score, amount"),
+        ({"all": True, "destination": "x"}, "unknown fields: destination"),
+    ],
+)
+def test_invalid_postmix_spends_are_rejected(tmp_path: Path, spend: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        load_scenario(tmp_path, base_scenario({"funds": [1000], "wasabi": {"postmix_spends": [spend]}}))
+
+
+@pytest.mark.parametrize("wasabi", [{"postmix_spends": [{"all": True}]}, {"anon_score_target": 5}])
+def test_wasabi_settings_are_rejected_for_joinmarket(tmp_path: Path, wasabi: dict[str, object]) -> None:
+    wallet = {"funds": [1000], "joinmarket": {"role": "taker"}, "wasabi": wasabi}
+    config = load_scenario(tmp_path, base_scenario(wallet))
+
+    config.validate_for_engine("wasabi")
+    with pytest.raises(ValueError, match="ignored by the JoinMarket engine; remove them at indexes: 0"):
+        config.validate_for_engine("joinmarket")
+
+
+def test_joinmarket_postmix_spends_round_trip_with_amount_selection(tmp_path: Path) -> None:
+    spends = [{"value": 120_000, "delay_rounds": 4}, {"all": True, "delay_blocks": 30}]
+    wallet = {"funds": [1000], "joinmarket": {"role": "maker", "postmix_spends": spends}}
+    config = load_scenario(tmp_path, base_scenario(wallet))
+
+    reloaded = load_scenario(tmp_path, config.to_dict()).wallets[0].joinmarket
+
+    assert reloaded is not None and reloaded.postmix_spends == config.wallets[0].joinmarket.postmix_spends
+    assert [spend.coin_selection for spend in reloaded.postmix_spends] == ["amount", "amount"]
+    assert [spend.min_anon_score for spend in reloaded.postmix_spends] == [None, None]
+    config.validate_for_engine("joinmarket")
+
+
+@pytest.mark.parametrize(
+    ("spend", "message"),
+    [
+        ({"all": True, "min_anon_score": 5}, "cannot set min_anon_score: its coins have no anonymity score"),
+        ({"value": 1000, "coin_selection": "anon_score"}, "JoinMarket postmix spend 0 coin_selection must be one of: amount"),
+        ({"delay_rounds": 3}, "exactly one of 'value' and 'all'"),
+    ],
+)
+def test_invalid_joinmarket_postmix_spends_are_rejected(tmp_path: Path, spend: dict[str, object], message: str) -> None:
+    wallet = {"funds": [1000], "joinmarket": {"role": "taker", "postmix_spends": [spend]}}
+    with pytest.raises(ValueError, match=message):
+        load_scenario(tmp_path, base_scenario(wallet))

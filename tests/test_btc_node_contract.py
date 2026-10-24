@@ -100,3 +100,15 @@ def test_mining_fewer_blocks_than_requested_is_a_failure() -> None:
         ],
     ):
         assert node().mine_block(3) is False
+
+
+def test_an_output_spent_in_the_mempool_is_not_unspent() -> None:
+    with patch(
+        "manager.btc_node.requests.post",
+        side_effect=[response({"error": None, "result": None}), response({"error": None, "result": {"value": 0.05}})],
+    ) as post:
+        assert node().is_unspent("ab" * 32, 1) is False
+        assert node().is_unspent("cd" * 32, 0) is True
+
+    first = post.call_args_list[0].kwargs["data"]
+    assert '"gettxout"' in first and f'["{"ab" * 32}", 1, true]' in first

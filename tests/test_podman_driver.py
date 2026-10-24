@@ -1,5 +1,6 @@
 """Podman driver contracts against the pinned Python SDK."""
 
+import json
 import tarfile
 from io import BytesIO
 from unittest.mock import Mock, patch
@@ -258,3 +259,42 @@ def test_failed_artifact_download_raises_an_emulator_error(driver_and_client) ->
 
     with pytest.raises(CoinjoinEmulatorError, match="archive unavailable"):
         driver.download("btc-node", "/missing", "/tmp/logs")
+
+
+def test_an_upload_belongs_to_the_container_user(driver_and_client, tmp_path) -> None:
+    driver, client = driver_and_client
+    api = Mock()
+    execs = []
+
+    def post(path, data=None, **_):
+        response = Mock()
+        if path.endswith("/exec"):
+            execs.append(json.loads(data))
+            response.json.return_value = {"Id": f"exec-{len(execs)}"}
+        else:
+            # A TTY exec returns the bare output; without one Podman prefixes stream frames.
+            command = execs[-1]
+            output = {"-u": b"1000\r\n", "-g": b"1001\r\n"}[command["Cmd"][1]]
+            response.content = output if command["Tty"] else b"\x01\x00\x00\x00\x00\x00\x00\x020\n"
+        return response
+
+    api.post.side_effect = post
+    api.get.return_value.json.return_value = {"ExitCode": 0}
+    api.put.return_value.ok = True
+    client.containers.get.return_value = Container(
+        attrs={"Id": "wc", "Name": "/wasabi-coordinator", "Config": {"User": "1000:1001"}},
+        client=api,
+        collection=ContainersManager(client=api),
+    )
+    source = tmp_path / "config.json"
+    source.write_text("{}")
+
+    driver.upload("wasabi-coordinator", str(source), "/home/wasabi/coordinator-config.json")
+
+    assert [(command["User"], command["Cmd"]) for command in execs] == [
+        ("1000:1001", ["id", "-u"]),
+        ("1000:1001", ["id", "-g"]),
+    ]
+    with tarfile.open(fileobj=BytesIO(api.put.call_args.kwargs["data"])) as tar:
+        member = tar.getmember("coordinator-config.json")
+    assert (member.uid, member.gid) == (1000, 1001)

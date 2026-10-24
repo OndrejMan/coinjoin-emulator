@@ -34,6 +34,7 @@ def driver(**overrides: object) -> KubernetesDriver:
     instance.pull_secret_path = None
     instance.in_cluster = False
     instance.run_id = None
+    instance._service_aliases = {}  # pylint: disable=protected-access
     for key, value in overrides.items():
         setattr(instance, key, value)
     return instance
@@ -613,3 +614,109 @@ def test_stop_gives_up_waiting_after_the_deadline() -> None:
         instance.stop("wasabi-coordinator")
 
     assert instance.client.read_namespaced_pod.call_count == 1
+
+
+def test_parallel_runs_in_a_shared_namespace_get_distinct_pod_and_service_names() -> None:
+    first = driver(run_id="fin-spike-20261017-1154", in_cluster=True)
+    second = driver(run_id="fin-split-whale-20261017-1153", in_cluster=True)
+    for instance in (first, second):
+        instance._wait_for_pod_ip = Mock(return_value="10.0.0.7")  # pylint: disable=protected-access
+        instance.client.create_namespaced_service.return_value = SimpleNamespace(
+            spec=SimpleNamespace(cluster_ip="10.96.0.10", ports=[])
+        )
+
+    first_host, _, _ = first.run("btc-node", "btc-node:latest", ports={18443: 18443}, cpu=1.0, memory=512)
+    second_host, _, _ = second.run("btc-node", "btc-node:latest", ports={18443: 18443}, cpu=1.0, memory=512)
+
+    first_pod = first.client.create_namespaced_pod.call_args.kwargs["body"]
+    second_pod = second.client.create_namespaced_pod.call_args.kwargs["body"]
+    assert first_pod["metadata"]["name"] != second_pod["metadata"]["name"]
+    assert first_pod["metadata"]["name"].startswith("btc-node-")
+    # The app label stays the component name, so watchers select it with the run ID label.
+    assert first_pod["metadata"]["labels"]["app"] == "btc-node"
+    service = first.client.create_namespaced_service.call_args.kwargs["body"]
+    assert service["metadata"]["name"] == first_pod["metadata"]["name"]
+    assert service["spec"]["selector"] == {"app": "btc-node", "coinjoin.run-id": "fin-spike-20261017-1154"}
+    assert first_host == f"{first_pod['metadata']['name']}.coinjoin.svc.cluster.local"
+    assert first_host != second_host
+
+
+def test_suffixed_pods_are_addressed_by_their_suffixed_name() -> None:
+    instance = driver(run_id="run-42")
+    instance.client.read_namespaced_pod.side_effect = ApiException(status=404)
+    instance.client.read_namespaced_service.side_effect = ApiException(status=404)
+    pod = instance.resource_name("wasabi-client-000")
+
+    instance.stop("wasabi-client-000")
+    instance.logs("wasabi-client-000")
+
+    instance.client.delete_namespaced_pod.assert_called_once_with(name=pod, namespace="coinjoin")
+    instance.client.read_namespaced_pod_log.assert_called_once_with(name=pod, namespace="coinjoin")
+    assert pod != "wasabi-client-000"
+
+
+def test_later_pods_resolve_plain_service_names_to_this_runs_services() -> None:
+    instance = driver(run_id="run-42")
+    instance._wait_for_pod_ip = Mock(return_value="10.0.0.7")  # pylint: disable=protected-access
+    instance.client.create_namespaced_service.return_value = SimpleNamespace(
+        spec=SimpleNamespace(cluster_ip="10.96.0.10", ports=[])
+    )
+    instance.run("btc-node", "btc-node:latest", ports={18443: 18443}, cpu=1.0, memory=512)
+
+    manifest = instance.build_pod_manifest("jcs-maker-000", "jcs:latest", {}, {}, 1.0, 512)
+
+    assert manifest["spec"]["hostAliases"] == [{"ip": "10.96.0.10", "hostnames": ["btc-node"]}]
+
+
+def test_a_namespace_of_its_own_keeps_plain_names() -> None:
+    instance = driver(run_id="run-42", reuse_namespace=False)
+
+    manifest = instance.build_pod_manifest("btc-node", "btc-node:latest", {}, {}, 1.0, 512)
+
+    assert manifest["metadata"]["name"] == "btc-node"
+    assert "hostAliases" not in manifest["spec"]
+
+
+def test_long_names_stay_within_the_dns_label_limit() -> None:
+    name = driver(run_id="run-42").resource_name("x" * 80)
+
+    assert len(name) == 63
+    assert len(name.rsplit("-", maxsplit=1)[1]) == 16
+
+
+def test_a_pending_pod_reports_why_it_cannot_be_scheduled() -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod_status.return_value = SimpleNamespace(status=SimpleNamespace(
+        phase="Pending",
+        reason=None,
+        message=None,
+        conditions=[SimpleNamespace(
+            type="PodScheduled",
+            status="False",
+            reason="Unschedulable",
+            message="0/6 nodes are available: 6 Insufficient cpu.",
+        )],
+        container_statuses=None,
+    ))
+
+    assert instance.container_state("wasabi-backend") == (
+        "pod phase Pending; unschedulable: Unschedulable: 0/6 nodes are available: 6 Insufficient cpu."
+    )
+
+
+def test_an_exited_container_reports_its_reason_and_exit_code() -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod_status.return_value = SimpleNamespace(status=SimpleNamespace(
+        phase="Failed",
+        reason=None,
+        message=None,
+        conditions=[SimpleNamespace(type="PodScheduled", status="True", reason=None, message=None)],
+        container_statuses=[SimpleNamespace(state=SimpleNamespace(
+            waiting=None,
+            terminated=SimpleNamespace(reason="OOMKilled", exit_code=137),
+        ))],
+    ))
+
+    assert instance.container_state("wasabi-backend") == (
+        "pod phase Failed; container terminated: OOMKilled (exit code 137)"
+    )

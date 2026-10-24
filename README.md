@@ -60,12 +60,16 @@ The fields are as follows:
   - `delay_blocks` is the number of blocks the wallet will wait before participating.
   - `delay_rounds` is the number of coinjoin rounds the wallet will wait before participating.
   - `stop_blocks` is the number of blocks after which the wallet will stop participating.
-  - `stop_rounds` is the number of rounds after which the wallet will stop participating.
+  - `stop_rounds` is the number of rounds after which the wallet will stop participating. The four start and stop fields work the same in both engines: a JoinMarket taker starts no coinjoin outside them and a maker withdraws its offers.
   - `version` is the string representation of wallet wasabi version used for client running this wallet.
   - `wasabi` is an optional object with Wasabi-specific wallet settings:
     - `anon_score_target` is the target anon score of the wallet.
     - `redcoin_isolation` is a boolean value indicating whether the wallet should use redcoin isolation.
     - `skip_rounds` is a list of round numbers the wallet skips.
+    - `postmix_spends` is a list of spends of mixed coins to an address outside the mix (the funding wallet of the node). Each entry sets exactly one of `value` (spend at least this many satoshis) and `all: true` (spend every mixed coin), and optionally `delay_blocks`, `delay_rounds` (when the spend becomes due), `min_anon_score` (coins at or above count as mixed; default: above 1) and `coin_selection` (which coins cover `value`: `anon_score`, the default, takes the most private coins first and may pay out far more than `value` when one of them is big; `amount` takes the smallest coin that covers what is left, or the largest coin when none does). The wallet stops mixing, pays the selected coins out in one transaction with the fee subtracted (no change), and resumes mixing if its schedule allows. A failed spend is retried every 30 seconds. The outcome of every spend is stored in `data/postmix_spends.json`.
+    - On Wasabi 2.6, `all: true` waits up to 300 seconds for the wallet's CoinJoin to become idle and for its coin list to reflect confirmed, unspent outputs on the node. This includes outputs of a round that was already in its critical phase when stopping was requested. A timeout is recorded as a failed attempt and retried; no incomplete sweep is marked sent. Score-1 change remains excluded unless `min_anon_score` explicitly admits it. Older Wasabi clients do not expose the CoinJoin status and retain their previous stop behavior.
+  - `joinmarket` is an optional object with JoinMarket-specific wallet settings (`role`, `offers`, `tumbler_options`, `coinjoin_timeout_blocks`, `max_coinjoins`, `fidelity_bond`, `time_between_rounds`):
+    - `postmix_spends` takes the same entries as the Wasabi one, without `min_anon_score`; `coin_selection` can only be `amount`, the default. A JoinMarket coin has no anonymity score, so a coin counts as mixed when a confirmed round of the run created it. JoinMarket never merges mixdepths: a `value` spend pays from the one mixdepth whose coins cover it with the least overshoot, and `all: true` sweeps each mixdepth in its own transaction, listed under `txids`. A maker is stopped for the spend and restarted on its next update; a taker in a running coinjoin is left to finish and the spend retried.
 
 ## Engine
 You can run the simulation with different CoinJoin protocols. Currently, Wasabi and Joinmarket are supported. 

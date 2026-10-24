@@ -15,7 +15,7 @@ class RoundsClient:
         self.round_events: list[dict[str, object]] = []
         self.updates: list[tuple[int, int]] = []
 
-    def is_paused(self, current_block: int) -> bool:
+    def is_paused(self, current_block: int, current_round: int = 0) -> bool:
         return False
 
     def update(self, current_block: int, current_round: int) -> int:

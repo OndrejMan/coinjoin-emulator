@@ -1,6 +1,8 @@
 import json
 import random
+from collections.abc import Callable
 from time import monotonic, sleep, time
+from typing import TypedDict
 
 import requests
 
@@ -10,11 +12,21 @@ WALLET_NAME = "wallet"
 
 RETRY_BACKOFF_SECONDS = 1
 JSON_RPC_INTERNAL_ERROR = -32603
+POSTMIX_SETTLEMENT_TIMEOUT_SECONDS = 300
 
 TRANSIENT_INTERNAL_ERRORS = (
     "Destination array was not long enough",
     "Collection was modified",
 )
+
+
+class WasabiCoin(TypedDict):
+    """The ``listunspentcoins`` fields that mixed-coin selection reads."""
+    txid: str
+    index: int
+    amount: int
+    anonymityScore: float
+    confirmed: bool
 
 
 def _is_transient(error) -> bool:
@@ -163,6 +175,173 @@ class WasabiClientBase:
             },
         }
         return self._rpc(request, timeout=None)
+
+    def send_mixed_coins(
+        self,
+        destination: str,
+        value: int | None = None,
+        min_anon_score: float | None = None,
+        unspent: Callable[[str, int], bool] | None = None,
+        coin_selection: str = "anon_score",
+    ) -> dict[str, object]:
+        """Spend mixed coins to ``destination`` in one transaction without change.
+
+        Confirmed coins with an anonymity score of at least ``min_anon_score``
+        (default: above 1, i.e. coins that went through a coinjoin) cover ``value``,
+        or all of them are taken when ``value`` is None; ``coin_selection`` decides
+        which coins cover it, see ``_select_mixed_coins``. The whole selection is
+        paid out with the fee subtracted, so no change output re-enters the wallet
+        as fresh liquidity. ``unspent`` drops coins the node already sees spent.
+        The schedule stops mixing before this call; a 2.6 all-spend waits for
+        settlement against the node before selecting its coins.
+        """
+        if value is None and unspent is not None:
+            self._wait_for_postmix_settlement(unspent)
+        selected, total = self._select_mixed_coins(value, min_anon_score, unspent, coin_selection)
+        request = {
+            "method": "send",
+            "params": {
+                "payments": [{"sendto": destination, "amount": total, "label": "postmix", "subtractFee": True}],
+                "coins": [{"transactionid": coin["txid"], "index": coin["index"]} for coin in selected],
+                "feeTarget": 2,
+                "password": "",
+            },
+        }
+        result = self._rpc(request, timeout=None)
+        return {
+            "txid": result.get("txid") if isinstance(result, dict) else None,
+            "amount_sats": total,
+            "coins": [
+                {
+                    "txid": coin["txid"],
+                    "index": coin["index"],
+                    "amount": coin["amount"],
+                    "anonymity_score": coin["anonymityScore"],
+                }
+                for coin in selected
+            ],
+        }
+
+    def check_mixed_coins(
+        self,
+        value: int | None = None,
+        min_anon_score: float | None = None,
+        unspent: Callable[[str, int], bool] | None = None,
+    ) -> None:
+        """Raise like ``send_mixed_coins`` when the mixed coins cannot cover ``value`` yet."""
+        self._select_mixed_coins(value, min_anon_score, unspent)
+
+    def _wait_for_postmix_settlement(self, unspent: Callable[[str, int], bool]) -> None:
+        """A 2.6 sweep waits for its last round's confirmed outputs after stopping.
+
+        stopcoinjoin queues a stop during a critical phase. Until the wallet
+        processes the confirming block, its old inputs may still look unspent
+        and its new outputs are absent. Check every coin, including score-1
+        inputs, against the node before declaring the sweep ready.
+        """
+        if self.version < "2.6.0":
+            return
+        deadline = monotonic() + POSTMIX_SETTLEMENT_TIMEOUT_SECONDS
+        reason = "coinjoin has not stopped"
+        print(f"- {self.name} waiting for its last coinjoin and wallet confirmations before spending all mixed coins")
+        while monotonic() < deadline:
+            info = self.get_wallet_info(timeout=5)
+            if info.get("coinjoinStatus") != "Idle":
+                reason = f"coinjoin status is {info.get('coinjoinStatus', 'unavailable')}"
+            else:
+                coins = self._list_unspent_coins()
+                if any(not coin.get("confirmed") for coin in coins):
+                    reason = "wallet still has unconfirmed coins"
+                else:
+                    for coin in coins:
+                        if monotonic() >= deadline:
+                            reason = "checking the wallet's coins exceeded the timeout"
+                            break
+                        if not unspent(coin["txid"], coin["index"]):
+                            reason = "wallet still lists inputs already spent by the node"
+                            break
+                    else:
+                        return
+            sleep(1)
+        raise TimeoutError(
+            f"{self.name} could not settle its all-mixed-coins spend within "
+            f"{POSTMIX_SETTLEMENT_TIMEOUT_SECONDS} s: {reason}"
+        )
+
+    @staticmethod
+    def _select_coins_by_anon_score(
+        candidates: list[WasabiCoin], value: int
+    ) -> tuple[list[WasabiCoin], int]:
+        """Take the most private coins until they cover ``value``."""
+        selected = []
+        total = 0
+        for coin in candidates:
+            if total >= value:
+                break
+            selected.append(coin)
+            total += coin["amount"]
+        return selected, total
+
+    @staticmethod
+    def _select_coins_by_amount(candidates: list[WasabiCoin], value: int) -> tuple[list[WasabiCoin], int]:
+        """Take coins that keep the amount above ``value`` small."""
+        remaining = sorted(candidates, key=lambda coin: coin["amount"])
+        selected = []
+        total = 0
+        while remaining and total < value:
+            covering = [coin for coin in remaining if coin["amount"] >= value - total]
+            coin = covering[0] if covering else remaining[-1]
+            remaining.remove(coin)
+            selected.append(coin)
+            total += coin["amount"]
+        return selected, total
+
+    def _select_mixed_coins(
+        self,
+        value: int | None = None,
+        min_anon_score: float | None = None,
+        unspent: Callable[[str, int], bool] | None = None,
+        coin_selection: str = "anon_score",
+    ) -> tuple[list[WasabiCoin], int]:
+        """Confirmed mixed coins covering ``value`` (all of them when None), and their sum.
+
+        ``anon_score`` takes the most private coins first, so one big coin can pay
+        out far more than ``value``. ``amount`` keeps the overshoot small: it takes
+        the smallest coin that covers what is left, or the largest coin when none does.
+
+        The wallet sees no mempool, so a coinjoin it just signed leaves its inputs
+        listed as unspent until a block confirms it; spending them again is a
+        low-fee replacement the node rejects. ``unspent`` asks the node instead.
+        """
+        def is_mixed(coin: WasabiCoin) -> bool:
+            score = coin.get("anonymityScore") or 0
+            return score > 1 if min_anon_score is None else score >= min_anon_score
+
+        candidates = sorted(
+            (
+                coin
+                for coin in self._list_unspent_coins()
+                if coin.get("confirmed")
+                and is_mixed(coin)
+                and (unspent is None or unspent(coin["txid"], coin["index"]))
+            ),
+            key=lambda coin: coin["anonymityScore"],
+            reverse=True,
+        )
+        selected: list[WasabiCoin]
+        total: int
+        if value is None:
+            selected = candidates
+            total = sum(coin["amount"] for coin in selected)
+        elif coin_selection == "amount":
+            selected, total = self._select_coins_by_amount(candidates, value)
+        elif coin_selection == "anon_score":
+            selected, total = self._select_coins_by_anon_score(candidates, value)
+        else:
+            raise ValueError(f"unsupported coin selection: {coin_selection}")
+        if not selected or (value is not None and total < value):
+            raise RuntimeError(f"{self.name} has {total} sats of mixed coins, {value or 'any'} sats requested")
+        return selected, total
 
     def start_coinjoin(self):
         request = {

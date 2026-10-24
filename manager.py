@@ -13,6 +13,7 @@ from manager.driver import Driver
 from manager.engine.engine_base import EngineBase
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT, WasabiEngine
+from manager.run_log import RunLog
 from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 
 args: argparse.Namespace | None = None
@@ -91,6 +92,15 @@ def run():
     signal.signal(signal.SIGTERM, handle_shutdown_signal)
     signal.signal(signal.SIGINT, handle_shutdown_signal)
 
+    engine.run_log = RunLog().install()
+    try:
+        return run_engine(engine, driver, args)
+    finally:
+        engine.run_log.close()
+        engine.run_log = None
+
+
+def run_engine(engine, driver, args):
     exit_code = 0
     try:
         engine.run()
@@ -107,6 +117,12 @@ def run():
         print(f"Terminating exception: {e}", file=sys.stderr, flush=True)
         print_exception(e)
         exit_code = 1
+
+    if exit_code:
+        try:
+            engine.report_infrastructure_state()
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            print(f"- could not report infrastructure state: {e}", file=sys.stderr, flush=True)
 
     if cleanup(engine, driver, args):
         exit_code = 1

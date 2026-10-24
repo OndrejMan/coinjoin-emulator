@@ -1,5 +1,7 @@
 """Docker driver contracts for endpoint resolution and artifact collection."""
 
+import tarfile
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -192,3 +194,38 @@ def test_host_port_warning_preserves_existing_reservations(tmp_path, capsys) -> 
     warn_if_host_ports_unreserved(path=str(sysctl))
 
     assert "net.ipv4.ip_local_reserved_ports=8080,45000-45010,37127-37260" in capsys.readouterr().out
+
+
+def uploaded_member(container: Mock) -> tarfile.TarInfo:
+    path, data = container.put_archive.call_args.args
+    assert path == "/home/wasabi"
+    with tarfile.open(fileobj=BytesIO(data)) as tar:
+        return tar.getmember("coordinator-config.json")
+
+
+def test_an_upload_belongs_to_the_container_user(tmp_path) -> None:
+    instance = driver()
+    container = instance.client.containers.get.return_value
+    container.attrs = {"Config": {"User": "1000:1001"}}
+    container.exec_run.side_effect = lambda command, **_: (0, b"1000\r\n" if command == ["id", "-u"] else b"1001\r\n")
+    source = tmp_path / "config.json"
+    source.write_text("{}")
+
+    instance.upload("wasabi-coordinator", str(source), "/home/wasabi/coordinator-config.json")
+
+    member = uploaded_member(container)
+    assert (member.uid, member.gid) == (1000, 1001)
+    container.exec_run.assert_called_with(["id", "-g"], user="1000:1001", tty=True)
+
+
+def test_an_upload_keeps_the_archive_owner_when_the_user_is_unknown(tmp_path) -> None:
+    instance = driver()
+    container = instance.client.containers.get.return_value
+    container.attrs = {"Config": {"User": ""}}
+    container.exec_run.return_value = (126, b"id: not found")
+    source = tmp_path / "config.json"
+    source.write_text("{}")
+
+    instance.upload("wasabi-coordinator", str(source), "/home/wasabi/coordinator-config.json")
+
+    assert uploaded_member(container).name == "coordinator-config.json"
