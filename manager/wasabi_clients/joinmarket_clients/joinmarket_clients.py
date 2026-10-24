@@ -416,15 +416,22 @@ class OrderbookWatchClient(JoinMarketClientServer):
 
         return 0
 
+# The name JoinMarket's tumbler and genscen_joinmarket use.
+DEFAULT_SCHEDULE_FILE = "TUMBLE.schedule"
+
+
 class TumblerTakerClient(JoinMarketClientServer):
     """
     This subclass is for a taker with tumbler options.
     """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.tumbler_options = kwargs.get("tumbler_options", None)
+        # A copy: the scenario's options must not collect a suffix per client start.
+        self.tumbler_options = dict(kwargs.get("tumbler_options") or {}) or None
         if self.tumbler_options:
-            self.tumbler_options['schedulefile'] = self.tumbler_options['schedulefile'] + "_" + uuid.uuid4().hex
+            # jmwalletd needs a schedule file name; a scenario may leave it to the emulator.
+            schedulefile = self.tumbler_options.get("schedulefile", DEFAULT_SCHEDULE_FILE)
+            self.tumbler_options["schedulefile"] = f"{schedulefile}_{uuid.uuid4().hex}"
         self.last_schedule = None
         self.coinjoin_completed = True
 
