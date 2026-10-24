@@ -96,3 +96,17 @@ def test_maker_offers_only_inside_its_schedule(run_async: bool) -> None:
     assert (maker.calls, maker.maker_running) == (["start", "stop"], False)
     update(7, 6)
     assert maker.calls == ["start", "stop"]
+
+
+def test_tumbler_gets_a_unique_schedule_file_without_changing_the_scenario() -> None:
+    from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import TumblerTakerClient
+
+    options = {"mixdepthcount": 3}
+    first = TumblerTakerClient(name="jcs-002", type="taker", tumbler_options=options)
+    second = TumblerTakerClient(name="jcs-002", type="taker", tumbler_options=options)
+
+    assert options == {"mixdepthcount": 3}
+    assert first.tumbler_options["schedulefile"].startswith("TUMBLE.schedule_")
+    assert first.tumbler_options["schedulefile"] != second.tumbler_options["schedulefile"]
+    named = TumblerTakerClient(name="jcs-003", type="taker", tumbler_options={"schedulefile": "mine"})
+    assert named.tumbler_options["schedulefile"].startswith("mine_")
