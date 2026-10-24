@@ -539,9 +539,9 @@ class JoinmarketEngine(EngineBase):
         for client in self.clients:
             try:
                 # Check if client just reached its limit
-                was_active = not client.is_paused(self.current_block)
+                was_active = not client.is_paused(self.current_block, self.current_round)
                 delta = client.update(self.current_block, self.current_round)
-                now_paused = client.is_paused(self.current_block)
+                now_paused = client.is_paused(self.current_block, self.current_round)
 
                 # Log when a client reaches its coinjoin limit
                 if was_active and now_paused and hasattr(client, 'max_coinjoins') and client.max_coinjoins > 0:

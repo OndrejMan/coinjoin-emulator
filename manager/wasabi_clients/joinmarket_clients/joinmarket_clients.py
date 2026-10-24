@@ -28,13 +28,20 @@ class MakerClient(JoinMarketClientServer):
         self.maker_running = response.get("maker_running", False)
         return response
 
+    def _mark_stopped_outside_schedule(self) -> None:
+        print(f"Stopping maker {self.name} (outside its start and stop schedule)")
+        self.maker_running = False
+
     def update(self, current_block, current_round) -> int:
         """
-        Start the maker if it is not running.
+        Start the maker if it is not running; stop it once its schedule closes.
         """
         self.update_status()
 
-        if self.is_paused(current_block):
+        if self.is_paused(current_block, current_round):
+            if self.maker_running and self.outside_schedule(current_block, current_round):
+                self.stop_maker()
+                self._mark_stopped_outside_schedule()
             return 0
 
         if not self.maker_running:
@@ -54,12 +61,15 @@ class MakerClient(JoinMarketClientServer):
 
     async def update_async(self, current_block, current_round) -> int:
         """
-        Async version: Start the maker if it is not running.
+        Async version: Start the maker if it is not running; stop it once its schedule closes.
         """
         response = await self.update_status_async()
         self.maker_running = response.get("maker_running", False)
 
-        if self.is_paused(current_block):
+        if self.is_paused(current_block, current_round):
+            if self.maker_running and self.outside_schedule(current_block, current_round):
+                await self.stop_maker_async()
+                self._mark_stopped_outside_schedule()
             return 0
 
         if not self.maker_running:
@@ -165,7 +175,7 @@ class TakerClient(JoinMarketClientServer):
             return self._unconfirmed_finished_attempt_result(current_block)
         if (
             not self.coinjoin_in_process
-            and not self.is_paused(current_block)
+            and not self.is_paused(current_block, current_round)
             and not self.has_unconfirmed_round()
         ):
             offer = self._prepare_attempt(current_round)
@@ -199,7 +209,7 @@ class TakerClient(JoinMarketClientServer):
         # otherwise a taker that reached its limit would leave it open forever.
         if self._has_unconfirmed_finished_attempt():
             return self._unconfirmed_finished_attempt_result(current_block)
-        if self.is_paused(current_block):
+        if self.is_paused(current_block, current_round):
             return 0
         if not self.coinjoin_in_process and not self.has_unconfirmed_round():
             offer = self._prepare_attempt(current_round)
@@ -439,7 +449,7 @@ class TumblerTakerClient(JoinMarketClientServer):
         """
         self.update_status()
 
-        if not self.coinjoin_in_process and not self.is_paused(current_block):
+        if not self.coinjoin_in_process and not self.is_paused(current_block, current_round):
             print(f"Starting scheduled coinjoin for {self.name}")
             response = self.run_schedule()
             self.last_schedule = response["schedule"]
@@ -470,7 +480,7 @@ class TumblerTakerClient(JoinMarketClientServer):
             self.coinjoin_completed = True
             self.last_schedule = schedule
 
-        if not self.coinjoin_in_process and not self.is_paused(current_block):
+        if not self.coinjoin_in_process and not self.is_paused(current_block, current_round):
             print(f"Starting scheduled coinjoin for {self.name}")
             response = await self.run_schedule_async()
             self.last_schedule = response["schedule"]

@@ -60,7 +60,7 @@ The fields are as follows:
   - `delay_blocks` is the number of blocks the wallet will wait before participating.
   - `delay_rounds` is the number of coinjoin rounds the wallet will wait before participating.
   - `stop_blocks` is the number of blocks after which the wallet will stop participating.
-  - `stop_rounds` is the number of rounds after which the wallet will stop participating.
+  - `stop_rounds` is the number of rounds after which the wallet will stop participating. The four start and stop fields work the same in both engines: a JoinMarket taker starts no coinjoin outside them and a maker withdraws its offers.
   - `version` is the string representation of wallet wasabi version used for client running this wallet.
   - `wasabi` is an optional object with Wasabi-specific wallet settings:
     - `anon_score_target` is the target anon score of the wallet.
