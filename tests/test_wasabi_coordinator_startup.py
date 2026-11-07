@@ -11,7 +11,12 @@ import requests
 from kubernetes.client.exceptions import ApiException
 
 from manager.driver.kubernetes import KubernetesDriver
-from manager.engine.wasabi_engine import WasabiEngine, coordinator_retry_reason
+from manager.engine.wasabi_engine import (
+    WASABI_BACKEND_CONFIG_PATH,
+    WASABI_BACKEND_CONFIG_TIMEOUT_SECONDS,
+    WasabiEngine,
+    coordinator_retry_reason,
+)
 from manager.wasabi_backend_factory import BackendArchitecture
 
 
@@ -89,6 +94,33 @@ def test_the_coordinator_config_carries_the_scenario_backend_overrides() -> None
     assert config["BitcoinCoreRpcEndPoint"] == "10.0.0.2:18443"
     assert confirmation == ("wasabi-coordinator", "/home/wasabi/coordinator-config.ready", "")
     assert all(not Path(call.args[1]).exists() for call in instance.driver.upload.call_args_list)
+
+
+def test_the_backend_config_waits_for_the_backend_data_directory() -> None:
+    instance = engine()
+    instance.driver.upload.side_effect = [RuntimeError("directory missing"), RuntimeError("directory missing"), None]
+
+    with patch("manager.engine.wasabi_engine.sleep") as sleep:
+        instance.upload_backend_config("/tmp/config.json")
+
+    assert instance.driver.upload.call_count == 3
+    assert sleep.call_count == 2
+    instance.driver.upload.assert_called_with("wasabi-backend", "/tmp/config.json", WASABI_BACKEND_CONFIG_PATH)
+
+
+def test_the_backend_config_upload_gives_up_at_the_deadline() -> None:
+    instance = engine()
+    instance.driver.upload.side_effect = RuntimeError("directory missing")
+    clock = [0.0, 1.0, WASABI_BACKEND_CONFIG_TIMEOUT_SECONDS + 1.0]
+
+    with (
+        patch("manager.engine.wasabi_engine.sleep"),
+        patch("manager.engine.wasabi_engine.time", side_effect=clock),
+        pytest.raises(RuntimeError, match="directory missing"),
+    ):
+        instance.upload_backend_config("/tmp/config.json")
+
+    assert instance.driver.upload.call_count == 2
 
 
 def test_a_failed_config_upload_is_not_confirmed() -> None:

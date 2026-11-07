@@ -36,6 +36,8 @@ WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
 WASABI_CLIENT_DATA_PATH = "/home/wasabi/.walletwasabi/client/"
 WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
 DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT = 900
+WASABI_BACKEND_CONFIG_PATH = "/home/wasabi/.walletwasabi/backend/WabiSabiConfig.json"
+WASABI_BACKEND_CONFIG_TIMEOUT_SECONDS = 120
 WASABI_COORDINATOR_START_TIMEOUT_SECONDS = 120
 WASABI_COORDINATOR_START_ATTEMPTS = 3
 WASABI_COORDINATOR_RETRYABLE_STARTUP_FAILURES = {
@@ -142,15 +144,7 @@ class WasabiEngine(EngineBase):
             scenario_file = tmp_file.name
             tmp_file.write(json.dumps(backend_config, indent=2).encode())
 
-        try:
-            self.driver.upload(
-                "wasabi-backend",
-                scenario_file,
-                "/home/wasabi/.walletwasabi/backend/WabiSabiConfig.json",
-            )
-        except Exception as e:
-            print_exception(e)
-            raise
+        self.upload_backend_config(scenario_file)
 
         backend_host, backend_port = self.service_endpoint(
             wasabi_backend_ip, 37127, wasabi_backend_ports, route
@@ -164,6 +158,23 @@ class WasabiEngine(EngineBase):
         )
         self.backend.wait_ready()
         print(f"- started wasabi-backend ({self.backend_architecture.value} architecture)")
+
+    def upload_backend_config(self, config_file):
+        """Upload the config once the backend has created its data directory.
+
+        run.sh deletes that directory and only the started backend recreates
+        it, so a slow start fails the first attempts with a missing path.
+        """
+        deadline = time() + WASABI_BACKEND_CONFIG_TIMEOUT_SECONDS
+        while True:
+            try:
+                self.driver.upload("wasabi-backend", config_file, WASABI_BACKEND_CONFIG_PATH)
+                return
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                if time() >= deadline:
+                    print_exception(e)
+                    raise
+            sleep(1)
 
     def start_wasabi_coordinator(self):
         """Start the Wasabi coordinator (only for split architecture)."""
