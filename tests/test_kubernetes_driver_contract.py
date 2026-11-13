@@ -604,6 +604,19 @@ def test_stop_returns_only_after_the_pod_and_service_are_gone() -> None:
     assert sleep.call_count == 2
 
 
+def test_stop_deletes_the_service_of_a_pod_that_is_already_gone() -> None:
+    instance = driver()
+    gone = ApiException(status=404)
+    instance.client.delete_namespaced_pod.side_effect = gone
+    instance.client.read_namespaced_pod.side_effect = gone
+    instance.client.read_namespaced_service.side_effect = gone
+
+    with patch("manager.driver.kubernetes.sleep"):
+        instance.stop("wasabi-client-002")
+
+    instance.client.delete_namespaced_service.assert_called_once_with("wasabi-client-002", namespace="coinjoin")
+
+
 def test_stop_gives_up_waiting_after_the_deadline() -> None:
     instance = driver()
     instance.client.read_namespaced_pod.return_value = running_pod()
