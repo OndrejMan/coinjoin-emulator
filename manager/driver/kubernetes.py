@@ -356,15 +356,18 @@ class KubernetesDriver(Driver):
         """Delete the pod and service and return once the name can be reused.
 
         A DELETE only starts the pod's termination; creating the same name
-        again before it has gone answers 409 AlreadyExists.
+        again before it has gone answers 409 AlreadyExists. Each resource is
+        deleted on its own: a pod that already vanished (evicted, deleted)
+        must not leave its service behind.
         """
-        try:
-            self.client.delete_namespaced_pod(name=name, namespace=self.namespace)
-            self.client.delete_namespaced_service(
-                name, namespace=self.namespace
-            )
-        except Exception:
-            pass
+        for delete in (
+            lambda: self.client.delete_namespaced_pod(name=name, namespace=self.namespace),
+            lambda: self.client.delete_namespaced_service(name, namespace=self.namespace),
+        ):
+            try:
+                delete()
+            except Exception:
+                pass
         self._wait_until_gone(name)
 
     def _wait_until_gone(self, name):
