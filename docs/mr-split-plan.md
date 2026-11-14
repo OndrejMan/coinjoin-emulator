@@ -268,14 +268,21 @@ Po squashích je to 215 commitů v 58 MR (209 mých, 2 merge, 4 Rajnohovy).
 
    Druhá možnost je udělat rebase na crocs-muni `main` rovnou. Stack je pak čistě lineární,
    ale práce je víc a bez předchozího merge v `main` není proti čemu porovnat strom.
+
+   Rozhodnuto 2026-11-14: stack zůstane nad `original-rajnoha-branch`, rebase na crocs-muni
+   `main` se teď nedělá.
 2. **Hrubost.** 58 MR má průměrně 4 commity a ~250 řádků. Jestli je to moc, dá se otevřít
    12 PR po vlnách (stejné hranice, bez dalšího přeskládání).
 3. **Squashe a přesuny testů** z tabulky výše: všechny, nebo jen některé?
 4. **WIP commity č. 216–218:** draft PR navrchu, nebo zatím mimo stack? A přesunout č. 219 pod ně?
+   Rozhodnuto 2026-11-14: WIP commity zůstanou ve stacku jako draft PR navrchu.
 5. **Rajnohovy č. 190–193:** nechat jako MR 50 uprostřed (doporučuju), nebo je chceš jinde?
 6. **PR #7 a #14:** nechat otevřené, dokud stack neprojdeš, a pak zavřít? PR #8 zůstává spodkem.
 7. **Otevírání:** rozhodnuto 2026-11-13: všechny PR najednou, až budou větve postavené
    a ověřené (ne po vlnách).
+
+Po plánu přibyl na `main` commit „fix(kubernetes): delete a stopped client's service even when
+its pod is gone“ (2026-11-13). V inventáři není; patří do MR 33 za č. 146.
 
 ## Postup provedení (až řekneš)
 
