@@ -70,7 +70,7 @@ class ScenarioConfig:
     default_anon_score_target: int | None = None
     default_redcoin_isolation: bool | None = None
     backend: dict[str, Any] | None = None
-    
+
     @classmethod
     def from_json_config(cls, filepath: str | Path) -> "ScenarioConfig":
         """Load scenario configuration from JSON file."""
@@ -95,6 +95,21 @@ class ScenarioConfig:
             backend=data.get("backend")
         )
     
+    def validate_for_engine(self, engine: str) -> None:
+        """Validate the constraints that depend on the selected CoinJoin engine."""
+        if engine != "joinmarket":
+            return
+        missing_roles = [
+            str(index)
+            for index, wallet in enumerate(self.wallets)
+            if wallet.joinmarket is None or wallet.joinmarket.role is None
+        ]
+        if missing_roles:
+            raise ValueError(
+                "JoinMarket wallets require an explicit maker/taker role; missing at indexes: "
+                + ", ".join(missing_roles)
+            )
+
     @classmethod
     def _parse_wallet(cls, wallet_data: dict[str, Any]) -> WalletConfig:
         """Parse wallet configuration from JSON data."""
@@ -112,29 +127,47 @@ class ScenarioConfig:
             else:
                 funds.append(fund)  # fallback
         
-        # Extract Wasabi-specific fields
-        wasabi_config = None
+        legacy_wasabi_fields = {"anon_score_target", "redcoin_isolation", "skip_rounds"}
+        if legacy_wasabi_fields.intersection(wallet_data):
+            raise ValueError("flat Wasabi wallet settings are unsupported; use the wasabi object")
+
+        nested_wasabi = wallet_data.get("wasabi") or {}
         wasabi_fields = {
-            "anon_score_target": wallet_data.get("anon_score_target"),
-            "redcoin_isolation": wallet_data.get("redcoin_isolation"),
-            "skip_rounds": wallet_data.get("skip_rounds")
+            "anon_score_target": nested_wasabi.get("anon_score_target"),
+            "redcoin_isolation": nested_wasabi.get("redcoin_isolation"),
+            "skip_rounds": nested_wasabi.get("skip_rounds"),
         }
+        wasabi_config = None
         if any(v is not None for v in wasabi_fields.values()):
             wasabi_config = WasabiConfig(**wasabi_fields)
         
-        # Extract JoinMarket-specific fields
+        legacy_joinmarket_fields = {
+            "type",
+            "offers",
+            "tumbler_options",
+            "time_between_rounds",
+            "fidelity_bond",
+            "max_coinjoins",
+        }
+        if legacy_joinmarket_fields.intersection(wallet_data):
+            raise ValueError("flat JoinMarket wallet settings are unsupported; use the joinmarket object")
+
+        nested_joinmarket = wallet_data.get("joinmarket") or {}
+        role_value = nested_joinmarket.get("role")
+        joinmarket_fields = {
+            "offers": nested_joinmarket.get("offers"),
+            "tumbler_options": nested_joinmarket.get("tumbler_options"),
+            "time_between_rounds": nested_joinmarket.get("time_between_rounds"),
+            "fidelity_bond": nested_joinmarket.get("fidelity_bond"),
+            "max_coinjoins": nested_joinmarket.get("max_coinjoins"),
+        }
         joinmarket_config = None
-        if "type" in wallet_data:
-            role_str = wallet_data["type"]
-            role = JoinMarketRole.MAKER if role_str == "maker" else JoinMarketRole.TAKER
-            joinmarket_config = JoinMarketConfig(
-                role=role,
-                offers=wallet_data.get("offers"),
-                tumbler_options=wallet_data.get("tumbler_options"),
-                time_between_rounds=wallet_data.get("time_between_rounds"),
-                fidelity_bond=wallet_data.get("fidelity_bond"),
-                max_coinjoins=wallet_data.get("max_coinjoins"),
-            )
+        if role_value is not None or any(value is not None for value in joinmarket_fields.values()):
+            try:
+                role = None if role_value is None else JoinMarketRole(str(role_value))
+            except ValueError as error:
+                raise ValueError(f"invalid JoinMarket role {role_value!r}") from error
+            joinmarket_config = JoinMarketConfig(role=role, **joinmarket_fields)
         
         return WalletConfig(
             funds=funds,

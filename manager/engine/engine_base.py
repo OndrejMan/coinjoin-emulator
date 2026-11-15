@@ -49,6 +49,8 @@ class EngineBase:
         if self.args.command == "run" and self.args.scenario:
             self.scenario = ScenarioConfig.from_json_config(self.args.scenario)
 
+        self.scenario.validate_for_engine(getattr(self.args, "engine", "wasabi"))
+
         self.versions.add(self.scenario.default_version)
         if self.scenario.distributor_version is not None:
             self.versions.add(self.scenario.distributor_version)
