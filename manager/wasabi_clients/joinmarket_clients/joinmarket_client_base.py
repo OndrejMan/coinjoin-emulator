@@ -6,13 +6,13 @@ import asyncio
 
 import urllib3
 from bip_utils import Bip39SeedGenerator, Bip32Slip10Secp256k1
-import backoff
 import httpx
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 WALLET_NAME = "wallet"
+DEFAULT_WAIT_WALLET_TIMEOUT = 60
 PASSWORD = "password"
 WALLET_TYPE = "sw"
 BTC = 100_000_000
@@ -133,7 +133,7 @@ class JoinMarketClientServer:
             tumbler_options=tumbler_options,
             time_between_rounds=(joinmarket.time_between_rounds if joinmarket else 0) or 0,
             has_fidelity_bonds=has_fidelity_bonds,
-            max_coinjoins=wallet.get("max_coinjoins", 0),
+            max_coinjoins=(joinmarket.max_coinjoins if joinmarket else None) or 0,
             host=host,
             proxy=proxy
         )
@@ -345,6 +345,8 @@ class JoinMarketClientServer:
                     print("Failed to run schedule, attempt timed out.")
                 await asyncio.sleep(1)  # Add a small delay between retries
 
+        raise TimeoutError(f"Could not run the tumbler schedule for {self.walletname}")
+
     async def get_schedule_async(self):
         """Async version of get_schedule"""
         method = "GET"
@@ -389,46 +391,54 @@ class JoinMarketClientServer:
             self.refresh_token = response.get("refresh_token", "")
             return response
 
-    @backoff.on_exception(
-        backoff.expo,
-        Exception,
-        max_time=60,
-        max_tries=None,
-        jitter=None,
-    )
-    def _wait_wallet_create(self, timeout=None):
-        elapsed = int(time() - self._wait_wallet_start)
-        wallet_type = "sw-fb" if self.has_fidelity_bonds else WALLET_TYPE
-        print(f"- trying wallet creation for {self.walletname} on {self.host}:{self.port} (elapsed {elapsed}s, type: {wallet_type})")
-        self._create_wallet(wallettype=wallet_type)
+    def _retry_until_deadline(self, step, deadline):
+        """Retry step with exponential backoff until the deadline passes."""
+        delay = 1.0
+        while True:
+            try:
+                step()
+                return
+            except Exception:
+                remaining = deadline - time()
+                if remaining <= 0:
+                    raise
+                sleep(min(delay, remaining))
+                delay = min(delay * 2, 8.0)
 
-    @backoff.on_exception(
-        backoff.expo,
-        Exception,
-        max_time=60,
-        max_tries=None,
-        jitter=None,
-    )
-    def _wait_wallet_display(self, timeout=None):
-        elapsed = int(time() - self._wait_wallet_start)
-        print(f"- checking wallet display for {self.walletname} on {self.host}:{self.port} (elapsed {elapsed}s)")
-        self.get_balance()
-        print(f"- wallet {self.walletname} ready on {self.host}:{self.port}")
-        return True
+    def _wait_wallet_create(self, deadline):
+        def create():
+            elapsed = int(time() - self._wait_wallet_start)
+            wallet_type = "sw-fb" if self.has_fidelity_bonds else WALLET_TYPE
+            print(f"- trying wallet creation for {self.walletname} on {self.host}:{self.port} (elapsed {elapsed}s, type: {wallet_type})")
+            self._create_wallet(wallettype=wallet_type)
+
+        self._retry_until_deadline(create, deadline)
+
+    def _wait_wallet_display(self, deadline):
+        def display():
+            elapsed = int(time() - self._wait_wallet_start)
+            print(f"- checking wallet display for {self.walletname} on {self.host}:{self.port} (elapsed {elapsed}s)")
+            self.get_balance()
+            print(f"- wallet {self.walletname} ready on {self.host}:{self.port}")
+
+        self._retry_until_deadline(display, deadline)
 
     def wait_wallet(self, timeout=None):
         """
         Wait for the wallet to become available, using separate exponential backoff for creation and display.
+
+        The timeout is the budget for each of the two phases; it used to be
+        ignored in favour of a fixed 60 seconds.
         """
-        from time import time
         self._wait_wallet_start = time()
+        budget = DEFAULT_WAIT_WALLET_TIMEOUT if timeout is None else timeout
         try:
             try:
-                self._wait_wallet_create(timeout=timeout)
+                self._wait_wallet_create(time() + budget)
             except Exception as e:
                 print(f"- wallet {self.walletname} creation failed: {e}")
                 raise
-            self._wait_wallet_display(timeout=timeout)
+            self._wait_wallet_display(time() + budget)
             return True
         except Exception:
             print(f"[TIMEOUT] Wallet {self.walletname} not ready after {int(time() - self._wait_wallet_start)}s on {self.host}:{self.port}")
@@ -805,6 +815,8 @@ class JoinMarketClientServer:
                 if time() - start >= 60:
                     print("Failed to run schedule, attempt timed out.")
                 sleep(1)  # Add a small delay between retries
+
+        raise TimeoutError(f"Could not run the tumbler schedule for {self.walletname}")
 
     def get_schedule(self):
         """Get the schedule that is currently running."""
