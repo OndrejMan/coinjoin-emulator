@@ -12,3 +12,4 @@ scenarios/joinmarket/test
 scenarios/joinmarket/basic
 logs_download
 .simulation*
+emucoinjoin.egg-info/

@@ -3,13 +3,15 @@ FROM ${UV_IMAGE} AS uv
 
 FROM python:3.11
 
+ARG TARGETARCH=amd64
+
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/${TARGETARCH}/kubectl" \
     && chmod +x kubectl \
     && mv kubectl /usr/local/bin/
 
@@ -25,6 +27,9 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY . .
+
+RUN chmod -R a+rX /app
+
 RUN mkdir /app/logs && chown -R 1000:1000 /app/logs
 
 ENV PYTHONPATH=/app
