@@ -3,6 +3,7 @@ import time
 from manager.btc_node import BtcNode
 from manager import utils
 from manager.run_timezone import DEFAULT_RUN_TIMEZONE
+from manager.engine.base.manifest import write_producer_label_manifest
 from manager.engine.configuration import ScenarioConfig, WalletConfig, FundConfig
 from time import sleep
 import random
@@ -278,9 +279,18 @@ class EngineBase:
         timestamp = datetime.datetime.now(ZoneInfo(run_timezone)).strftime("%Y-%m-%d_%H-%M")
         return f"./logs/{timestamp}_{self.scenario.name}"
 
+    def ensure_log_run_path_available(self) -> None:
+        # The pipeline launcher may pre-create the run directory to place its
+        # host manifest there; only a directory that already holds emulator
+        # artifacts marks a genuine earlier run.
+        run_path = self.log_run_path()
+        if os.path.exists(os.path.join(run_path, "coinjoin_emulator_data")):
+            raise RuntimeError(f"Run log directory already exists: {run_path}")
+
     def store_logs(self):
         print("Storing logs")
-        experiment_path = self.log_run_path()
+        run_path = self.log_run_path()
+        experiment_path = os.path.join(run_path, "coinjoin_emulator_data")
         data_path = os.path.join(experiment_path, "data")
         os.makedirs(data_path)
 
@@ -298,29 +308,31 @@ class EngineBase:
         except (TypeError, RpcError) as error:
             # Only the block count is optional: without it there is nothing to export.
             print(f"Failed to get block count: {error}")
-            block_count = 0
-        while stored_blocks < block_count:
-            block_hash = self.node.get_block_hash(stored_blocks)
-            block = self.node.get_block_info(block_hash)
-            with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
-                json.dump(block, f, indent=2)
-            stored_blocks += 1
+        else:
+            while stored_blocks <= block_count:
+                block_hash = self.node.get_block_hash(stored_blocks)
+                block = self.node.get_block_info(block_hash)
+                with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
+                    json.dump(block, f, indent=2)
+                stored_blocks += 1
 
         print(f"- stored {stored_blocks} blocks")
 
         print("- storing engine logs")
-        print(f"{self.store_engine_logs}")
-        self.store_engine_logs(data_path)
-        print("- finished storing engine logs")
+        producer_label_evidence = self.store_engine_logs(data_path)
+        write_producer_label_manifest(data_path, producer_label_evidence)
+        print("- finished storing engine logs, stored producer-label manifest")
 
         print(f"- storing logs for {len(self.clients)} clients in parallel")
         with multiprocessing.pool.ThreadPool() as pool:
             pool.starmap(self.store_client_logs, [(client, data_path) for client in self.clients])
 
-        shutil.make_archive(experiment_path, "zip", *os.path.split(experiment_path))
+        archive_base = os.path.join(run_path, ".emulation_logs")
+        archive_path = shutil.make_archive(archive_base, "zip", run_path, "coinjoin_emulator_data")
+        os.replace(archive_path, os.path.join(experiment_path, "emulation_logs.zip"))
         print("- zip archive created")
 
-    def store_engine_logs(self, data_path):
+    def store_engine_logs(self, data_path: str) -> dict[str, object] | None:
         print("Storing engine logs / NOT IMPLEMENTED")
         raise NotImplementedError
 
@@ -417,6 +429,8 @@ class EngineBase:
     
     def run(self):
         print(f"=== Scenario {self.scenario.name} ===")
+        if not getattr(self.args, "no_logs", False):
+            self.ensure_log_run_path_available()
         self.prepare_images()
         self.start_infrastructure()
         self.fund_distributor(5000)

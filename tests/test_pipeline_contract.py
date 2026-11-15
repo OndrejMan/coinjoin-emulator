@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import types
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -17,8 +18,13 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from manager.engine.configuration import ScenarioConfig, WalletConfig  # noqa: E402
-from manager.engine.engine_base import EngineBase  # noqa: E402
+from manager.engine.configuration import (  # noqa: E402
+    JoinMarketConfig,
+    JoinMarketRole,
+    ScenarioConfig,
+    WalletConfig,
+)
+from manager.engine.engine_base import EngineBase, write_producer_label_manifest  # noqa: E402
 
 
 def load_entrypoint():
@@ -34,6 +40,8 @@ class FakeNode:
         self.blocks = blocks
 
     def get_block_count(self):
+        if self.blocks is None:
+            raise TypeError("block count is unavailable")
         return self.blocks
 
     def get_block_hash(self, height):
@@ -94,6 +102,25 @@ def test_log_run_path_falls_back_to_timestamp_and_scenario_name():
     assert path.endswith("_scenario")
 
 
+def test_a_joinmarket_scenario_is_json_serialisable() -> None:
+    scenario = ScenarioConfig(
+        name="joinmarket",
+        rounds=1,
+        blocks=0,
+        default_version="joinmarket",
+        wallets=[
+            WalletConfig(
+                funds=[1000],
+                joinmarket=JoinMarketConfig(role=JoinMarketRole.MAKER),
+            )
+        ],
+    )
+
+    stored = json.loads(json.dumps(scenario.to_dict()))
+
+    assert stored["wallets"][0]["joinmarket"]["role"] == "maker"
+
+
 # --- controller markers ----------------------------------------------------
 
 def test_controller_marker_is_written_for_the_matching_outcome(tmp_path):
@@ -117,3 +144,100 @@ def test_controller_markers_are_optional(tmp_path):
     entrypoint.args = types.SimpleNamespace(controller_done_marker="", controller_failed_marker="")
     assert entrypoint.finalize_controller_marker(0) == 0
     assert list(tmp_path.iterdir()) == []
+
+
+# --- artifact layout -------------------------------------------------------
+
+def test_store_logs_writes_the_emulator_artifact_layout(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    make_engine(run_id="my-run").store_logs()
+
+    run_path = tmp_path / "logs" / "my-run"
+    experiment = run_path / "coinjoin_emulator_data"
+    assert sorted(p.name for p in run_path.iterdir()) == ["coinjoin_emulator_data"]
+    assert sorted(p.name for p in experiment.iterdir()) == [
+        "data",
+        "emulation_logs.zip",
+        "scenario.json",
+    ]
+    # get_block_count() reports the tip height, which must be exported too.
+    assert sorted(
+        path.name for path in (experiment / "data" / "btc-node").glob("block_*.json")
+    ) == ["block_0.json", "block_1.json", "block_2.json"]
+
+    with zipfile.ZipFile(experiment / "emulation_logs.zip") as archive:
+        roots = {name.split("/")[0] for name in archive.namelist()}
+    assert roots == {"coinjoin_emulator_data"}
+
+
+def test_store_logs_skips_block_export_when_tip_is_unavailable(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    engine = make_engine(run_id="my-run")
+    engine.node = FakeNode(blocks=None)
+
+    engine.store_logs()
+
+    blocks = tmp_path / "logs" / "my-run" / "coinjoin_emulator_data" / "data" / "btc-node"
+    assert list(blocks.glob("block_*.json")) == []
+
+
+def test_run_refuses_to_overwrite_an_existing_run(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    engine = make_engine(run_id="my-run")
+    engine.ensure_log_run_path_available()
+    engine.store_logs()
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        engine.ensure_log_run_path_available()
+
+
+def test_a_prepared_run_directory_without_artifacts_is_accepted(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "logs" / "my-run").mkdir(parents=True)
+    (tmp_path / "logs" / "my-run" / "host_manifest.json").write_text("{}", encoding="utf-8")
+
+    make_engine(run_id="my-run").ensure_log_run_path_available()
+
+
+# --- producer-label manifest ----------------------------------------------
+
+def test_manifest_records_sources_with_their_digest(tmp_path):
+    source = tmp_path / "labels.json"
+    source.write_text("[]", encoding="utf-8")
+    write_producer_label_manifest(
+        str(tmp_path),
+        {
+            "engine": "joinmarket",
+            "complete": True,
+            "reason": None,
+            "positive_rule": "rule",
+            "positive_count": 1,
+            "sources": ["labels.json"],
+        },
+    )
+
+    manifest = json.loads((tmp_path / "coinjoin_label_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == "1.0"
+    assert manifest["complete"] is True
+    assert manifest["sources"][0]["path"] == "labels.json"
+    assert len(manifest["sources"][0]["sha256"]) == 64
+
+
+def test_manifest_is_incomplete_without_evidence(tmp_path):
+    write_producer_label_manifest(str(tmp_path), None)
+    manifest = json.loads((tmp_path / "coinjoin_label_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["complete"] is False
+    assert manifest["reason"]
+
+
+def test_manifest_rejects_sources_outside_the_data_directory(tmp_path):
+    outside = tmp_path.parent / "outside.json"
+    outside.write_text("[]", encoding="utf-8")
+    write_producer_label_manifest(
+        str(tmp_path),
+        {"engine": "joinmarket", "complete": True, "sources": ["../outside.json"]},
+    )
+
+    manifest = json.loads((tmp_path / "coinjoin_label_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["complete"] is False
+    assert manifest["sources"] == []
