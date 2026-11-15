@@ -43,6 +43,6 @@ class WasabiBackend:
             try:
                 self._get_status()
                 break
-            except:
+            except Exception:
                 pass
             sleep(0.1)

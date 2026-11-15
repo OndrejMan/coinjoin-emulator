@@ -107,6 +107,7 @@ class JoinMarketClientServer:
         has_fidelity_bonds = bool(fidelity_bond.get("enabled", False))
 
         # Select the appropriate subclass based on wallet config.
+        client_cls: type["JoinMarketClientServer"]
         if type_ == "maker":
             from manager.wasabi_clients.joinmarket_clients.joinmarket_clients import MakerClient
             client_cls = MakerClient
@@ -235,7 +236,7 @@ class JoinMarketClientServer:
                     try:
                         error_data = response.json()
                         error_message = error_data.get("message", "Unknown error")
-                    except:
+                    except Exception:
                         error_message = response.text
                     print(f"[RPC-ASYNC] Error {response.status_code}: {error_message}")
                     response.raise_for_status()

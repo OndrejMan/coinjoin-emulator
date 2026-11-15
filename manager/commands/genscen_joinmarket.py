@@ -127,7 +127,7 @@ class JoinMarketConfigGenerator:
         num_utxos = random.randint(self.wallet_config.min_utxos, self.wallet_config.max_utxos)
         total_btc = random.uniform(self.wallet_config.min_total_btc, self.wallet_config.max_total_btc)
 
-        wallet = {
+        wallet: Dict[str, Any] = {
             "funds": self.generate_utxos(total_btc, num_utxos),
             "type": "taker",
             "tumbler_options": {
@@ -201,7 +201,7 @@ class JoinMarketConfigGenerator:
         if taker_delays is None:
             taker_delays = [0, 30, 60, 90, 120][:num_takers]
 
-        config = {
+        config: Dict[str, Any] = {
             "name": name,
             "default_version": "joinmarket",
             "rounds": rounds,
@@ -639,8 +639,6 @@ def handler(args):
         # Each bond maker should have at least enough UTXOs to handle multiple concurrent takers
         # Formula: max(4, total_takers * multiplier / num_bond_makers)
         bond_maker_min_utxos = max(int(total_taker_count * 1.5), int(total_taker_count * args.bond_maker_utxo_multiplier / makers_with_bonds))
-        # Calculate total UTXOs needed for all bond makers
-        total_bond_utxos = bond_maker_min_utxos * makers_with_bonds
         # Calculate liquidity multiplier to maintain proportional liquidity
         regular_maker_avg_utxos = (args.wallet_min_utxos + args.wallet_max_utxos) / 2
         bond_maker_liquidity_multiplier = bond_maker_min_utxos / regular_maker_avg_utxos

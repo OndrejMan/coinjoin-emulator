@@ -212,7 +212,7 @@ class KubernetesDriver(Driver):
             self.client.delete_namespaced_service(
                 name, namespace=self.namespace
             )
-        except:
+        except Exception:
             pass
 
     def download(self, name, src_path, dst_path):
