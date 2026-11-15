@@ -11,6 +11,11 @@ RUN apt-get update -qq && \
         socat ca-certificates iproute2 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# The pinned fork contains the regtest mining fix and its RPC-mocked checks.
+RUN python3 /jm/clientserver/test/jmclient/test_regtest_mining.py
+
+RUN python3 /jm/clientserver/test/jmclient/test_config_overrides.py
+
 RUN useradd -ms /bin/sh joinmarket
 USER 1000:1000
 

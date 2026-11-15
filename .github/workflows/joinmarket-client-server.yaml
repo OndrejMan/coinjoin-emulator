@@ -7,6 +7,8 @@ on:
       - main
     paths:
       - "containers/joinmarket-client-server/**"
+      - "vendor/joinmarket-clientserver"
+      - ".gitmodules"
       - ".github/workflows/joinmarket-client-server.yaml"
 
 permissions:
@@ -20,6 +22,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Set lowercase repository owner
         run: echo "REPO_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
@@ -37,12 +41,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Clone upstream joinmarket-clientserver
-        run: |
-          JOINMARKET_CLIENTSERVER_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/joinmarket-clientserver.XXXXXX")"
-          git clone --depth 1 https://github.com/JoinMarket-Org/joinmarket-clientserver.git "$JOINMARKET_CLIENTSERVER_DIR"
-          echo "JOINMARKET_CLIENTSERVER_DIR=$JOINMARKET_CLIENTSERVER_DIR" >> "$GITHUB_ENV"
-
       - name: Extract joinmarket-base metadata
         id: base-meta
         uses: docker/metadata-action@v5
@@ -53,9 +51,10 @@ jobs:
             type=sha
 
       - name: Build and push the joinmarket-base image
+        id: base-build
         uses: docker/build-push-action@v6
         with:
-          context: ${{ env.JOINMARKET_CLIENTSERVER_DIR }}
+          context: ./vendor/joinmarket-clientserver
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.base-meta.outputs.tags }}
@@ -77,6 +76,6 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: |
-            JOINMARKET_BASE_IMAGE=ghcr.io/${{ env.REPO_OWNER }}/joinmarket-base:latest
+            JOINMARKET_BASE_IMAGE=ghcr.io/${{ env.REPO_OWNER }}/joinmarket-base@${{ steps.base-build.outputs.digest }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
