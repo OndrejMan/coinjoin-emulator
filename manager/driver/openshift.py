@@ -69,7 +69,7 @@ class OpenshiftDriver(KubernetesDriver):
             body=pod_manifest
         )
         if skip_ip:
-            return "", {}
+            return "", {}, None
         # Wait for pod to be running and get IP
         import time
         for _ in range(60):

@@ -2,6 +2,7 @@ from traceback import print_exception
 import time
 import signal
 
+from manager.driver import Driver
 from manager.engine.joinmarket_engine import JoinmarketEngine
 from manager.engine.wasabi_engine import WasabiEngine
 from manager.engine.engine_base import EngineBase
@@ -14,6 +15,7 @@ import os
 
 args: argparse.Namespace | None = None
 engine: EngineBase | None = None
+driver: Driver | None = None
 versions = set()
 
 def handle_shutdown_signal(signum, frame):
@@ -28,6 +30,8 @@ def run():
         raise RuntimeError("Engine is not initialized")
     if args is None:
         raise RuntimeError("Arguments are not initialized")
+    if driver is None:
+        raise RuntimeError("Driver is not initialized")
 
     # Register signal handlers to ensure finally block runs on SIGTERM/SIGINT
     signal.signal(signal.SIGTERM, handle_shutdown_signal)
@@ -137,10 +141,10 @@ if __name__ == "__main__":
 
     if args.command == "genscen":
         manager.commands.genscen.handler(args)
-        exit(0)
+        sys.exit(0)
     if args.command == "genscen-joinmarket":
         manager.commands.genscen_joinmarket.handler(args)
-        exit(0)
+        sys.exit(0)
 
     match args.driver:
         case "docker":
@@ -166,7 +170,7 @@ if __name__ == "__main__":
             driver = OpenshiftDriver(args.namespace, args.reuse_namespace, k8s_pull_secret)
         case _:
             print(f"Unknown driver '{args.driver}'")
-            exit(1)
+            sys.exit(1)
 
     match args.engine:
         case "joinmarket":
@@ -175,7 +179,7 @@ if __name__ == "__main__":
             engine = WasabiEngine(args, driver)
         case _:
             print(f"Unknown engine '{args.engine}'")
-            exit(1)
+            sys.exit(1)
 
     engine.load_scenario()
 
@@ -188,4 +192,4 @@ if __name__ == "__main__":
             run()
         case _:
             print(f"Unknown command '{args.command}'")
-            exit(1)
+            sys.exit(1)

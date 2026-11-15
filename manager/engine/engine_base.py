@@ -20,6 +20,12 @@ BATCH_SIZE = 5  # smaller batches avoid UTXO race conditions
 BTC = 100_000_000
 
 
+def _has_fidelity_bond(wallet):
+    """True when the wallet asks for a fidelity bond (typed scenario model)."""
+    bond = (wallet.joinmarket.fidelity_bond if wallet.joinmarket else None) or {}
+    return bool(bond.get("enabled", False))
+
+
 class EngineBase:
     def __init__(self, args, driver, log_src_path):
         self.args = args
@@ -125,7 +131,7 @@ class EngineBase:
         fb_wallets = []
 
         for idx, wallet in wallet_list:
-            if wallet.get("fidelity_bond", {}).get("enabled", False):
+            if _has_fidelity_bond(wallet):
                 fb_wallets.append((idx, wallet))
             else:
                 regular_wallets.append((idx, wallet))
@@ -165,7 +171,7 @@ class EngineBase:
         wallet_list = [(idx, wallet) for idx, wallet in enumerate(wallets, start=len(self.clients))]
 
         # Count wallet types for logging
-        fb_count = sum(1 for _, w in wallet_list if w.get("fidelity_bond", {}).get("enabled", False))
+        fb_count = sum(1 for _, w in wallet_list if _has_fidelity_bond(w))
         print(f"- {len(wallet_list) - fb_count} regular wallets, {fb_count} fidelity bond wallets")
 
         with multiprocessing.pool.ThreadPool() as pool:
@@ -217,10 +223,15 @@ class EngineBase:
         if self.distributor is None:
             raise RuntimeError("Distributor is not initialized")
 
+        # Round each UTXO up to a whole satoshi so the total meets the target
+        # even when the amount does not divide evenly. Integer-dividing by BTC
+        # here would fund every address with 0 BTC for any total below 200 BTC.
+        per_utxo_sats = math.ceil(btc_amount * BTC / DISTRIBUTOR_UTXOS)
         for _ in range(DISTRIBUTOR_UTXOS):
             self.node.fund_address(
                 self.distributor.get_new_address(),
-                math.ceil(btc_amount * BTC / DISTRIBUTOR_UTXOS) // BTC,
+                # Bitcoin Core rejects scientific notation, so keep 8 decimals.
+                float(f"{per_utxo_sats / BTC:.8f}"),
             )
 
         while (balance := self.distributor.get_balance()) < btc_amount * BTC:
@@ -274,14 +285,17 @@ class EngineBase:
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         try:
-            while stored_blocks < self.node.get_block_count():  # type: ignore
-                block_hash = self.node.get_block_hash(stored_blocks)
-                block = self.node.get_block_info(block_hash)
-                with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
-                    json.dump(block, f, indent=2)
-                stored_blocks += 1
-        except (TypeError, RpcError):
-            print("Failed to get block count")
+            block_count = self.node.get_block_count()
+        except (TypeError, RpcError) as error:
+            # Only the block count is optional: without it there is nothing to export.
+            print(f"Failed to get block count: {error}")
+            block_count = 0
+        while stored_blocks < block_count:
+            block_hash = self.node.get_block_hash(stored_blocks)
+            block = self.node.get_block_info(block_hash)
+            with open(os.path.join(node_path, f"block_{stored_blocks}.json"), "w") as f:
+                json.dump(block, f, indent=2)
+            stored_blocks += 1
 
         print(f"- stored {stored_blocks} blocks")
 
@@ -340,6 +354,8 @@ class EngineBase:
                     value = fund.value
                     block = fund.delay_blocks or 0
                     round = fund.delay_rounds or 0
+                else:
+                    raise TypeError(f"unsupported fund entry for {client.name}: {fund!r}")
                 addressed_invoice = (client.get_new_address(), value)
                 if (block, round) not in self.invoices:
                     self.invoices[(block, round)] = [addressed_invoice]
