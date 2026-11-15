@@ -2,6 +2,8 @@ import requests
 import json
 from time import sleep
 
+from .exceptions import RpcError
+
 WALLET = "wallet"
 
 
@@ -38,7 +40,12 @@ class BtcNode:
             "method": "getblockcount",
             "params": [],
         }
-        return self._rpc(request)
+        result = self._rpc(request)
+        if not isinstance(result, int):
+            # _rpc answers "timeout" instead of a result when the node does not
+            # respond; callers should see that as a failure, not as a height.
+            raise RpcError(f"btc-node returned no block count: {result!r}")
+        return result
 
     def get_block_hash(self, height):
         request = {
@@ -81,11 +88,7 @@ class BtcNode:
     def wait_ready(self):
         while True:
             try:
-                block_count = self.get_block_count()
-                if block_count == "timeout":
-                    print("Btc node not ready, timeout")
-                    continue
-                if block_count > 200:
+                if self.get_block_count() > 200:
                     break
             except Exception as e:
                 print(f"Btc node not ready: {e}")
@@ -97,12 +100,12 @@ class BtcNode:
 
     def create_wallet(self, wallet):
         request = {
+            "jsonrpc": "2.0",
+            "id": "1",
             "method": "createwallet",
-            "params": {"wallet_name": "jm_wallet", "descriptors": False},
+            "params": {"wallet_name": wallet, "descriptors": False},
         }
 
-        request["jsonrpc"] = "2.0"
-        request["id"] = "1"
         try:
             response = requests.post(
                 f"http://{self.host}:{self.port}",
@@ -111,9 +114,10 @@ class BtcNode:
                 proxies=dict(http=self.proxy),
                 timeout=5,
             )
-        except requests.exceptions.Timeout:
-            print("timeout")
-        if response.json()["error"] is not None:
-            print(response.json())
-            raise Exception(response.json()["error"])
-        print(response.json())
+        except requests.exceptions.Timeout as e:
+            raise TimeoutError(f"btc-node RPC timed out creating wallet {wallet}") from e
+        body = response.json()
+        if body["error"] is not None:
+            print(body)
+            raise RpcError(str(body["error"]))
+        print(body)
