@@ -10,7 +10,6 @@ import time
 from time import sleep
 from zoneinfo import ZoneInfo
 
-from manager import utils
 from manager.btc_node import BtcNode
 from manager.engine.base.manifest import write_producer_label_manifest
 from manager.engine.configuration import FundConfig, ScenarioConfig, WalletConfig
@@ -194,7 +193,7 @@ class EngineBase:
             for retry_attempt in range(3):
                 failed_indices = [
                     idx for idx, client in enumerate(new_clients, start=len(self.clients))
-                    if client is None
+                    if client is None or not self._client_is_healthy(client)
                 ]
 
                 if not failed_indices:
@@ -213,12 +212,52 @@ class EngineBase:
                 retry_results = self._start_classified_wallets(pool, retry_wallet_list, fb_batch_size, fb_batch_delay)
                 for idx, client in retry_results.items():
                     new_clients[idx - len(self.clients)] = client
-            else:
-                # After 3 retries, filter out None values
-                new_clients = list(filter(lambda x: x is not None, new_clients))
-                print(f"- failed to start {len(wallets) - len(new_clients)} clients; continuing ...")
+
+            failed_count = sum(client is None for client in new_clients)
+            if failed_count:
+                raise RuntimeError(
+                    f"Failed to start {failed_count} clients after retries; aborting experiment"
+                )
 
         self.clients.extend(new_clients)
+
+    @staticmethod
+    def _client_health_error(client):
+        """Probe an already-created wallet without mutating it.
+
+        wait_wallet() is not read-only for JoinMarket: it creates the wallet
+        again and can loop on "Wallet already unlocked" until the timeout.
+        """
+        try:
+            client.get_balance()
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            return str(error)
+        return None
+
+    @classmethod
+    def _client_is_healthy(cls, client):
+        return cls._client_health_error(client) is None
+
+    def validate_clients(self):
+        """Require every declared wallet to answer before funding begins."""
+        expected = len(self.scenario.wallets)
+        actual = len(self.clients)
+        if actual != expected:
+            raise RuntimeError(f"Expected {expected} clients, but only {actual} started")
+
+        def healthcheck(client):
+            detail = self._client_health_error(client)
+            return client.name, detail is None, detail
+
+        with multiprocessing.pool.ThreadPool() as pool:
+            results = pool.map(healthcheck, self.clients)
+        failed = [
+            f"{name} ({detail or 'RPC health-check failed'})"
+            for name, healthy, detail in results
+            if not healthy
+        ]
+        if failed:
+            raise RuntimeError("Client RPC health-check failed before funding: " + ", ".join(failed))
 
     def fund_distributor(self, btc_amount):
         print("Funding distributor")
@@ -359,8 +398,11 @@ class EngineBase:
 
     def update_invoice_payments(self):
         due = list(filter(lambda x: x[0] <= self.current_block and x[1] <= self.current_round, self.invoices.keys()))
-        for i in due:
-            self.pay_invoices(self.invoices.pop(i, []))
+        for schedule in due:
+            # Keep the invoices scheduled until payment succeeds. A transient
+            # RPC failure must not silently erase wallet funding.
+            self.pay_invoices(self.invoices[schedule])
+            del self.invoices[schedule]
 
     def prepare_invoices(self, wallets: list[WalletConfig]):
         print("Preparing invoices")
@@ -394,7 +436,8 @@ class EngineBase:
             f"- paying {len(addressed_invoices)} invoices (batch size {BATCH_SIZE}, block {self.current_block}, round {self.current_round})"
         )
         try:
-            for batch in utils.batched(addressed_invoices, BATCH_SIZE):
+            while addressed_invoices:
+                batch = addressed_invoices[:BATCH_SIZE]
                 for _ in range(3):
                     try:
                         if self.distributor is None:
@@ -403,6 +446,8 @@ class EngineBase:
                         if str(result) == "timeout":
                             print("- transaction timeout")
                             continue
+                        # Retain only unpaid batches if a later send fails.
+                        del addressed_invoices[:len(batch)]
                         break
                     except Exception as e:
                         # https://github.com/zkSNACKs/WalletWasabi/issues/12764
@@ -436,6 +481,7 @@ class EngineBase:
         self.start_infrastructure()
         self.fund_distributor(5000)
         self.start_clients(self.scenario.wallets)
+        self.validate_clients()
         time.sleep(60)
         self.prepare_invoices(self.scenario.wallets)
 
