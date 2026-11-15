@@ -124,6 +124,23 @@ def test_an_unusable_distributor_startup_timeout_is_rejected(value) -> None:
         parse("run", "--distributor-startup-timeout", value)
 
 
+def test_the_round_stall_timeout_defaults_to_the_engine_constant() -> None:
+    from manager.engine.wasabi_engine import DEFAULT_ROUND_STALL_TIMEOUT
+
+    assert parse("run").round_stall_timeout == DEFAULT_ROUND_STALL_TIMEOUT
+
+
+def test_the_round_stall_timeout_can_be_set_or_turned_off() -> None:
+    assert parse("run", "--round-stall-timeout", "7200").round_stall_timeout == 7200
+    assert parse("run", "--round-stall-timeout", "0").round_stall_timeout == 0
+
+
+@pytest.mark.parametrize("value", ["-1", "1.5", "not-a-number"])
+def test_an_unusable_round_stall_timeout_is_rejected(value) -> None:
+    with pytest.raises(SystemExit):
+        parse("run", "--round-stall-timeout", value)
+
+
 def test_the_joinmarket_generator_help_can_be_rendered() -> None:
     # An unescaped % in a help string makes argparse fail while formatting it.
     with pytest.raises(SystemExit) as exit_info:

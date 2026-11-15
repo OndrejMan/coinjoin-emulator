@@ -37,6 +37,12 @@ WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
 WASABI_CLIENT_DATA_PATH = "/home/wasabi/.walletwasabi/client/"
 WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
 DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT = 900
+# Once the wallets can no longer fill the coordinator's minimum input count, every round
+# aborts and a run limited by rounds alone would wait for its count forever. A run that
+# recovered on its own went 65 minutes without a coinjoin, so the default stays above that.
+DEFAULT_ROUND_STALL_TIMEOUT = 5400
+EARLY_END_FILE = "early_end.json"
+EARLY_END_SCHEMA_VERSION = "1.0"
 WASABI_BACKEND_CONFIG_PATH = "/home/wasabi/.walletwasabi/backend/WabiSabiConfig.json"
 WASABI_BACKEND_CONFIG_TIMEOUT_SECONDS = 120
 WASABI_COORDINATOR_START_TIMEOUT_SECONDS = 120
@@ -61,12 +67,18 @@ def successful_broadcast_txids(log_texts: Iterable[str]) -> set[str]:
 
 
 class WasabiEngine(EngineBase):
+    # Seconds a run limited by rounds alone may go without a coinjoin; the run argument overrides it.
+    round_stall_timeout: int = DEFAULT_ROUND_STALL_TIMEOUT
+    # Set when the run stops before its scenario limit; stored with the run's data.
+    early_end: dict[str, object] | None = None
+
     def __init__(self, args, driver):
         self.coordinator: WasabiCoordinatorProtocol | None = None
         self.backend: WasabiBackendProtocol | None = None
         self.backend_architecture: BackendArchitecture | None = None
         self.round_ids: set[str] = set()
         self.postmix_spends: PostmixSpendSchedule | None = None
+        self.round_stall_timeout = int(getattr(args, "round_stall_timeout", DEFAULT_ROUND_STALL_TIMEOUT))
         super().__init__(args, driver, WASABI_CLIENT_DATA_PATH)
 
     def default_scenario(self) -> ScenarioConfig:
@@ -510,6 +522,33 @@ class WasabiEngine(EngineBase):
     def store_engine_data(self, data_path: str):
         if self.postmix_spends is not None:
             self.postmix_spends.store(data_path)
+        if self.early_end is not None:
+            with open(os.path.join(data_path, EARLY_END_FILE), "w", encoding="utf-8") as stream:
+                json.dump(self.early_end, stream, indent=2)
+                stream.write("\n")
+            print("- stored early end record")
+
+    def _round_stall_timeout(self) -> int:
+        """Seconds without a new coinjoin after which the run ends early; 0 leaves the guard off.
+
+        Blocks keep being mined while rounds abort, so a block limit ends the run by
+        itself. Only a run limited by rounds alone can wait forever.
+        """
+        if self.scenario.rounds <= 0 or self.scenario.blocks > 0:
+            return 0
+        return self.round_stall_timeout
+
+    def _round_stall_record(self, waited: float, timeout: int) -> dict[str, object]:
+        """What the run's data keeps about a run that ended because its rounds stopped completing."""
+        return {
+            "schema_version": EARLY_END_SCHEMA_VERSION,
+            "reason": "round_stall",
+            "rounds_completed": self.current_round,
+            "rounds_planned": self.scenario.rounds,
+            "block": self.current_block,
+            "seconds_without_round": int(waited),
+            "round_stall_timeout": timeout,
+        }
 
     def update_coinjoins(self):
         def start_condition(client):
@@ -543,6 +582,9 @@ class WasabiEngine(EngineBase):
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         initial_block = self.node.get_block_count()
+        stall_timeout = self._round_stall_timeout()
+        last_round, last_progress = self.current_round, time()
+        early_end: dict[str, object] | None = None
         while not self._run_limit_reached():
             for attempt in range(3):
                 try:
@@ -564,6 +606,12 @@ class WasabiEngine(EngineBase):
                     if attempt == 2:
                         raise RuntimeError("Could not refresh Wasabi block count after 3 attempts") from e
 
+            if self.current_round != last_round:
+                last_round, last_progress = self.current_round, time()
+            elif stall_timeout and (waited := time() - last_progress) >= stall_timeout:
+                early_end = self.early_end = self._round_stall_record(waited, stall_timeout)
+                break
+
             self.update_invoice_payments()
             self.update_postmix_spends()
             self.update_coinjoins()
@@ -573,7 +621,13 @@ class WasabiEngine(EngineBase):
             )
             sleep(1)
         print()
-        print("- limit reached")
+        if early_end is None:
+            print("- limit reached")
+        else:
+            print(
+                f"- no coinjoin completed for {early_end['seconds_without_round']} seconds: "
+                f"ending early at round {self.current_round} of {self.scenario.rounds}"
+            )
         self.mine_settlement_blocks()
 
     def mine_settlement_blocks(self):

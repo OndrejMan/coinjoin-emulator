@@ -12,7 +12,11 @@ from manager.btc_datadir_snapshot import snapshot_btc_datadir
 from manager.driver import Driver
 from manager.engine.engine_base import EngineBase
 from manager.engine.joinmarket_engine import JoinmarketEngine
-from manager.engine.wasabi_engine import DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT, WasabiEngine
+from manager.engine.wasabi_engine import (
+    DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT,
+    DEFAULT_ROUND_STALL_TIMEOUT,
+    WasabiEngine,
+)
 from manager.run_log import RunLog
 from manager.run_timezone import DEFAULT_RUN_TIMEZONE
 
@@ -189,6 +193,42 @@ def positive_seconds(value):
     return seconds
 
 
+def seconds_or_off(value):
+    """Parse a timeout in whole seconds where zero turns the timeout off."""
+    try:
+        seconds = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"timeout must be an integer number of seconds: {value!r}") from error
+    if seconds < 0:
+        raise argparse.ArgumentTypeError(f"timeout must not be negative: {value!r}")
+    return seconds
+
+
+def add_run_timeouts(run_subparser):
+    """The waits after which a run gives up, kept out of build_parser to keep it short."""
+    run_subparser.add_argument(
+        "--distributor-startup-timeout",
+        type=positive_seconds,
+        default=DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT,
+        metavar="SECONDS",
+        help=(
+            "how long to wait for the distributor wallet to answer before failing the run "
+            f"(default {DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT}s)"
+        ),
+    )
+    run_subparser.add_argument(
+        "--round-stall-timeout",
+        type=seconds_or_off,
+        default=DEFAULT_ROUND_STALL_TIMEOUT,
+        metavar="SECONDS",
+        help=(
+            "end a Wasabi run limited only by rounds once no coinjoin has completed for this long, "
+            "storing its data as after a reached limit; 0 keeps waiting "
+            f"(default {DEFAULT_ROUND_STALL_TIMEOUT}s)"
+        ),
+    )
+
+
 def build_parser():
     """Build the manager command line; kept out of __main__ so it can be tested."""
     parser = argparse.ArgumentParser(description="Run coinjoin simulation setup")
@@ -301,16 +341,7 @@ def build_parser():
         default="",
         help="Write this marker when the emulation or artifact collection fails.",
     )
-    run_subparser.add_argument(
-        "--distributor-startup-timeout",
-        type=positive_seconds,
-        default=DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT,
-        metavar="SECONDS",
-        help=(
-            "how long to wait for the distributor wallet to answer before failing the run "
-            f"(default {DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT}s)"
-        ),
-    )
+    add_run_timeouts(run_subparser)
     run_subparser.add_argument("--proxy", type=str, default="")
     run_subparser.add_argument("--namespace", type=str, default="coinjoin")
     run_subparser.add_argument("--reuse-namespace", action="store_true", default=False)
