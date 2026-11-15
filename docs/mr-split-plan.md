@@ -273,7 +273,9 @@ Po squashích je to 215 commitů v 58 MR (209 mých, 2 merge, 4 Rajnohovy).
    `main` se teď nedělá.
 2. **Hrubost.** 58 MR má průměrně 4 commity a ~250 řádků. Jestli je to moc, dá se otevřít
    12 PR po vlnách (stejné hranice, bez dalšího přeskládání).
+   Rozhodnuto 2026-11-15: 58 malých MR.
 3. **Squashe a přesuny testů** z tabulky výše: všechny, nebo jen některé?
+   Rozhodnuto 2026-11-15: všechny, včetně přesunu č. 219 pod WIP commity.
 4. **WIP commity č. 216–218:** draft PR navrchu, nebo zatím mimo stack? A přesunout č. 219 pod ně?
    Rozhodnuto 2026-11-14: WIP commity zůstanou ve stacku jako draft PR navrchu.
 5. **Rajnohovy č. 190–193:** nechat jako MR 50 uprostřed (doporučuju), nebo je chceš jinde?
@@ -283,6 +285,8 @@ Po squashích je to 215 commitů v 58 MR (209 mých, 2 merge, 4 Rajnohovy).
 
 Po plánu přibyl na `main` commit „fix(kubernetes): delete a stopped client's service even when
 its pod is gone“ (2026-11-13). V inventáři není; patří do MR 33 za č. 146.
+
+Stavba větví zatím nezačala: 2026-11-15 jsi ji odložil.
 
 ## Postup provedení (až řekneš)
 
