@@ -1,11 +1,15 @@
 import json
-from time import sleep
 
 import requests
 
+from .bitcoin_readiness import wait_for_node_ready
 from .exceptions import RpcError
 
 WALLET = "wallet"
+FUNDING_WALLET_TX_FEE = 0.0001
+
+RPC_TIMEOUT_SECONDS = 5
+WRITE_RPC_TIMEOUT_SECONDS = 120
 
 
 class BtcNode:
@@ -17,7 +21,7 @@ class BtcNode:
 
         print(f"Started btc-node with ip: {self.host} and ports: {self.port}")
 
-    def _rpc(self, request, wallet=None):
+    def _rpc(self, request, wallet=None, timeout=RPC_TIMEOUT_SECONDS):
         request["jsonrpc"] = "1.0"
         request["id"] = "1"
         response = requests.post(
@@ -25,7 +29,7 @@ class BtcNode:
             data=json.dumps(request),
             auth=("user", "password"),
             proxies=dict(http=self.proxy),
-            timeout=5,
+            timeout=timeout,
         )
         body = response.json()
         if body["error"] is not None:
@@ -42,6 +46,12 @@ class BtcNode:
             raise RpcError(f"btc-node returned no block count: {result!r}")
         return result
 
+    def get_blockchain_info(self):
+        return self._rpc({"method": "getblockchaininfo", "params": []})
+
+    def estimate_smart_fee(self):
+        return self._rpc({"method": "estimatesmartfee", "params": [6]})
+
     def get_block_hash(self, height):
         request = {
             "method": "getblockhash",
@@ -57,8 +67,11 @@ class BtcNode:
         return self._rpc(request)
 
     def mine_block(self, count=1):
-        initial_block_count = self.get_block_count()
+        """Mine ``count`` blocks; True when generatetoaddress returned that many block hashes.
 
+        The node's periodic miner can add its own block at any time, so the
+        chain height before and after is not a measure of what this call mined.
+        """
         request = {
             "method": "getnewaddress",
             "params": [],
@@ -69,29 +82,48 @@ class BtcNode:
             "method": "generatetoaddress",
             "params": [count, address],
         }
-        self._rpc(request)
+        mined = self._rpc(request, timeout=WRITE_RPC_TIMEOUT_SECONDS)
 
-        return self.get_block_count() - initial_block_count == count
+        return isinstance(mined, list) and len(mined) == count
 
     def fund_address(self, address, amount):
         request = {
             "method": "sendtoaddress",
             "params": [address, amount],
         }
-        self._rpc(request, WALLET)
+        self._rpc(request, WALLET, timeout=WRITE_RPC_TIMEOUT_SECONDS)
 
-    def wait_ready(self):
-        while True:
+    def wait_ready(self, timeout=600):
+        """Wait until this node is ready for the emulator engines."""
+        wait_for_node_ready(self, timeout)
+
+    def ensure_funding_wallet_ready(self):
+        """Load the shared funding wallet and set the fee the distributor pays."""
+        if WALLET not in self._rpc({"method": "listwallets", "params": []}):
             try:
-                if self.get_block_count() > 200:
-                    break
-            except Exception as e:
-                print(f"Btc node not ready: {e}")
-                pass
-            sleep(10)
+                self._rpc({"method": "loadwallet", "params": [WALLET]})
+            except RpcError as error:
+                if "already loaded" in str(error):
+                    pass
+                elif self._is_wallet_missing_error(error):
+                    self.create_wallet(WALLET)
+                else:
+                    raise
+        self._rpc({"method": "getwalletinfo", "params": []}, WALLET)
+        self._rpc({"method": "settxfee", "params": [FUNDING_WALLET_TX_FEE]}, WALLET)
 
-        # wait for the fee-building transactions
-        sleep(20)
+    @staticmethod
+    def _is_wallet_missing_error(error):
+        message = str(error)
+        return any(
+            marker in message
+            for marker in (
+                "Path does not exist",
+                "not found",
+                "No such file or directory",
+                "Wallet file verification failed",
+            )
+        )
 
     def create_wallet(self, wallet, disable_private_keys=False, allow_descriptor_fallback=True):
         body = self._create_wallet(wallet, descriptors=False, disable_private_keys=disable_private_keys)
