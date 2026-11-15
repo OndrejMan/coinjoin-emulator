@@ -4,14 +4,14 @@ JoinMarket Scenario Runner
 Runs all scenarios in a given folder with proper cleanup and error handling
 """
 
+import argparse
+import json
 import os
+import signal
 import subprocess
 import time
-import json
-import argparse
-import signal
 from datetime import datetime
-from typing import List, Tuple, Optional
+from typing import List, Optional, Tuple
 
 
 class ScenarioRunner:

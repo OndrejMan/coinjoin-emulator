@@ -3,8 +3,9 @@
 Remote Simulation Manager - CLI interface for orchestrator commands
 """
 
-import sys
 import argparse
+import sys
+
 from manager.kubernetes_local_proxy import KubernetesLocalProxy
 
 
@@ -189,7 +190,7 @@ def download_logs_remote(args):
 
         if success:
             print(f"\n✓ Logs downloaded successfully to {args.destination}")
-            print(f"You can now analyze the logs locally")
+            print("You can now analyze the logs locally")
         else:
             print("\n✗ Failed to download logs")
 

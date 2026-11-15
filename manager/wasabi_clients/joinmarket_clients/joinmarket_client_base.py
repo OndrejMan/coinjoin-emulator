@@ -1,12 +1,12 @@
-import json
-from typing import List
-import requests
-from time import sleep, time
 import asyncio
+import json
+from time import sleep, time
+from typing import List
 
-import urllib3
-from bip_utils import Bip39SeedGenerator, Bip32Slip10Secp256k1
 import httpx
+import requests
+import urllib3
+from bip_utils import Bip32Slip10Secp256k1, Bip39SeedGenerator
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -342,7 +342,7 @@ class JoinMarketClientServer:
             try:
                 response = await self._rpc_async(method, endpoint, json_data=json_data)
                 return response
-            except Exception as e:
+            except Exception:
                 if time() - start >= 60:
                     print("Failed to run schedule, attempt timed out.")
                 await asyncio.sleep(1)  # Add a small delay between retries
@@ -838,7 +838,7 @@ class JoinMarketClientServer:
             try:
                 response = self._rpc(method, endpoint, json_data=json_data)
                 return response
-            except Exception as e:
+            except Exception:
                 if time() - start >= 60:
                     print("Failed to run schedule, attempt timed out.")
                 sleep(1)  # Add a small delay between retries
@@ -916,7 +916,7 @@ class JoinMarketClientServer:
     def list_transactions_maker(self):
         """List all transactions in the wallet."""
         method = "GET"
-        endpoint = f"/wallet/yieldgen/report"
+        endpoint = "/wallet/yieldgen/report"
         response = self._rpc(method, endpoint)
         return response
 

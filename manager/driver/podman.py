@@ -1,9 +1,11 @@
-from io import BytesIO
 import os
 import tarfile
-from . import Driver
-import podman
+from io import BytesIO
+
 import docker
+import podman
+
+from . import Driver
 
 
 class PodmanDriver(Driver):
@@ -64,9 +66,9 @@ class PodmanDriver(Driver):
             with tarfile.open(fileobj=fo) as tar:
                 tar.extractall(dst_path)
 
-            print(f"- stored backend logs")
+            print("- stored backend logs")
         except Exception:
-            print(f"- could not store backend logs")
+            print("- could not store backend logs")
 
     def peek(self, name, path):
         stream, _ = docker.from_env().containers.get(name).get_archive(path)

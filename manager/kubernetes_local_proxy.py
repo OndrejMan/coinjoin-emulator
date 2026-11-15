@@ -1,8 +1,7 @@
 import json
-import time
-import subprocess
-import tempfile
 import os
+import subprocess
+import time
 import uuid
 
 import backoff

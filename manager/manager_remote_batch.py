@@ -1,7 +1,9 @@
-import sys
 import argparse
+import sys
+
 from manager.kubernetes_local_proxy import KubernetesLocalProxy
 from manager.manager_remote import deploy_manager, download_logs_remote
+
 
 def run_scenario_batch(args):
     """Run a batch of scenarios using the scenario runner"""
@@ -28,7 +30,7 @@ def run_scenario_batch(args):
         with open(f".runner-{args.namespace}", "w") as f:
             f.write(runner_id)
 
-        print(f"\nUseful commands:")
+        print("\nUseful commands:")
         print(f"  Check status:  python manager/manager_remote_batch.py --namespace {args.namespace} status")
         print(f"  Follow logs:   python manager/manager_remote_batch.py --namespace {args.namespace} logs -f")
         print(f"  Stop runner:   python manager/manager_remote_batch.py --namespace {args.namespace} stop")
@@ -64,7 +66,7 @@ def runner_status(args):
 
         if 'current_status' in status and status['current_status']:
             current = status['current_status']
-            print(f"\nCurrent progress:")
+            print("\nCurrent progress:")
             print(f"  Scenario: {current.get('current_scenario', 'Unknown')}")
             print(f"  Completed: {current.get('completed', 0)}/{current.get('total', 0)}")
             print(f"  Last update: {current.get('timestamp', 'Unknown')}")
