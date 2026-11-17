@@ -6,7 +6,7 @@ import random
 import re
 import sys
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from time import sleep, time
 from traceback import print_exception
@@ -41,6 +41,10 @@ DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT = 900
 # aborts and a run limited by rounds alone would wait for its count forever. A run that
 # recovered on its own went 65 minutes without a coinjoin, so the default stays above that.
 DEFAULT_ROUND_STALL_TIMEOUT = 5400
+# The round count comes from a Kubernetes exec into the coordinator, which the API server
+# can refuse for several seconds (HTTP 500) while it or the kubelet recovers. Retrying at
+# once turned such an outage into a failed run, so the refresh waits about a minute in all.
+COUNTER_REFRESH_DELAYS_SECONDS = (2, 4, 8, 16, 30)
 EARLY_END_FILE = "early_end.json"
 EARLY_END_SCHEMA_VERSION = "1.0"
 WASABI_BACKEND_CONFIG_PATH = "/home/wasabi/.walletwasabi/backend/WabiSabiConfig.json"
@@ -538,6 +542,22 @@ class WasabiEngine(EngineBase):
             return 0
         return self.round_stall_timeout
 
+    @staticmethod
+    def _refresh_counter(counter: str, read: Callable[[], int]) -> int:
+        """Read the run's round or block count, waiting between attempts so a short outage passes."""
+        attempts = len(COUNTER_REFRESH_DELAYS_SECONDS) + 1
+        last_error: Exception | None = None
+        for attempt, delay in enumerate((0, *COUNTER_REFRESH_DELAYS_SECONDS), start=1):
+            if delay:
+                sleep(delay)
+            try:
+                return read()
+            except Exception as error:  # pylint: disable=broad-exception-caught
+                last_error = error
+                print(f"- could not get {counter}s".ljust(60), end="\r")
+                print(f"{counter.capitalize()} exception (attempt {attempt} of {attempts}): {error}", file=sys.stderr)
+        raise RuntimeError(f"Could not refresh Wasabi {counter} count after {attempts} attempts") from last_error
+
     def _round_stall_record(self, waited: float, timeout: int) -> dict[str, object]:
         """What the run's data keeps about a run that ended because its rounds stopped completing."""
         return {
@@ -586,25 +606,8 @@ class WasabiEngine(EngineBase):
         last_round, last_progress = self.current_round, time()
         early_end: dict[str, object] | None = None
         while not self._run_limit_reached():
-            for attempt in range(3):
-                try:
-                    self.current_round = self._get_current_round()
-                    break
-                except Exception as e:
-                    print("- could not get rounds".ljust(60), end="\r")
-                    print(f"Round exception: {e}", file=sys.stderr)
-                    if attempt == 2:
-                        raise RuntimeError("Could not refresh Wasabi round count after 3 attempts") from e
-
-            for attempt in range(3):
-                try:
-                    self.current_block = self.node.get_block_count() - initial_block  # type: ignore
-                    break
-                except Exception as e:
-                    print("- could not get blocks".ljust(60), end="\r")
-                    print(f"Block exception: {e}", file=sys.stderr)
-                    if attempt == 2:
-                        raise RuntimeError("Could not refresh Wasabi block count after 3 attempts") from e
+            self.current_round = self._refresh_counter("round", self._get_current_round)
+            self.current_block = self._refresh_counter("block", self.node.get_block_count) - initial_block
 
             if self.current_round != last_round:
                 last_round, last_progress = self.current_round, time()
