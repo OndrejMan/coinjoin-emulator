@@ -72,7 +72,9 @@ class WasabiClientBase:
                     proxies=dict(http=self.proxy),
                     timeout=timeout,
                 )
-            except requests.exceptions.Timeout as error:
+            # A refused connection is as transient as a timeout: the wallet API can
+            # refuse a call while Wasabi stops mixing, before the store loop runs.
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as error:
                 last_error = error
                 if attempt + 1 < repeat:
                     sleep(RETRY_BACKOFF_SECONDS)

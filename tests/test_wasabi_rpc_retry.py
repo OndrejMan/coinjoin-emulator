@@ -45,8 +45,35 @@ def test_retries_are_spread_out_but_not_after_the_last_attempt() -> None:
     assert slept.call_count == 2
 
 
+def test_coins_survive_one_refused_connection() -> None:
+    """store_client_logs asks once per wallet; one refusal used to end a finished run."""
+    answers = [
+        requests.exceptions.ConnectionError("[Errno 111] Connection refused"),
+        ok({"result": [{"txid": "a" * 64, "index": 0}]}),
+    ]
+    with patch("manager.wasabi_clients.wasabi_client_base.requests.post", side_effect=answers), \
+         patch("manager.wasabi_clients.wasabi_client_base.sleep") as slept:
+        assert client().list_coins() == [{"txid": "a" * 64, "index": 0}]
+
+    slept.assert_called_once()
+
+
+def test_a_wallet_that_keeps_refusing_still_fails() -> None:
+    """Missing coins or keys of one wallet break the ground truth, so the run must fail."""
+    refused = requests.exceptions.ConnectionError("[Errno 111] Connection refused")
+    with patch(
+        "manager.wasabi_clients.wasabi_client_base.requests.post",
+        side_effect=[refused, refused, refused],
+    ) as post, patch("manager.wasabi_clients.wasabi_client_base.sleep") as slept:
+        with pytest.raises(requests.exceptions.ConnectionError):
+            client().list_coins()
+
+    assert post.call_count == 3
+    assert slept.call_count == 2
+
+
 def test_an_rpc_error_is_not_retried() -> None:
-    """Only timeouts are transient; a refusal from the wallet is an answer."""
+    """Only timeouts and refused connections are transient; an error from the wallet is an answer."""
     with patch(
         "manager.wasabi_clients.wasabi_client_base.requests.post",
         return_value=ok({"error": "no such wallet"}),
