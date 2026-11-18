@@ -23,6 +23,9 @@ BTC = 100_000_000
 # Each concurrent client log download holds an exec websocket and spools an archive, so the
 # pool is bounded instead of growing with the CPU count of whatever machine runs the manager.
 LOG_DOWNLOAD_WORKERS = int(os.environ.get("COINJOIN_LOG_DOWNLOAD_WORKERS", "8"))
+# Lines of a dead client's container output repeated in the manager log; the whole
+# output is saved next to its wallet data.
+CONTAINER_LOG_TAIL_LINES = 40
 INFRASTRUCTURE_IMAGES = (
     "btc-node",
     "joinmarket-client-server",
@@ -370,6 +373,38 @@ class EngineBase:
         sleep(random.random() * 3)
         client_path = os.path.join(data_path, client.name)
         os.mkdir(client_path)
+        try:
+            self.store_client_wallet_data(client, client_path)
+        except Exception:  # pylint: disable=broad-exception-caught
+            # The wallet files come from its API. When the wallet stops answering, only
+            # its container output still holds the exception that ended it, and the
+            # driver removes the container right after this cleanup step.
+            self.store_client_container_log(client, client_path)
+            raise
+
+        try:
+            self.driver.download(client.name, self.log_src_path, client_path)
+            print(f"- stored {client.name} logs, {self.log_src_path}, {client_path}")
+        except Exception as e:
+            print(f"- could not store {client.name} logs: {e!r}")
+
+    def store_client_container_log(self, client, client_path):
+        """Save the state and the output of a client container that stopped answering."""
+        lines = [f"- {client.name} container state: {self.container_state_text(client.name)}"]
+        try:
+            output = self.driver.logs(client.name)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            lines.append(f"- could not store {client.name} container log: {e!r}")
+        else:
+            with open(os.path.join(client_path, "container.log"), "w", encoding="utf-8") as f:
+                f.write(output)
+            tail = output.splitlines()[-CONTAINER_LOG_TAIL_LINES:]
+            lines.append(f"- stored {client.name} container log, last {len(tail)} lines:")
+            lines += [f"  | {line}" for line in tail]
+        # One write, so the parallel store workers cannot interleave the tail.
+        print("\n".join(lines), flush=True)
+
+    def store_client_wallet_data(self, client, client_path):
         with open(os.path.join(client_path, "coins.json"), "w") as f:
             json.dump(client.list_coins(), f, indent=2)
             print(f"- stored {client.name} coins")
@@ -393,12 +428,6 @@ class EngineBase:
         with open(os.path.join(client_path, "history.json"), "w") as f:
             json.dump(client.get_history(), f, indent=2)
             print(f"- stored {client.name} history")
-
-        try:
-            self.driver.download(client.name, self.log_src_path, client_path)
-            print(f"- stored {client.name} logs, {self.log_src_path}, {client_path}")
-        except Exception as e:
-            print(f"- could not store {client.name} logs: {e!r}")
 
     def log_run_path(self):
         requested_run_id = getattr(self.args, "run_id", "")
@@ -476,15 +505,19 @@ class EngineBase:
         """The shared containers a run starts before its clients."""
         return ["btc-node"]
 
+    def container_state_text(self, name):
+        try:
+            state = self.driver.container_state(name)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            return f"unknown ({e})"
+        return state or "unknown"
+
     def report_infrastructure_state(self):
-        """Print each infrastructure container's state so a failed setup names the stuck one."""
+        """Print the state of every container so a failed run names the stuck or dead one."""
         print("Infrastructure state")
-        for name in self.infrastructure_names():
-            try:
-                state = self.driver.container_state(name)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                state = f"unknown ({e})"
-            print(f"- {name}: {state or 'unknown'}", flush=True)
+        # A client that exited is the usual cause of a failure after setup.
+        for name in [*self.infrastructure_names(), *(client.name for client in self.clients)]:
+            print(f"- {name}: {self.container_state_text(name)}", flush=True)
 
     def stop_coinjoins(self):
         print("Stopping coinjoins")
