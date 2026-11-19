@@ -74,6 +74,10 @@ The default protocol is Wasabi. To run the simulation with Joinmarket, use the `
 
 ### JoinMarket round-event statuses
 
+Client exports include `data/jcs-*/joinmarket/jmwalletd.log` for CoinJoin
+analysis and `data/jcs-*/logs/*.log` for wallet ownership records. Missing
+daemon logs fail the export. Round events remain the pipeline ground truth.
+
 `data/joinmarket_round_events.json` records each round's `status`:
 
 - `started`: the attempt is waiting for a mined destination match.

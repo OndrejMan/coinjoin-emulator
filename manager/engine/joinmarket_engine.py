@@ -379,6 +379,12 @@ class JoinmarketEngine(EngineBase):
         self.current_round = count_confirmed_rounds(events)
         return self.current_round
 
+    def store_client_logs(self, client, data_path):
+        super().store_client_logs(client, data_path)
+        daemon_path = os.path.join(data_path, client.name, "joinmarket")
+        os.makedirs(daemon_path, exist_ok=True)
+        self.driver.download(client.name, "/home/joinmarket/jmwalletd.log", daemon_path)
+
     def _round_limit_reached(self) -> bool:
         """True once the confirmed rounds satisfy the scenario, so no taker may start another attempt."""
         return self.scenario.rounds > 0 and self.current_round >= self.scenario.rounds
