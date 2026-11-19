@@ -13,6 +13,8 @@ import time
 from datetime import datetime
 from typing import List, Optional, Tuple
 
+from manager.process_output import stream_process_output
+
 
 class ScenarioRunner:
     def __init__(self,
@@ -164,10 +166,8 @@ class ScenarioRunner:
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             self.current_process = process  # Track the current process
 
-            # Stream output in real-time
-            for line in iter(process.stdout.readline, ''):
-                if line:
-                    print(f"  {line.rstrip()}")
+            # Drain both pipes concurrently so neither can block the manager.
+            stream_process_output(process)
 
             # Wait for completion
             return_code = process.wait()
@@ -178,9 +178,7 @@ class ScenarioRunner:
                 print(f"[{self.get_timestamp()}] SUCCESS: Scenario completed in {duration:.1f} seconds")
                 return True, duration
             else:
-                stderr = process.stderr.read()
                 print(f"[{self.get_timestamp()}] ERROR: Scenario failed after {duration:.1f} seconds")
-                print(f"STDERR: {stderr}")
                 return False, duration
 
         except Exception as e:
@@ -205,6 +203,7 @@ class ScenarioRunner:
 
     def save_results(self):
         """Save run results to file"""
+        os.makedirs("logs", exist_ok=True)
         results_file = os.path.join('logs', f"run_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
 
         with open(results_file, 'w') as f:
