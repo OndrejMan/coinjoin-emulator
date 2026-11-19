@@ -8,6 +8,8 @@ import requests
 import urllib3
 from bip_utils import Bip32Slip10Secp256k1, Bip39SeedGenerator
 
+from manager.exceptions import RpcError
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
@@ -22,6 +24,36 @@ class JoinmarketConflictException(Exception):
     def __init__(self, message, response):
         super().__init__(message)
         self.response = response
+
+
+class JoinmarketServiceStateError(RpcError):
+    """jmwalletd answered 401 about the service state, not about the credentials.
+
+    jmwalletd maps ServiceNotStarted ("Service cannot be stopped as it is not
+    running."), ServiceAlreadyStarted and WalletAlreadyUnlocked to HTTP 401 as
+    well; only its InvalidToken answers carry a ``WWW-Authenticate`` header and
+    only InvalidCredentials says "Invalid credentials.". Unlocking the wallet
+    and retrying does nothing for the state answers.
+    """
+
+
+def _is_auth_failure(status_code, headers, body_text) -> bool:
+    if status_code != 401:
+        return False
+    if "WWW-Authenticate" in headers:
+        return True
+    try:
+        message = json.loads(body_text or "").get("message", "")
+    except (ValueError, AttributeError):
+        return True
+    return message == "Invalid credentials."
+
+
+def _error_message(response) -> str:
+    try:
+        return response.json().get("message") or response.text
+    except ValueError:
+        return response.text
 
 
 class JoinMarketClientServer:
@@ -99,6 +131,29 @@ class JoinMarketClientServer:
             self._client_initialized = False
 
     @classmethod
+    def offers_for_wallet(cls, joinmarket, role):
+        """Configured offers, or the legacy defaults for a role that declares none."""
+        configured = [dict(offer) for offer in (joinmarket.offers if joinmarket else None) or []]
+        return configured or cls._default_offers(role)
+
+    @staticmethod
+    def _default_offers(role):
+        """Offers a scenario that only declares a role used to get implicitly."""
+        # Defaults removed from JoinmarketEngine in d2ec87aba092e8acc775768c7d0b9bad84357492.
+        if role == "maker":
+            return [{
+                "txfee": 0,
+                "cjfee_a": 5000,
+                "cjfee_r": 0.00004,
+                "ordertype": "sw0reloffer",
+                "minsize": 30000,
+                "maxsize": 3000000,
+            }]
+        if role == "taker":
+            return [{"mixdepth": 0, "amount_sats": 40000, "counterparties": 4}]
+        return []
+
+    @classmethod
     def from_wallet(cls, name: str, port: int, wallet, host: str, proxy=""):
         joinmarket = getattr(wallet, "joinmarket", None)
         type_ = joinmarket.role.value if joinmarket and joinmarket.role else "maker"
@@ -131,7 +186,7 @@ class JoinMarketClientServer:
             type=type_,
             delay=(wallet.delay_blocks or 0, wallet.delay_rounds or 0),
             stop=(wallet.stop_blocks or 0, wallet.stop_rounds or 0),
-            offers=(joinmarket.offers if joinmarket else None) or [],
+            offers=cls.offers_for_wallet(joinmarket, type_),
             tumbler_options=tumbler_options,
             time_between_rounds=(joinmarket.time_between_rounds if joinmarket else 0) or 0,
             has_fidelity_bonds=has_fidelity_bonds,
@@ -154,7 +209,7 @@ class JoinMarketClientServer:
         self.update_coin_history()
         return self.session()
 
-    def _rpc(self, method, endpoint, json_data=None, timeout=60, repeat=4) -> dict:
+    def _rpc(self, method, endpoint, json_data=None, timeout=60, repeat=4, log_errors=True) -> dict:
         url = f"https://{self.host}:{self.port}/api/v1{endpoint}"
         headers = {}
         if self.token:
@@ -175,6 +230,8 @@ class JoinMarketClientServer:
                 print(f"[RPC] Response {response.status_code}: {response.text}")
 
                 if response.status_code == 401:
+                    if not _is_auth_failure(401, response.headers, response.text):
+                        raise JoinmarketServiceStateError(_error_message(response))
                     print("[RPC] 401 Unauthorized: Attempting to unlock wallet and retry...")
                     self.unlock_wallet()
                     headers['Authorization'] = f'Bearer {self.token}'
@@ -194,15 +251,15 @@ class JoinMarketClientServer:
                     raise Exception(f"Error {response.status_code}: {error_message}")
 
                 return response.json()
+            except JoinmarketServiceStateError:
+                raise
             except Exception as e:
-                print(f"[RPC ERROR] {method} {url}: {e}")
+                if log_errors:
+                    print(f"[RPC ERROR] {method} {url}: {e}")
                 if attempt == repeat - 1:
                     raise
                 sleep(1)
-        if response is not None:
-            return response.json()
-
-        raise Exception("timeout")
+        raise RpcError(f"{method} {endpoint} stayed unauthorized after {repeat} attempts")
 
     async def _rpc_async(self, method, endpoint, json_data=None, timeout=60, repeat=4) -> dict:
         """Async version of _rpc using httpx.AsyncClient."""
@@ -225,6 +282,8 @@ class JoinMarketClientServer:
                 print(f"[RPC-ASYNC] Response {response.status_code}: {response.text}")
 
                 if response.status_code == 401:
+                    if not _is_auth_failure(401, response.headers, response.text):
+                        raise JoinmarketServiceStateError(_error_message(response))
                     print("[RPC-ASYNC] 401 Unauthorized: Attempting to unlock wallet and retry...")
                     await self.unlock_wallet_async()
                     headers['Authorization'] = f'Bearer {self.token}'
@@ -244,6 +303,8 @@ class JoinMarketClientServer:
                     response.raise_for_status()
 
                 return response.json()
+            except JoinmarketServiceStateError:
+                raise
             except httpx.HTTPStatusError as e:
                 print(f"[RPC-ASYNC ERROR] {method} {endpoint}: HTTP {e.response.status_code}")
                 if attempt == repeat - 1:
@@ -255,7 +316,7 @@ class JoinMarketClientServer:
                     raise
                 await asyncio.sleep(1)
 
-        raise Exception("timeout")
+        raise RpcError(f"{method} {endpoint} stayed unauthorized after {repeat} attempts")
 
     def is_paused(self, current_block):
         # Check delay - "delay[0]" means "don't run until current_block >= delay[0]"
@@ -276,6 +337,18 @@ class JoinMarketClientServer:
             return response
         except Exception as e:
             print(e)
+            return None
+
+    def probe_session(self):
+        """One ``/session`` request for the startup readiness wait.
+
+        A daemon that is not listening yet is the expected answer here, so the
+        connection error is reported as progress, not as ``[RPC ERROR]``.
+        """
+        try:
+            return self._rpc("GET", "/session", repeat=1, log_errors=False)
+        except Exception as e:
+            print(f"- jmwalletd on {self.host}:{self.port} not ready yet ({type(e).__name__})")
             return None
 
     def _create_wallet(self, walletname=None, wallettype=None):
@@ -720,17 +793,22 @@ class JoinMarketClientServer:
         """Stop the yield generator service."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/maker/stop"
-        # When stopping not running maker, returns 401 response
-        response = self._rpc(method, endpoint)
-        return response
+        try:
+            return self._rpc(method, endpoint)
+        except JoinmarketServiceStateError as e:
+            # jmwalletd answers 401 ServiceNotStarted for an idle maker; nothing to stop.
+            print(f"- {self.name}: maker already stopped ({e})")
+            return {}
 
     async def stop_maker_async(self):
         """Async stop the yield generator service."""
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/maker/stop"
-        # When stopping not running maker, returns 401 response
-        response = await self._rpc_async(method, endpoint)
-        return response
+        try:
+            return await self._rpc_async(method, endpoint)
+        except JoinmarketServiceStateError as e:
+            print(f"- {self.name}: maker already stopped ({e})")
+            return {}
 
     def record_round_start(
         self,
@@ -869,9 +947,12 @@ class JoinMarketClientServer:
     def stop_taker(self):
         method = "GET"
         endpoint = f"/wallet/{self.walletname}/taker/stop"
-        # When stopping not running taker, returns 401 response
-        response = self._rpc(method, endpoint)
-        return response
+        try:
+            return self._rpc(method, endpoint)
+        except JoinmarketServiceStateError as e:
+            # jmwalletd answers 401 ServiceNotStarted for an idle taker; nothing to stop.
+            print(f"- {self.name}: taker already stopped ({e})")
+            return {}
 
     def send(self, addressed_fundings):
         try:

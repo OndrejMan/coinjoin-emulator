@@ -159,6 +159,14 @@ class JoinmarketEngine(EngineBase):
     def joinmarket_container_env(self, rpc_wallet_file):
         return {"JM_RPC_WALLET_FILE": rpc_wallet_file}
 
+    def validate_clients(self):
+        super().validate_clients()
+        roles = {getattr(client, "type", "") for client in self.clients}
+        if "taker" not in roles:
+            raise RuntimeError("JoinMarket scenario requires at least one started taker client")
+        if "maker" not in roles:
+            raise RuntimeError("JoinMarket scenario requires at least one started maker client")
+
     def create_core_wallet(self, client_name):
         """Create the container's own Bitcoin Core wallet and return its name."""
         if self.node is None:
@@ -616,19 +624,25 @@ class JoinmarketEngine(EngineBase):
             except Exception as e:
                 print(f"- error during async client cleanup: {e}")
 
+    WARMUP_BLOCKS = 5
+
+    def start_block_clock(self) -> int:
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        for _ in range(self.WARMUP_BLOCKS):
+            self.node.mine_block()
+        try:
+            return self.node.get_block_count()
+        except Exception as e:
+            print(f"- could not get initial block count: {e}")
+            return 0
+
     def run_engine(self):
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
 
         # Note: Initial invoice payments now happen before this method is called
-        try:
-            initial_block = self.node.get_block_count()
-        except Exception as e:
-            print(f"- could not get initial block count: {e}")
-            initial_block = 0
-        for i in range(5):
-            # Takers need 3 confirmations of transactions for the sourcing commitments
-            self.node.mine_block()
+        initial_block = self.start_block_clock()
 
         print(f"- coinjoin rounds: {self.current_round} (block {self.current_block})".ljust(60))
 
@@ -688,6 +702,6 @@ class JoinmarketEngine(EngineBase):
 
 @backoff.on_exception(backoff.expo, Exception, max_tries=5)
 def ensure_client_session(client, name):
-    if not client.session():
+    if not client.probe_session():
         print(f"- could not start {name} (session timeout)")
         raise Exception("Could not start distributor")
