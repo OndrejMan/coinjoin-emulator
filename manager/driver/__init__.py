@@ -115,7 +115,7 @@ class Driver(ABC):
         pass
 
     @abstractmethod
-    def build(self, name, path):
+    def build(self, name, path, build_args=None):
         pass
 
     @abstractmethod
