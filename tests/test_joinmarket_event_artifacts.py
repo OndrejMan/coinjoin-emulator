@@ -10,6 +10,7 @@ from manager.engine.joinmarket.events import (
     collect_round_events,
     match_round_events_to_blocks,
     producer_label_evidence,
+    reconcile_round_event_destinations,
 )
 from manager.engine.joinmarket.exported_block_record import ExportedBlockRecord
 from manager.engine.joinmarket.round_event_record import RoundEvent, RoundEventRecord
@@ -26,14 +27,24 @@ def exported_block(height: int, txid: str, script_pub_key: dict[str, object]) ->
 
 
 def test_event_is_copied_reconciled_and_exported_as_evidence() -> None:
-    source = {"round_id": 1, "taker": "jcs-000", "destination_address": "bcrt1qdestination"}
+    source = {
+        "round_id": 1,
+        "status": "started",
+        "taker": "jcs-000",
+        "destination_address": "bcrt1qdestination",
+    }
 
     labels = match_round_events_to_blocks(
         collect_round_events([[source]]),
         [exported_block(7, "a" * 64, {"address": "bcrt1qdestination"})],
     )
 
-    assert source == {"round_id": 1, "taker": "jcs-000", "destination_address": "bcrt1qdestination"}
+    assert source == {
+        "round_id": 1,
+        "status": "started",
+        "taker": "jcs-000",
+        "destination_address": "bcrt1qdestination",
+    }
     assert labels == [
         {
             "round_id": 1,
@@ -42,6 +53,7 @@ def test_event_is_copied_reconciled_and_exported_as_evidence() -> None:
             "destination_address": "bcrt1qdestination",
             "destination_matches": [{"txid": "a" * 64, "block_height": 7}],
             "status": "confirmed",
+            "execution_status": "started",
             "match_source": "destination_output",
         }
     ]
@@ -55,16 +67,16 @@ def test_event_is_copied_reconciled_and_exported_as_evidence() -> None:
     }
 
 
-def test_multiple_destination_matches_are_ambiguous_and_not_positive() -> None:
+def test_multiple_destination_matches_are_not_positive() -> None:
     labels = match_round_events_to_blocks(
-        collect_round_events([[{"round_id": 1, "destination_address": "reused-address"}]]),
+        collect_round_events([[{"round_id": 1, "status": "started", "destination_address": "reused-address"}]]),
         [
             exported_block(3, "a" * 64, {"address": "reused-address"}),
             exported_block(4, "b" * 64, {"address": "reused-address"}),
         ],
     )
 
-    assert labels[0]["status"] == "ambiguous"
+    assert labels[0]["status"] == "multiple_matches"
     assert producer_label_evidence(labels, []) == {
         "engine": "joinmarket",
         "complete": False,
@@ -88,22 +100,112 @@ def test_export_round_id_is_mandatory_and_an_integer() -> None:
         RoundEventRecord.from_data({"export_round_id": "1"}).export_round_id
 
 
-def test_events_without_destinations_are_dropped_and_export_order_is_stable() -> None:
-    first = {"round_id": 1, "destination_address": "first"}
-    second = {"round_id": 1, "destination_address": "second"}
+def test_events_without_destinations_are_preserved_and_export_order_is_stable() -> None:
+    first = {"round_id": 1, "status": "started", "destination_address": "first"}
+    second = {"round_id": 1, "status": "started", "destination_address": "second"}
     labels = match_round_events_to_blocks(
         collect_round_events([[{"round_id": 99, "status": "failed"}, first], [second]]),
         [],
     )
 
-    assert [(label["round_id"], label["export_round_id"]) for label in labels] == [(1, 2), (1, 3)]
-    assert first == {"round_id": 1, "destination_address": "first"}
-    assert second == {"round_id": 1, "destination_address": "second"}
+    assert [(label["round_id"], label["export_round_id"]) for label in labels] == [(99, 1), (1, 2), (1, 3)]
+    assert first == {"round_id": 1, "status": "started", "destination_address": "first"}
+    assert second == {"round_id": 1, "status": "started", "destination_address": "second"}
+
+
+@pytest.mark.parametrize("destination", [None, "", 42])
+def test_unmatchable_events_are_retained_and_make_evidence_incomplete(destination) -> None:
+    event = {"round_id": 1, "status": "failed", "destination_address": destination}
+    labels = match_round_events_to_blocks(collect_round_events([[event]]), [])
+
+    assert len(labels) == 1
+    assert labels[0]["destination_address"] == destination
+    evidence = producer_label_evidence(labels, [])
+    assert evidence["complete"] is False
+    assert evidence["positive_count"] == 0
+    assert evidence["reason"] == "round events have no destination address: 1"
+
+
+def test_reconciliation_preserves_generator_order_and_event_identity() -> None:
+    events = [
+        {"status": "started", "destination_address": "shared"},
+        {"status": "failed"},
+        {"status": "started", "destination_address": "other"},
+        {"status": "started", "destination_address": "shared"},
+    ]
+
+    result = reconcile_round_event_destinations((event for event in events), [])
+
+    assert len(result) == len(events)
+    assert all(actual is expected for actual, expected in zip(result, events))
+    assert result[0]["status"] == result[3]["status"] == "duplicate_destination"
+
+
+@pytest.mark.parametrize("match_count", [0, 1, 2])
+def test_rounds_sharing_a_destination_keep_their_status_and_matches(match_count: int) -> None:
+    events = collect_round_events([
+        [{"round_id": 1, "status": "started", "destination_address": "reused-destination"}],
+        [{"round_id": 1, "status": "started", "destination_address": "reused-destination"}],
+    ])
+
+    blocks = [
+        exported_block(height, f"match-{height}", {"address": "reused-destination"})
+        for height in range(match_count)
+    ]
+    labels = match_round_events_to_blocks(events, blocks)
+
+    assert [label["status"] for label in labels] == ["duplicate_destination", "duplicate_destination"]
+    assert [label["export_round_id"] for label in labels] == [1, 2]
+    assert all("duplicate_destination" not in label for label in labels)
+    evidence = producer_label_evidence(labels, [])
+    assert evidence["complete"] is False
+    assert evidence["positive_count"] == 0
+    assert "shared by several rounds: 1, 1" in str(evidence["reason"])
+    assert all(label["destination_matches"] == [
+        {"txid": f"match-{height}", "block_height": height}
+        for height in range(match_count)
+    ] for label in labels)
+    expected = json.loads(json.dumps(labels))
+    assert match_round_events_to_blocks(labels, blocks) == expected
+
+
+def test_duplicate_destination_status_survives_later_matching_without_the_other_round() -> None:
+    event: RoundEvent = {"status": "duplicate_destination"}
+    record = RoundEventRecord.from_data(event)
+
+    record.add_destination_match("first", 1)
+    record.add_destination_match("second", 2)
+
+    assert record.status == "duplicate_destination"
+    assert record.confirmed_destination_txid() is None
+    assert event["destination_matches"] == [
+        {"txid": "first", "block_height": 1},
+        {"txid": "second", "block_height": 2},
+    ]
+    assert event["match_source"] == "destination_output"
+
+
+def test_direct_matching_preserves_failure_through_later_conflicts() -> None:
+    event: RoundEvent = {"status": "failed", "failure_reason": "RPC timeout"}
+    record = RoundEventRecord.from_data(event)
+
+    record.add_destination_match("first", 1)
+    assert event["execution_status"] == "failed"
+    assert record.status == "confirmed"
+
+    record.add_destination_match("second", 2)
+    record.mark_duplicate_destination()
+    record.add_destination_match("third", 3)
+
+    assert event["execution_status"] == "failed"
+    assert event["failure_reason"] == "RPC timeout"
+    assert record.status == "duplicate_destination"
+    assert record.confirmed_destination_txid() is None
 
 
 def test_reconciliation_is_idempotent_and_tolerates_empty_transaction_lists() -> None:
     labels = match_round_events_to_blocks(
-        collect_round_events([[{"round_id": 1, "destination_address": "destination"}]]),
+        collect_round_events([[{"round_id": 1, "status": "started", "destination_address": "destination"}]]),
         [
             {"height": 1, "tx": []},
             exported_block(3, "a" * 64, {"address": "destination"}),
@@ -113,6 +215,101 @@ def test_reconciliation_is_idempotent_and_tolerates_empty_transaction_lists() ->
 
     assert labels[0]["destination_matches"] == [{"txid": "a" * 64, "block_height": 3}]
     assert labels[0]["status"] == "confirmed"
+
+
+@pytest.mark.parametrize(
+    ("match_count", "expected_status", "positive_count"),
+    [(0, "failed", 0), (1, "confirmed", 1), (2, "multiple_matches", 0)],
+)
+def test_export_reconciles_timed_out_rounds_and_keeps_failure_diagnostics(
+    match_count: int, expected_status: str, positive_count: int,
+) -> None:
+    failed = {
+        "round_id": 1,
+        "status": "failed",
+        "failure_reason": "coinjoin attempt timed out",
+        "stop_block": 6,
+        "destination_address": "late-destination",
+    }
+
+    labels = match_round_events_to_blocks(
+        collect_round_events([[failed]]),
+        [
+            exported_block(7 + index, str(index) * 64, {"address": "late-destination"})
+            for index in range(match_count)
+        ],
+    )
+
+    assert labels[0]["status"] == expected_status
+    assert labels[0]["execution_status"] == "failed"
+    assert labels[0]["failure_reason"] == failed["failure_reason"]
+    assert labels[0]["stop_block"] == 6
+    assert labels[0].get("destination_matches", []) == [
+        {"txid": str(index) * 64, "block_height": 7 + index}
+        for index in range(match_count)
+    ]
+    assert failed["status"] == "failed"
+    assert "destination_matches" not in failed
+    evidence = producer_label_evidence(labels, [])
+    assert evidence["positive_count"] == positive_count
+    assert evidence["complete"] is (match_count < 2)
+    expected = json.loads(json.dumps(labels))
+    assert match_round_events_to_blocks(labels, []) == expected
+
+
+@pytest.mark.parametrize("other_status", ["started", "failed", "confirmed"])
+def test_export_detects_shared_destinations_across_round_statuses(other_status: str) -> None:
+    confirmed = {
+        "round_id": 1,
+        "status": "confirmed",
+        "destination_address": "shared-destination",
+        "destination_matches": [{"txid": "a" * 64, "block_height": 7}],
+    }
+    other = {"round_id": 2, "status": other_status, "destination_address": "shared-destination"}
+
+    labels = match_round_events_to_blocks(
+        collect_round_events([[confirmed], [other]]),
+        [exported_block(7, "a" * 64, {"address": "shared-destination"})],
+    )
+
+    assert [label["status"] for label in labels] == ["duplicate_destination", "duplicate_destination"]
+    assert all(label["destination_matches"] == confirmed["destination_matches"] for label in labels)
+    assert confirmed["status"] == "confirmed"
+    assert other["status"] == other_status
+    if other_status in ("started", "failed"):
+        assert labels[1]["execution_status"] == other_status
+    else:
+        assert "execution_status" not in labels[1]
+    evidence = producer_label_evidence(labels, [])
+    assert evidence["positive_count"] == 0
+    assert evidence["complete"] is False
+
+
+def test_export_rechecks_a_confirmed_round_for_additional_transactions() -> None:
+    confirmed = {
+        "round_id": 1,
+        "status": "confirmed",
+        "destination_address": "reused-destination",
+        "destination_matches": [{"txid": "a" * 64, "block_height": 7}],
+    }
+    blocks = [
+        exported_block(7, "a" * 64, {"address": "reused-destination"}),
+        exported_block(8, "b" * 64, {"address": "reused-destination"}),
+    ]
+
+    labels = match_round_events_to_blocks(collect_round_events([[confirmed]]), blocks)
+
+    assert labels[0]["status"] == "multiple_matches"
+    assert labels[0]["destination_matches"] == [
+        {"txid": "a" * 64, "block_height": 7},
+        {"txid": "b" * 64, "block_height": 8},
+    ]
+    assert confirmed["destination_matches"] == [{"txid": "a" * 64, "block_height": 7}]
+    evidence = producer_label_evidence(labels, [])
+    assert evidence["positive_count"] == 0
+    assert evidence["complete"] is False
+    expected = json.loads(json.dumps(labels))
+    assert match_round_events_to_blocks(labels, blocks) == expected
 
 
 @pytest.mark.parametrize(
@@ -134,7 +331,7 @@ def test_confirmed_destination_txid_requires_one_well_formed_match() -> None:
     )
     assert (
         RoundEventRecord.from_data(
-            {"status": "ambiguous", "destination_matches": [{"txid": "a"}]}
+            {"status": "multiple_matches", "destination_matches": [{"txid": "a"}]}
         ).confirmed_destination_txid()
         is None
     )
@@ -170,10 +367,15 @@ def test_unlabelled_takers_make_evidence_incomplete() -> None:
 
 def test_engine_reads_exported_block_files_and_accepts_a_missing_node_directory(tmp_path: Path) -> None:
     engine = object.__new__(JoinmarketEngine)
-    engine.clients = [SimpleNamespace(round_events=[{"round_id": 1, "destination_address": "destination"}])]
+    engine.clients = [
+        SimpleNamespace(round_events=[{"round_id": 1, "status": "started", "destination_address": "destination"}])
+    ]
 
     assert engine.match_joinmarket_rounds_to_blocks(str(tmp_path)) == [
-        {"round_id": 1, "export_round_id": 1, "destination_address": "destination"}
+        {
+            "round_id": 1, "export_round_id": 1, "status": "started",
+            "execution_status": "started", "destination_address": "destination",
+        }
     ]
 
     node_path = tmp_path / "btc-node"

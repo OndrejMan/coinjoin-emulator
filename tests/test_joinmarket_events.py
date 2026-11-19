@@ -3,6 +3,7 @@ from pathlib import Path
 
 from manager.btc_node import BtcNode
 from manager.engine.joinmarket_engine import JoinmarketEngine
+from manager.wasabi_clients.joinmarket_clients.joinmarket_client_base import JoinMarketClientServer
 
 
 class EventClient:
@@ -39,6 +40,16 @@ def write_block(node_path: Path, height: int, txid: str, address: str) -> None:
 
 
 class TestCollectRoundEvents:
+    def test_new_attempt_records_its_execution_status(self) -> None:
+        client = object.__new__(JoinMarketClientServer)
+        client.name = "jcs-000"
+        client.round_events = []
+
+        event = client.record_round_start("destination", 100_000, 2, 0, current_block=1)
+
+        assert event["status"] == event["execution_status"] == "started"
+        assert client.round_events == [event]
+
     def test_events_are_collected_from_every_client(self) -> None:
         harness = EventHarness(
             EventClient("jcs-000", [{"round_id": 1}]),
@@ -77,6 +88,7 @@ class TestJoinMarketRoundEvents:
                 "round_id": 2,
                 "export_round_id": 1,
                 "status": "confirmed",
+                "execution_status": "started",
                 "taker": "jcs-002",
                 "destination_address": "destination-address",
                 "destination_matches": [{"txid": "coinjoin-txid", "block_height": 7}],
@@ -86,17 +98,20 @@ class TestJoinMarketRoundEvents:
         assert event["status"] == "started"
         assert "destination_matches" not in event
 
-    def test_reconciliation_marks_reused_destinations_as_ambiguous(self, tmp_path: Path) -> None:
+    def test_reconciliation_marks_multiple_matches(self, tmp_path: Path) -> None:
         node_path = tmp_path / "btc-node"
         for height, txid in ((3, "first-match"), (4, "second-match")):
             write_block(node_path, height, txid, "reused-destination")
         harness = EventHarness(
-            EventClient("jcs-000", [{"round_id": 4, "destination_address": "reused-destination"}])
+            EventClient(
+                "jcs-000",
+                [{"round_id": 4, "status": "started", "destination_address": "reused-destination"}],
+            )
         )
 
         label = harness.match_joinmarket_rounds_to_blocks(str(tmp_path))[0]
 
-        assert label["status"] == "ambiguous"
+        assert label["status"] == "multiple_matches"
         assert label["destination_matches"] == [
             {"txid": "first-match", "block_height": 3},
             {"txid": "second-match", "block_height": 4},
@@ -104,7 +119,10 @@ class TestJoinMarketRoundEvents:
 
     def test_events_are_returned_unmatched_when_no_blocks_were_exported(self, tmp_path: Path) -> None:
         harness = EventHarness(
-            EventClient("jcs-000", [{"round_id": 1, "destination_address": "unmined-destination"}])
+            EventClient(
+                "jcs-000",
+                [{"round_id": 1, "status": "started", "destination_address": "unmined-destination"}],
+            )
         )
 
         labels = harness.match_joinmarket_rounds_to_blocks(str(tmp_path))
@@ -113,6 +131,8 @@ class TestJoinMarketRoundEvents:
             {
                 "round_id": 1,
                 "export_round_id": 1,
+                "status": "started",
+                "execution_status": "started",
                 "destination_address": "unmined-destination",
             }
         ]
@@ -120,11 +140,13 @@ class TestJoinMarketRoundEvents:
     def test_export_ids_are_unique_across_parallel_takers(self, tmp_path: Path) -> None:
         first = {
             "round_id": 1,
+            "status": "started",
             "taker": "jcs-000",
             "destination_address": "first-destination",
         }
         second = {
             "round_id": 1,
+            "status": "started",
             "taker": "jcs-001",
             "destination_address": "second-destination",
         }
@@ -141,17 +163,22 @@ class TestJoinMarketRoundEvents:
         ]
         assert first["round_id"] == second["round_id"] == 1
 
-    def test_events_without_a_destination_are_dropped(self, tmp_path: Path) -> None:
+    def test_events_without_a_destination_are_preserved(self, tmp_path: Path) -> None:
         harness = EventHarness(EventClient("jcs-000", [{"round_id": 1, "status": "failed"}]))
 
-        assert harness.match_joinmarket_rounds_to_blocks(str(tmp_path)) == []
+        assert harness.match_joinmarket_rounds_to_blocks(str(tmp_path)) == [
+            {"round_id": 1, "export_round_id": 1, "status": "failed", "execution_status": "failed"}
+        ]
 
 
 class TestStoreRoundEvents:
     def test_stored_evidence_counts_the_confirmed_transactions(self, tmp_path: Path) -> None:
         write_block(tmp_path / "btc-node", 7, "coinjoin-txid", "destination-address")
         harness = EventHarness(
-            EventClient("jcs-000", [{"round_id": 1, "destination_address": "destination-address"}])
+            EventClient(
+                "jcs-000",
+                [{"round_id": 1, "status": "started", "destination_address": "destination-address"}],
+            )
         )
 
         evidence = harness.store_round_events(str(tmp_path))
@@ -164,7 +191,10 @@ class TestStoreRoundEvents:
     def test_stored_file_holds_the_reconciled_labels(self, tmp_path: Path) -> None:
         write_block(tmp_path / "btc-node", 7, "coinjoin-txid", "destination-address")
         harness = EventHarness(
-            EventClient("jcs-000", [{"round_id": 1, "destination_address": "destination-address"}])
+            EventClient(
+                "jcs-000",
+                [{"round_id": 1, "status": "started", "destination_address": "destination-address"}],
+            )
         )
 
         harness.store_round_events(str(tmp_path))
@@ -173,11 +203,14 @@ class TestStoreRoundEvents:
         assert stored[0]["destination_matches"] == [{"txid": "coinjoin-txid", "block_height": 7}]
         assert stored[0]["status"] == "confirmed"
 
-    def test_ambiguous_destinations_make_the_evidence_incomplete(self, tmp_path: Path) -> None:
+    def test_multiple_matches_make_the_evidence_incomplete(self, tmp_path: Path) -> None:
         for height, txid in ((7, "first-match"), (8, "second-match")):
             write_block(tmp_path / "btc-node", height, txid, "reused-destination")
         harness = EventHarness(
-            EventClient("jcs-000", [{"round_id": 1, "destination_address": "reused-destination"}])
+            EventClient(
+                "jcs-000",
+                [{"round_id": 1, "status": "started", "destination_address": "reused-destination"}],
+            )
         )
 
         evidence = harness.store_round_events(str(tmp_path))
@@ -190,7 +223,7 @@ class TestStoreRoundEvents:
         harness = EventHarness(
             EventClient(
                 "jcs-000",
-                [{"round_id": 1, "destination_address": "bcrt1qdest"}],
+                [{"round_id": 1, "status": "started", "destination_address": "bcrt1qdest"}],
                 tumbler_options={"addrcount": 3},
             )
         )
@@ -199,7 +232,10 @@ class TestStoreRoundEvents:
 
     def test_unconfirmed_rounds_are_not_counted_as_positives(self, tmp_path: Path) -> None:
         harness = EventHarness(
-            EventClient("jcs-000", [{"round_id": 1, "destination_address": "unmined-destination"}])
+            EventClient(
+                "jcs-000",
+                [{"round_id": 1, "status": "started", "destination_address": "unmined-destination"}],
+            )
         )
 
         assert harness.store_round_events(str(tmp_path))["positive_count"] == 0
