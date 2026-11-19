@@ -7,13 +7,23 @@ import podman
 
 from manager.exceptions import CoinjoinEmulatorError
 
-from . import MANAGED_IMAGE_MARKERS, RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL, Driver
+from . import (
+    RESERVED_PORT_RANGE,
+    RESERVED_PORTS_SYSCTL,
+    Driver,
+    managed_label_filters,
+    managed_labels,
+    upload_archive,
+    warn_if_host_ports_unreserved,
+)
 
 
 class PodmanDriver(Driver):
-    def __init__(self, namespace="coinjoin"):
+    def __init__(self, namespace="coinjoin", run_id=None):
         self._namespace = namespace
+        self._run_id = run_id
         self.client = podman.PodmanClient()
+        warn_if_host_ports_unreserved(os.environ.get("CONTAINER_HOST"))
 
     @cached_property
     def network(self) -> str:
@@ -57,6 +67,7 @@ class PodmanDriver(Driver):
             ports={str(port): host_port for port, host_port in (ports or {}).items()},
             environment=env or {},
             volumes=kwargs.get("volumes") or {},
+            labels=managed_labels(self._namespace, self._run_id),
             sysctls={RESERVED_PORTS_SYSCTL: RESERVED_PORT_RANGE},
         )
         inspect = container.inspect()
@@ -77,9 +88,18 @@ class PodmanDriver(Driver):
 
     def _remove_container(self, name):
         try:
-            self.client.containers.get(name).remove(force=True)
+            container = self.client.containers.get(name)
         except podman.errors.NotFound:
-            pass
+            return
+        inspect = container.inspect()
+        labels = inspect.get("Config", {}).get("Labels", {})
+        expected = managed_labels(self._namespace, self._run_id)
+        if not isinstance(labels, dict) or any(labels.get(key) != value for key, value in expected.items()):
+            raise CoinjoinEmulatorError(
+                f"Refusing to replace container {name}: it is not owned by "
+                f"namespace {self._namespace!r} and run {self._run_id!r}"
+            )
+        container.remove(force=True)
 
     def download(self, name, src_path, dst_path):
         try:
@@ -115,24 +135,15 @@ class PodmanDriver(Driver):
         ).decode(errors="replace")
 
     def upload(self, name, src_path, dst_path):
-        fo = BytesIO()
-        with tarfile.open(fileobj=fo, mode="w") as tar:
-            tar.add(src_path, os.path.basename(dst_path))
-        fo.seek(0)
-        if not self.client.containers.get(name).put_archive(
-            os.path.dirname(dst_path), fo.read()
-        ):
+        container = self.client.containers.get(name)
+        if not container.put_archive(os.path.dirname(dst_path), upload_archive(container, src_path, dst_path)):
             raise CoinjoinEmulatorError(f"Failed to copy {src_path} to {name}:{dst_path}")
 
     def cleanup(self, image_prefix=""):
-        containers = []
-        for container in self.client.containers.list(all=True):
-            if any(
-                x in container.attrs.get("Image", "")
-                for x in MANAGED_IMAGE_MARKERS
-            ):
-                containers.append(container)
-
+        containers = self.client.containers.list(
+            all=True,
+            filters={"label": managed_label_filters(self._namespace, self._run_id)},
+        )
         self.stop_many(map(lambda x: x.name, containers))
         try:
             self.client.networks.get(self._namespace).remove()

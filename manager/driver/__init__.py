@@ -1,20 +1,112 @@
+import os
+import tarfile
 from abc import ABC, abstractmethod
+from io import BytesIO
 from multiprocessing.pool import ThreadPool
 
-MANAGED_IMAGE_MARKERS = (
-    "irc-server",
-    "btc-node",
-    "wasabi-backend",
-    "wasabi-client",
-    "wasabi-coordinator",
-    "joinmarket-client-server",
-)
+MANAGED_LABEL = "coinjoin-emulator.managed"
+NAMESPACE_LABEL = "coinjoin-emulator.namespace"
+RUN_ID_LABEL = "coinjoin-emulator.run-id"
+
+
+def managed_labels(namespace: str, run_id: str | None = None) -> dict[str, str]:
+    """Return ownership labels for resources created by one emulator run."""
+    labels = {
+        MANAGED_LABEL: "true",
+        NAMESPACE_LABEL: namespace,
+    }
+    if run_id:
+        labels[RUN_ID_LABEL] = run_id
+    return labels
+
+
+def managed_label_filters(namespace: str, run_id: str | None = None) -> list[str]:
+    """Return runtime label filters scoped like :func:`managed_labels`."""
+    return [f"{key}={value}" for key, value in managed_labels(namespace, run_id).items()]
+
+
+def container_user_ids(container) -> tuple[int, int] | None:
+    """The uid and gid the container runs as, or None when they cannot be read.
+
+    Podman's SDK runs an exec as root unless told otherwise, so the user is
+    passed explicitly; a TTY keeps Podman from framing the output as a
+    multiplexed stream.
+    """
+    user = (container.attrs.get("Config") or {}).get("User") or ""
+    ids = []
+    for flag in ("-u", "-g"):
+        try:
+            exit_code, output = container.exec_run(["id", flag], user=user, tty=True)[:2]
+            ids.append(int(output.decode().strip()) if exit_code == 0 else None)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+    return (ids[0], ids[1]) if None not in ids else None
+
+
+def upload_archive(container, src_path: str, dst_path: str) -> bytes:
+    """Tar ``src_path`` as ``dst_path``'s basename, owned by the container's user.
+
+    The runtime unpacks the archive with the ownership it records, and the
+    manager runs as root, so without this a non-root service could not rewrite
+    the file it was given; ``kubectl cp`` writes as the container user already.
+    """
+    owner = container_user_ids(container)
+
+    def own(info: tarfile.TarInfo) -> tarfile.TarInfo:
+        if owner is not None:
+            info.uid, info.gid = owner
+            info.uname = info.gname = ""
+        return info
+
+    fo = BytesIO()
+    with tarfile.open(fileobj=fo, mode="w") as tar:
+        tar.add(src_path, os.path.basename(dst_path), filter=own)
+    return fo.getvalue()
+
 
 # The Wasabi backend, coordinator and clients bind fixed ports inside the
 # default ephemeral range, where the kernel can hand the same port to an
 # outgoing connection first and make the bind fail.
 RESERVED_PORT_RANGE = "37127-37260"
 RESERVED_PORTS_SYSCTL = "net.ipv4.ip_local_reserved_ports"
+HOST_RESERVED_PORTS_PATH = "/proc/sys/net/ipv4/ip_local_reserved_ports"
+
+
+def _parse_port_ranges(value: str) -> list[tuple[int, int]]:
+    ranges = []
+    for item in "".join(value.split()).split(","):
+        if not item:
+            continue
+        low, _, high = item.partition("-")
+        ranges.append((int(low), int(high or low)))
+    return ranges
+
+
+def warn_if_host_ports_unreserved(
+    daemon_host: str | None = None, path: str = HOST_RESERVED_PORTS_PATH
+) -> None:
+    """Warn when published service ports can collide with host outgoing connections.
+
+    Docker and Podman publish the same fixed ports on the host, where the
+    container sysctl does not apply; a collision fails the client start.
+    A remote daemon (e.g. the pipeline's dind) binds them in its own network
+    namespace, which this process cannot inspect.
+    """
+    if daemon_host and not daemon_host.startswith("unix://"):
+        return
+    try:
+        with open(path, encoding="ascii") as handle:
+            existing = "".join(handle.read().split())
+            reserved = _parse_port_ranges(existing)
+    except (OSError, ValueError):
+        return
+    required_low, required_high = _parse_port_ranges(RESERVED_PORT_RANGE)[0]
+    if not any(low <= required_low and required_high <= high for low, high in reserved):
+        combined = f"{existing},{RESERVED_PORT_RANGE}" if existing else RESERVED_PORT_RANGE
+        print(
+            f"WARNING: host does not reserve ports {RESERVED_PORT_RANGE}; clients may fail with "
+            f"'address already in use'. Run: sudo sysctl -w {RESERVED_PORTS_SYSCTL}={combined}"
+        )
 
 
 class Driver(ABC):
