@@ -5,7 +5,7 @@ from io import BytesIO
 
 import docker
 
-from . import Driver
+from . import MANAGED_IMAGE_MARKERS, Driver
 
 
 class DockerDriver(Driver):
@@ -111,15 +111,7 @@ class DockerDriver(Driver):
         for container in self.client.containers.list(all=True):
             if any(
                 x in container.attrs["Config"]["Image"]
-                for x in (
-                    "irc-server",
-                    "btc-node",
-                    "wasabi-backend",
-                    "wasabi-client",
-                    "wasabi-client-distributor",
-                    "wasabi-coordinator",
-                    "joinmarket-client-server",
-                )
+                for x in MANAGED_IMAGE_MARKERS
             ):
                 containers.append(container)
 
