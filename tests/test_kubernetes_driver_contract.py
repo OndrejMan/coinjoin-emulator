@@ -49,6 +49,43 @@ def test_pods_and_services_are_labelled_with_the_run() -> None:
         MANAGED_BY_LABEL: MANAGED_BY_VALUE,
         "coinjoin.run-id": "run-42",
     }
+    assert "ownerReferences" not in manifest["metadata"]
+
+
+def test_in_cluster_controller_pod_owns_created_pods_and_services(monkeypatch) -> None:
+    monkeypatch.setenv("COINJOIN_OWNER_POD_NAME", "coinjoin-s3-run-42-abcde")
+    monkeypatch.setenv("COINJOIN_OWNER_POD_UID", "controller-uid")
+    monkeypatch.setenv("COINJOIN_OWNER_POD_NAMESPACE", "coinjoin")
+    instance = driver(in_cluster=True, run_id="run-42")
+    instance._wait_for_pod_ip = Mock(return_value="10.0.0.7")  # pylint: disable=protected-access
+
+    instance.run("btc-node", "btc-node:latest", ports={18443: 18443}, cpu=1.0, memory=512)
+
+    expected_owner = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "name": "coinjoin-s3-run-42-abcde",
+        "uid": "controller-uid",
+    }
+    pod = instance.client.create_namespaced_pod.call_args.kwargs["body"]
+    service = instance.client.create_namespaced_service.call_args.kwargs["body"]
+    assert pod["metadata"]["ownerReferences"] == [expected_owner]
+    assert service["metadata"]["ownerReferences"] == [expected_owner]
+    assert pod["metadata"]["labels"]["coinjoin.run-id"] == "run-42"
+    assert service["metadata"]["labels"]["coinjoin.run-id"] == "run-42"
+
+
+@pytest.mark.parametrize("owner_namespace", ["", "other-namespace"])
+def test_controller_pod_owner_must_be_in_the_emulator_namespace(monkeypatch, owner_namespace) -> None:
+    monkeypatch.setenv("COINJOIN_OWNER_POD_NAME", "controller-pod")
+    monkeypatch.setenv("COINJOIN_OWNER_POD_UID", "controller-uid")
+    monkeypatch.setenv("COINJOIN_OWNER_POD_NAMESPACE", owner_namespace)
+    instance = driver(in_cluster=True)
+
+    with pytest.raises(ValueError, match="complete identity in the emulator namespace"):
+        instance.run("btc-node", "btc-node:latest", ports={}, cpu=1.0, memory=512)
+
+    instance.client.create_namespaced_pod.assert_not_called()
 
 
 def test_a_host_path_is_mounted_and_a_command_overrides_the_entrypoint() -> None:
@@ -506,6 +543,8 @@ def test_kubelet_sysctl_rejection_recreates_the_pod_without_it() -> None:
         created_manifests.append(deepcopy(body))
 
     instance.client.create_namespaced_pod.side_effect = record_manifest
+    instance.client.read_namespaced_pod.side_effect = ApiException(status=404)
+    instance.client.read_namespaced_service.side_effect = ApiException(status=404)
     instance._wait_for_pod_ip = Mock(  # pylint: disable=protected-access
         side_effect=[StartupError("Pod wasabi-backend: SysctlForbidden"), "10.0.0.7"]
     )
@@ -516,3 +555,43 @@ def test_kubelet_sysctl_rejection_recreates_the_pod_without_it() -> None:
     assert len(created_manifests) == 2
     assert "securityContext" in created_manifests[0]["spec"]
     assert "securityContext" not in created_manifests[1]["spec"]
+
+
+def test_stop_returns_only_after_the_pod_and_service_are_gone() -> None:
+    instance = driver()
+    gone = ApiException(status=404)
+    instance.client.read_namespaced_pod.side_effect = [running_pod(), running_pod(), gone]
+    instance.client.read_namespaced_service.side_effect = [gone]
+
+    with patch("manager.driver.kubernetes.sleep") as sleep:
+        instance.stop("wasabi-coordinator")
+
+    instance.client.delete_namespaced_pod.assert_called_once_with(name="wasabi-coordinator", namespace="coinjoin")
+    instance.client.delete_namespaced_service.assert_called_once_with("wasabi-coordinator", namespace="coinjoin")
+    assert instance.client.read_namespaced_pod.call_count == 3
+    assert sleep.call_count == 2
+
+
+def test_stop_deletes_the_service_of_a_pod_that_is_already_gone() -> None:
+    instance = driver()
+    gone = ApiException(status=404)
+    instance.client.delete_namespaced_pod.side_effect = gone
+    instance.client.read_namespaced_pod.side_effect = gone
+    instance.client.read_namespaced_service.side_effect = gone
+
+    with patch("manager.driver.kubernetes.sleep"):
+        instance.stop("wasabi-client-002")
+
+    instance.client.delete_namespaced_service.assert_called_once_with("wasabi-client-002", namespace="coinjoin")
+
+
+def test_stop_gives_up_waiting_after_the_deadline() -> None:
+    instance = driver()
+    instance.client.read_namespaced_pod.return_value = running_pod()
+
+    with patch("manager.driver.kubernetes.sleep"), patch(
+        "manager.driver.kubernetes.time.monotonic", side_effect=[0.0, 0.0, 1000.0]
+    ):
+        instance.stop("wasabi-coordinator")
+
+    assert instance.client.read_namespaced_pod.call_count == 1
