@@ -42,6 +42,10 @@ class OpenshiftDriver(KubernetesDriver):
         except Exception as e:
             print(f"[WARNING] Failed to run 'oc adm policy add-scc-to-user': {e}")
 
+    def resource_name(self, name):
+        """Routes and Services here are addressed by the plain name, so it is not suffixed."""
+        return name
+
     def build_pod_manifest(self, name, image, env, ports, cpu, memory, service_account="jm", run_as_user=1000,
                            run_as_group=1000, volumes=None, command=None, group_id=None):
         manifest = super().build_pod_manifest(
