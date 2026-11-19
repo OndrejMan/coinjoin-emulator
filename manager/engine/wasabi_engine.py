@@ -11,6 +11,8 @@ from pathlib import Path
 from time import sleep, time
 from traceback import print_exception
 
+import requests
+
 from manager.engine.base.manifest import ProducerLabelEvidence
 from manager.engine.configuration import ScenarioConfig, WalletConfig, WasabiConfig
 from manager.engine.engine_base import EngineBase
@@ -31,6 +33,7 @@ SUCCESSFUL_BROADCAST_RE = re.compile(
     re.IGNORECASE,
 )
 WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
+WASABI_CLIENT_DATA_PATH = "/home/wasabi/.walletwasabi/client/"
 WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
 DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT = 900
 WASABI_COORDINATOR_START_TIMEOUT_SECONDS = 120
@@ -60,7 +63,7 @@ class WasabiEngine(EngineBase):
         self.backend: WasabiBackendProtocol | None = None
         self.backend_architecture: BackendArchitecture | None = None
         self.round_ids: set[str] = set()
-        super().__init__(args, driver, "/home/wasabi/.walletwasabi/backend/")
+        super().__init__(args, driver, WASABI_CLIENT_DATA_PATH)
 
     def default_scenario(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -363,31 +366,12 @@ class WasabiEngine(EngineBase):
 
     def store_engine_logs(self, data_path: str) -> ProducerLabelEvidence:
         try:
-            if self.backend_architecture == BackendArchitecture.SPLIT:
-                self.driver.download(
-                    "wasabi-backend",
-                    "/home/wasabi/.walletwasabi/backend/",
-                    os.path.join(data_path, "wasabi-backend-2.6"),
-                )
-                print("- stored backend-2.6 logs")
-
-                try:
-                    self.driver.download(
-                        "wasabi-coordinator",
-                        "/home/wasabi/.walletwasabi/coordinator/",
-                        os.path.join(data_path, "wasabi-coordinator"),
-                    )
-                    print("- stored coordinator logs")
-                except Exception:
-                    print("- could not store coordinator logs")
-            else:
-                # Store logs from legacy backend
-                self.driver.download(
-                    "wasabi-backend",
-                    "/home/wasabi/.walletwasabi/backend/",
-                    os.path.join(data_path, "wasabi-backend"),
-                )
-                print("- stored backend logs")
+            self.driver.download(
+                "wasabi-backend",
+                "/home/wasabi/.walletwasabi/backend/",
+                os.path.join(data_path, "wasabi-backend"),
+            )
+            print("- stored backend logs")
         except Exception:
             print("- could not store backend logs")
             return {
@@ -397,6 +381,17 @@ class WasabiEngine(EngineBase):
                 "positive_rule": "transaction id appears in a successful coordinator broadcast record",
                 "sources": [],
             }
+
+        if self.backend_architecture == BackendArchitecture.SPLIT:
+            try:
+                self.driver.download(
+                    "wasabi-coordinator",
+                    "/home/wasabi/.walletwasabi/coordinator/",
+                    os.path.join(data_path, "wasabi-coordinator"),
+                )
+                print("- stored coordinator logs")
+            except Exception:
+                print("- could not store coordinator logs")
 
         label_root = os.path.join(
             data_path,
@@ -417,9 +412,26 @@ class WasabiEngine(EngineBase):
             "sources": [os.path.relpath(path, data_path) for path in log_paths],
         }
 
+    def client_gone_message(self, client, error):
+        state = None
+        try:
+            state = self.driver.container_state(client.name)
+        except Exception:  # pylint: disable=broad-exception-caught
+            state = None
+        where = f"container state: {state}" if state else "container state unknown"
+        return (
+            f"client {client.name} is unreachable at {client.host}:{client.port} "
+            f"({where}). A Wasabi client that hits a fatal error exits 0 and looks "
+            f"\"Completed\", so check that client's own log for the last exception "
+            f"before it stopped. Underlying error: {error}"
+        )
+
     def start_coinjoin(self, client):
         sleep(random.random() / 10)
-        client.start_coinjoin()
+        try:
+            client.start_coinjoin()
+        except requests.exceptions.ConnectionError as error:
+            raise RuntimeError(self.client_gone_message(client, error)) from error
 
     def stop_coinjoin(self, client):
         sleep(random.random() / 10)

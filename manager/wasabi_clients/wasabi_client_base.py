@@ -8,6 +8,22 @@ from manager.exceptions import RpcError
 
 WALLET_NAME = "wallet"
 
+RETRY_BACKOFF_SECONDS = 1
+JSON_RPC_INTERNAL_ERROR = -32603
+
+TRANSIENT_INTERNAL_ERRORS = (
+    "Destination array was not long enough",
+    "Collection was modified",
+)
+
+
+def _is_transient(error) -> bool:
+    return (
+        isinstance(error, dict)
+        and error.get("code") == JSON_RPC_INTERNAL_ERROR
+        and any(fragment in str(error.get("message", "")) for fragment in TRANSIENT_INTERNAL_ERRORS)
+    )
+
 
 class WasabiClientBase:
     def __init__(
@@ -36,7 +52,7 @@ class WasabiClientBase:
             wallet = False
 
         last_error = None
-        for _ in range(repeat):
+        for attempt in range(repeat):
             try:
                 response = requests.post(
                     f"http://{self.host}:{self.port}/{(wallet_name or WALLET_NAME) if wallet else ''}",
@@ -46,9 +62,15 @@ class WasabiClientBase:
                 )
             except requests.exceptions.Timeout as error:
                 last_error = error
+                if attempt + 1 < repeat:
+                    sleep(RETRY_BACKOFF_SECONDS)
                 continue
             if "error" in response.json():
-                raise RpcError(response.json()["error"])
+                error = response.json()["error"]
+                if _is_transient(error) and attempt + 1 < repeat:
+                    sleep(RETRY_BACKOFF_SECONDS)
+                    continue
+                raise RpcError(error)
             if "result" in response.json():
                 return response.json()["result"]
             return None
@@ -74,7 +96,7 @@ class WasabiClientBase:
             "method": "getnewaddress",
             "params": ["label"],
         }
-        res = self._rpc(request)["address"]
+        res = self._rpc(request, repeat=3)["address"]
         return res
 
     def get_wallet_info(self, timeout=None, wallet_name=None):
