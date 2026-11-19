@@ -9,6 +9,9 @@ RUN git clone --depth 1 --branch v2.6.0 https://github.com/WalletWasabi/WalletWa
 COPY logger.patch /wasabi-src/logger.patch
 RUN patch --binary -p1 < logger.patch
 
+COPY mining_fee_rate.patch /wasabi-src/mining_fee_rate.patch
+RUN patch --binary -p1 < mining_fee_rate.patch
+
 WORKDIR /wasabi-src/WalletWasabi.Coordinator
 # NuGet Audit flags NU1903 for a transitive dependency pinned by this
 # release and warnings are errors here, so an unchanged rebuild fails.
@@ -28,7 +31,6 @@ RUN useradd -u 1000 -ms /bin/sh wasabi
 USER 1000:1000
 COPY --from=0 --chown=wasabi:wasabi /wasabi-src/WalletWasabi.Coordinator/bin/Release/net8.0 /home/wasabi/
 COPY --chown=wasabi:wasabi appsettings.json /home/wasabi/
-COPY --chown=wasabi:wasabi Config.json /home/wasabi/Config.json
 COPY --chown=wasabi:wasabi run.sh /home/wasabi/
 WORKDIR /home/wasabi
 CMD ["./run.sh"]

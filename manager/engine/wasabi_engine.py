@@ -36,6 +36,8 @@ WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
 WASABI_CLIENT_DATA_PATH = "/home/wasabi/.walletwasabi/client/"
 WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
 DEFAULT_DISTRIBUTOR_STARTUP_TIMEOUT = 900
+WASABI_BACKEND_CONFIG_PATH = "/home/wasabi/.walletwasabi/backend/WabiSabiConfig.json"
+WASABI_BACKEND_CONFIG_TIMEOUT_SECONDS = 120
 WASABI_COORDINATOR_START_TIMEOUT_SECONDS = 120
 WASABI_COORDINATOR_START_ATTEMPTS = 3
 WASABI_COORDINATOR_RETRYABLE_STARTUP_FAILURES = {
@@ -142,15 +144,7 @@ class WasabiEngine(EngineBase):
             scenario_file = tmp_file.name
             tmp_file.write(json.dumps(backend_config, indent=2).encode())
 
-        try:
-            self.driver.upload(
-                "wasabi-backend",
-                scenario_file,
-                "/home/wasabi/.walletwasabi/backend/WabiSabiConfig.json",
-            )
-        except Exception as e:
-            print_exception(e)
-            raise
+        self.upload_backend_config(scenario_file)
 
         backend_host, backend_port = self.service_endpoint(
             wasabi_backend_ip, 37127, wasabi_backend_ports, route
@@ -164,6 +158,23 @@ class WasabiEngine(EngineBase):
         )
         self.backend.wait_ready()
         print(f"- started wasabi-backend ({self.backend_architecture.value} architecture)")
+
+    def upload_backend_config(self, config_file):
+        """Upload the config once the backend has created its data directory.
+
+        run.sh deletes that directory and only the started backend recreates
+        it, so a slow start fails the first attempts with a missing path.
+        """
+        deadline = time() + WASABI_BACKEND_CONFIG_TIMEOUT_SECONDS
+        while True:
+            try:
+                self.driver.upload("wasabi-backend", config_file, WASABI_BACKEND_CONFIG_PATH)
+                return
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                if time() >= deadline:
+                    print_exception(e)
+                    raise
+            sleep(1)
 
     def start_wasabi_coordinator(self):
         """Start the Wasabi coordinator (only for split architecture)."""
@@ -184,7 +195,7 @@ class WasabiEngine(EngineBase):
                 cpu=4.0,
                 memory=4096,
             )
-            sleep(1)
+            self.upload_coordinator_config(version)
 
             coordinator_host, coordinator_port = self.service_endpoint(
                 wasabi_coordinator_ip, 37128, wasabi_coordinator_ports, route
@@ -215,6 +226,39 @@ class WasabiEngine(EngineBase):
                 ) from error
             print("- started wasabi-coordinator")
             return
+
+    def upload_coordinator_config(self, version):
+        """Upload the coordinator Config.json with the scenario backend overrides."""
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        # v2.6.0 coordinator reads its WabiSabi settings from Config.json (not WabiSabiConfig.json).
+        # Source template is Config.json; still substitute ADDR_BTC_NODE so the RPC endpoint is valid.
+        config_path = f"./containers/wasabi-coordinator/{version}/Config.json"
+        with open(config_path, "r") as config_file:
+            raw = config_file.read()
+        raw = raw.replace(
+            "${ADDR_BTC_NODE}",
+            self.args.btc_node_ip or self.node.internal_ip or "btc-node",
+        )
+        coordinator_config = json.loads(raw)
+        coordinator_config.update(self.scenario.backend or {})
+
+        with tempfile.TemporaryDirectory() as staging_dir:
+            staged_config = Path(staging_dir) / "coordinator-config.json"
+            staged_config.write_text(json.dumps(coordinator_config, indent=2), encoding="utf-8")
+            staged_config.chmod(0o644)
+            self.driver.upload(
+                "wasabi-coordinator",
+                str(staged_config),
+                "/home/wasabi/coordinator-config.json",
+            )
+            ready_file = Path(staging_dir) / "coordinator-config.ready"
+            ready_file.touch()
+            self.driver.upload(
+                "wasabi-coordinator",
+                str(ready_file),
+                "/home/wasabi/coordinator-config.ready",
+            )
 
     def start_distributor(self):
         if self.node is None:
