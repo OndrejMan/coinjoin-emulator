@@ -1,0 +1,31 @@
+diff --git a/WalletWasabi/Blockchain/TransactionBroadcasting/TransactionBroadcaster.cs b/WalletWasabi/Blockchain/TransactionBroadcasting/TransactionBroadcaster.cs
+index ba06181..9e4b605 100644
+--- a/WalletWasabi/Blockchain/TransactionBroadcasting/TransactionBroadcaster.cs
++++ b/WalletWasabi/Blockchain/TransactionBroadcasting/TransactionBroadcaster.cs
+@@ -63,7 +63,7 @@ public class RpcBroadcaster(IRPCClient rpcClient) : IBroadcaster
+ 		}
+ 		catch (RPCException ex)
+ 		{
+-			return BroadcastingResult.Fail(new BroadcastError.RpcError(ex.RPCCodeMessage));
++			return BroadcastingResult.Fail(new BroadcastError.RpcError($"{ex.RPCCodeMessage} ({ex.Message})"));
+ 		}
+ 		catch (SocketException se) when (se.SocketErrorCode == SocketError.ConnectionRefused)
+ 		{
+@@ -250,7 +250,16 @@ public class TransactionBroadcaster(IBroadcaster[] broadcasters, MempoolService
+ 
+ 		if (results.LastOrDefault(x => x.IsOk) is not { } ok)
+ 		{
+-			throw new InvalidOperationException("Error while sending transaction.");
++			// Name the node's reason so an RPC caller sees why the transaction was rejected.
++			var reasons = results
++				.Where(x => !x.IsOk)
++				.Select(x => x.Error)
++				.OfType<BroadcastError.RpcError>()
++				.Select(x => x.RpcErrorMessage)
++				.ToArray();
++			throw new InvalidOperationException(reasons.Length == 0
++				? "Error while sending transaction."
++				: $"Error while sending transaction: {string.Join("; ", reasons)}");
+ 		}
+ 
+ 		ReportSuccessfulBroadcast(ok.Value, tx.GetHash());
