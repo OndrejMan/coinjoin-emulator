@@ -64,8 +64,16 @@ class TestCollectRoundEvents:
 
         event = client.record_round_start("destination", 100_000, 2, 0, current_block=1)
 
-        assert event["status"] == event["execution_status"] == "started"
+        assert event["status"] == "started"
+        assert event["execution_status"] == "requested"
         assert client.round_events == [event]
+
+        client.record_round_start_outcome(event, acknowledged=True)
+        assert event["execution_status"] == "started"
+
+        client.record_round_start_outcome(event, acknowledged=False)
+        assert event["execution_status"] == "unknown"
+        assert event["status"] == "started"
 
     def test_events_are_collected_from_every_client(self) -> None:
         harness = EventHarness(
