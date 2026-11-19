@@ -56,6 +56,7 @@ def test_nested_joinmarket_experiment_config_round_trips(tmp_path: Path) -> None
                     "offers": [{"ordertype": "sw0reloffer", "minsize": 1000}],
                     "tumbler_options": {"mixdepthcount": 3},
                     "time_between_rounds": 4,
+                    "coinjoin_timeout_blocks": 12,
                     "fidelity_bond": {"enabled": True},
                     "max_coinjoins": 2,
                 },
@@ -68,6 +69,7 @@ def test_nested_joinmarket_experiment_config_round_trips(tmp_path: Path) -> None
     assert joinmarket is not None
     assert joinmarket.role is JoinMarketRole.MAKER
     assert joinmarket.offers == [{"ordertype": "sw0reloffer", "minsize": 1000}]
+    assert joinmarket.coinjoin_timeout_blocks == 12
     assert joinmarket.fidelity_bond == {"enabled": True}
     assert joinmarket.max_coinjoins == 2
 
@@ -79,11 +81,28 @@ def test_invalid_joinmarket_role_is_rejected(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "field",
-    ["type", "offers", "tumbler_options", "time_between_rounds", "fidelity_bond", "max_coinjoins"],
+    ["type", "offers", "tumbler_options", "time_between_rounds", "coinjoin_timeout_blocks", "fidelity_bond", "max_coinjoins"],
 )
 def test_flat_joinmarket_settings_are_rejected(tmp_path: Path, field: str) -> None:
     with pytest.raises(ValueError, match="flat JoinMarket wallet settings"):
         load_scenario(tmp_path, base_scenario({"funds": [1000], field: "legacy"}))
+
+
+@pytest.mark.parametrize("timeout_blocks", [0, -1, True, "8"])
+def test_joinmarket_timeout_must_be_a_positive_integer(tmp_path: Path, timeout_blocks: object) -> None:
+    with pytest.raises(ValueError, match="coinjoin_timeout_blocks"):
+        load_scenario(
+            tmp_path,
+            base_scenario(
+                {
+                    "funds": [1000],
+                    "joinmarket": {
+                        "role": "taker",
+                        "coinjoin_timeout_blocks": timeout_blocks,
+                    },
+                }
+            ),
+        )
 
 
 def test_joinmarket_engine_requires_explicit_roles(tmp_path: Path) -> None:
