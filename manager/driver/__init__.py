@@ -43,6 +43,10 @@ class Driver(ABC):
     ):
         pass
 
+    def container_state(self, _name):  # pylint: disable=useless-return
+        """Return a human-readable container state, if available."""
+        return None
+
     @abstractmethod
     def stop(self, name):
         pass
@@ -60,8 +64,20 @@ class Driver(ABC):
         pass
 
     @abstractmethod
+    def logs(self, name):
+        """Return the container's combined stdout and stderr."""
+
     def upload(self, name, src_path, dst_path):
         pass
+
+    def get_pod_resource_usage(self, name):
+        """Return memory usage for a running container, or None when unknown.
+
+        The engine samples this during a run; a driver that cannot report usage
+        answers None instead of raising, so the sampling degrades to a no-op
+        rather than logging a failure on every check.
+        """
+        return None
 
     @abstractmethod
     def cleanup(self, image_prefix=""):

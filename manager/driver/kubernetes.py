@@ -408,6 +408,16 @@ class KubernetesDriver(Driver):
         resp.close()
         return output
 
+    def container_state(self, name):
+        try:
+            pod = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+        phase = getattr(getattr(pod, "status", None), "phase", None)
+        if phase is None:
+            return None
+        return f"pod phase {phase}"
+
     def _require_exec_ready(self, name):
         pod = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace)
         if not pod.spec.node_name:
@@ -433,6 +443,9 @@ class KubernetesDriver(Driver):
                 )
             except ApiException as error:
                 raise RuntimeError(f"could not {action} on pod {name}: {error}") from error
+
+    def logs(self, name):
+        return str(self.client.read_namespaced_pod_log(name=name, namespace=self.namespace))
 
     def get_pod_resource_usage(self, name):
         """
