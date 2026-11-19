@@ -7,6 +7,7 @@ import pytest
 import requests
 
 from manager.engine.wasabi_engine import WasabiEngine
+from manager.wasabi_backend_factory import BackendArchitecture
 
 
 def engine(container_state) -> WasabiEngine:
@@ -60,3 +61,18 @@ def test_the_original_error_is_kept_as_the_cause() -> None:
         engine("pod phase Succeeded").start_coinjoin(client())
 
     assert isinstance(raised.value.__cause__, requests.exceptions.ConnectionError)
+
+
+def test_the_infrastructure_state_covers_every_shared_wasabi_container(capsys) -> None:
+    instance = engine("pod phase Running")
+    instance.backend_architecture = BackendArchitecture.SPLIT
+
+    instance.report_infrastructure_state()
+
+    assert capsys.readouterr().out.splitlines() == [
+        "Infrastructure state",
+        "- btc-node: pod phase Running",
+        "- wasabi-backend: pod phase Running",
+        "- wasabi-coordinator: pod phase Running",
+        "- wasabi-client-distributor: pod phase Running",
+    ]
