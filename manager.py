@@ -26,6 +26,7 @@ def handle_shutdown_signal(signum, frame):
     raise SystemExit(128 + signum)
 
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+DEFAULT_BTC_DOWNLOAD_PATH = "btc-node:/home/bitcoin/data/"
 
 
 def timezone_name(value: str) -> str:
@@ -111,6 +112,19 @@ def run():
     return finalize_controller_marker(exit_code)
 
 
+def download_btc_data(driver, dest_path, download_path):
+    """Copy the raw Bitcoin data out before the driver removes the resources."""
+    if ":" not in download_path:
+        raise ValueError("download path must use '<container-or-pod>:<source-path>' format")
+    name, src_path = download_path.split(":", 1)
+    if not name or not src_path:
+        raise ValueError("download path must include both container/pod name and source path")
+    os.makedirs(dest_path, exist_ok=True)
+    print(f"Downloading {download_path} to {dest_path}", flush=True)
+    driver.download(name, src_path, dest_path)
+    print(f"- {download_path} downloaded to {dest_path}", flush=True)
+
+
 def cleanup_step(description, action):
     """Run one cleanup action; a failure must not skip the remaining ones."""
     try:
@@ -133,6 +147,14 @@ def cleanup(engine, driver, args):
         else:
             print("[manager.py] Storing logs...", flush=True)
             failed |= cleanup_step("store logs", engine.store_logs)
+    if args.download_btc_data:
+        if engine.node is None:
+            print("- skipping btc data download: Bitcoin node is not initialized", flush=True)
+        else:
+            failed |= cleanup_step(
+                "download btc data",
+                lambda: download_btc_data(driver, args.download_btc_data, args.download_path),
+            )
     print("[manager.py] Cleaning up resources...", flush=True)
     failed |= cleanup_step("cleanup driver resources", lambda: driver.cleanup(args.image_prefix))
     print("[manager.py] Cleanup complete", flush=True)
@@ -179,6 +201,15 @@ def build_parser():
     build_subparser.add_argument(
         "--image-prefix", type=str, default="", help="image prefix"
     )
+    build_subparser.add_argument("--btc-node-image", type=str, default="", help="exact btc-node image")
+    build_subparser.add_argument(
+        "--joinmarket-client-server-image", type=str, default="", help="exact joinmarket-client-server image"
+    )
+    build_subparser.add_argument("--irc-server-image", type=str, default="", help="exact irc-server image")
+    build_subparser.add_argument(
+        "--coinjoin-infrastructure-local-build", action="store_true", default=False,
+        help="build emulator infrastructure images, including versioned Wasabi images, from local sources",
+    )
 
     run_subparser = subparsers.add_parser("run", help="run simulation")
     run_subparser.add_argument(
@@ -187,8 +218,23 @@ def build_parser():
     run_subparser.add_argument(
         "--image-prefix", type=str, default="", help="image prefix"
     )
+    run_subparser.add_argument("--btc-node-image", type=str, default="", help="exact btc-node image")
+    run_subparser.add_argument(
+        "--joinmarket-client-server-image", type=str, default="", help="exact joinmarket-client-server image"
+    )
+    run_subparser.add_argument("--irc-server-image", type=str, default="", help="exact irc-server image")
+    run_subparser.add_argument(
+        "--coinjoin-infrastructure-local-build", action="store_true", default=False,
+        help="build emulator infrastructure images, including versioned Wasabi images, from local sources",
+    )
     run_subparser.add_argument(
         "--scenario", type=str, help="scenario specification file"
+    )
+    run_subparser.add_argument(
+        "--btcFolder", type=str, default="", help="host folder with existing btc-node data"
+    )
+    run_subparser.add_argument(
+        "--btc-node-arg", action="append", default=[], help="extra bitcoind argument (repeatable)"
     )
     run_subparser.add_argument(
         "--btc-node-ip", type=str, help="override btc-node ip", default=""
@@ -201,6 +247,14 @@ def build_parser():
     )
     run_subparser.add_argument(
         "--control-ip", type=str, help="control ip", default="localhost"
+    )
+    run_subparser.add_argument(
+        "--download-btc-data", type=str, default="",
+        help="local directory to copy the raw Bitcoin node data into before cleanup",
+    )
+    run_subparser.add_argument(
+        "--download-path", type=str, default=DEFAULT_BTC_DOWNLOAD_PATH,
+        help="'<container-or-pod>:<source-path>' to download when --download-btc-data is set",
     )
     run_subparser.add_argument(
         "--run-id",
