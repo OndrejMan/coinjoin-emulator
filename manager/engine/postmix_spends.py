@@ -1,4 +1,4 @@
-"""Scheduled postmix spends: Wasabi wallets move mixed coins out of the pool once due."""
+"""Scheduled postmix spends: Wasabi and JoinMarket wallets move mixed coins out of the pool once due."""
 
 import json
 import os
@@ -25,7 +25,7 @@ class FundingNode(Protocol):
 
 
 class SpendingClient(Protocol):
-    """The Wasabi client calls a postmix spend needs."""
+    """The wallet calls a postmix spend needs; JoinMarket ignores ``min_anon_score``."""
 
     name: str
 
@@ -48,7 +48,11 @@ class SpendingClient(Protocol):
         unspent: Callable[[str, int], bool] | None = None,
         coin_selection: str = "anon_score",
     ) -> dict[str, object]:
-        """Pay mixed coins to ``destination`` without change and describe the transaction."""
+        """Pay mixed coins to ``destination`` without change and describe the transaction.
+
+        JoinMarket never merges mixdepths, so it may describe one transaction per
+        mixdepth under ``txids``; ``txid`` is then the first of them.
+        """
 
 
 @dataclass
@@ -107,15 +111,21 @@ class PostmixSpend:
         return record | self.sent
 
 
+def wallet_postmix_spends(wallet: WalletConfig, engine: str) -> list[PostmixSpendConfig]:
+    """The spends of the ``engine`` ("wasabi" or "joinmarket") settings; the other engine's are ignored."""
+    settings = wallet.joinmarket if engine == "joinmarket" else wallet.wasabi
+    return (settings.postmix_spends if settings else None) or []
+
+
 class PostmixSpendSchedule:
     """The postmix spends of every wallet with the outcome of each spend."""
 
-    def __init__(self, clients: Sequence[SpendingClient], wallets: list[WalletConfig]):
+    def __init__(self, clients: Sequence[SpendingClient], wallets: list[WalletConfig], engine: str):
         self.clients = clients
         self.spends = [
             PostmixSpend.from_config(client.name, index, spend)
             for index, (client, wallet) in enumerate(zip(clients, wallets))
-            for spend in (wallet.wasabi.postmix_spends if wallet.wasabi else None) or []
+            for spend in wallet_postmix_spends(wallet, engine)
         ]
         if self.spends:
             print(f"- scheduled {len(self.spends)} postmix spends")
