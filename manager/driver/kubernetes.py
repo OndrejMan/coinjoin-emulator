@@ -1,10 +1,13 @@
 import base64
 import os
+import re
+import shlex
 import tarfile
 import time
 import traceback
 from functools import cached_property
 from io import BytesIO
+from threading import RLock
 from time import sleep
 
 import backoff
@@ -17,6 +20,23 @@ from manager.exceptions import KubernetesResourceQuotaError, StartupError
 from . import Driver
 
 POD_IP_WAIT_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_POD_IP_TIMEOUT", "1800"))
+DOWNLOAD_TIMEOUT_SECONDS = int(os.environ.get("COINJOIN_K8S_DOWNLOAD_TIMEOUT", "1800"))
+BENIGN_TAR_WARNING_RE = re.compile(
+    r"^tar: .*: (file changed as we read it|socket ignored)$"
+    r"|^tar: Removing leading [`'\"]?/[`'\"]? from (member names|hard link targets)$"
+)
+
+
+def _check_tar_stderr(name, src_path, stderr):
+    for raw_line in stderr.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if not BENIGN_TAR_WARNING_RE.fullmatch(line):
+            raise RuntimeError(f"download of {name}:{src_path} failed: {line}")
+        print(f"[WARNING] {name}:{src_path}: {line}")
+
+
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
 RUN_ID_LABEL = "coinjoin.run-id"
@@ -52,6 +72,13 @@ class KubernetesDriver(Driver):
             config.load_kube_config()
 
         self.client = client.CoreV1Api()
+        # stream() swaps ``ApiClient.request`` for a websocket call while it
+        # opens the exec connection. On a shared ApiClient that swap also
+        # catches every plain API call another thread makes at that moment
+        # (``read_namespaced_pod_status`` in a parallel download, say), so
+        # exec gets its own client and the swap cannot reach anything else.
+        self._exec_client = client.CoreV1Api(client.ApiClient())
+        self._exec_lock = RLock()
         self._namespace = namespace
         self.reuse_namespace = reuse_namespace
         self.pull_secret_path = pull_secret_path
@@ -293,99 +320,45 @@ class KubernetesDriver(Driver):
             pass
 
     def download(self, name, src_path, dst_path):
+        self._require_exec_ready(name)
         if src_path[-1] == "/":
             src_path = src_path[:-1]
         src_parent, src_target = os.path.split(src_path)
-        # Use rsync-like approach with tar to handle files being written to
-        # The --warning=no-file-changed flag helps handle files that change during reading
-        # The --ignore-failed-read flag ensures the process continues even if some files can't be read
+        # Exec reads stdout as UTF-8 text; encode the binary archive before transfer.
         exec_command = [
-            "tar", "cf", "-",
-            "--warning=no-file-changed",
-            "--ignore-failed-read",
-            "-C", src_parent, src_target
+            "sh", "-c",
+            f"tar cf - -C {shlex.quote(src_parent)} {shlex.quote(src_target)} | base64 | tr -d '\\n'",
         ]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
-        print("Opening connection")
+        resp = self._exec_stream(name, exec_command, f"download {src_path}")
+        encoded_chunks = []
+        stderr_chunks = []
+        deadline = time.monotonic() + DOWNLOAD_TIMEOUT_SECONDS
+        try:
+            while resp.is_open():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Timed out downloading {name}:{src_path}")
+                resp.update(timeout=1)
+                if resp.peek_stdout():
+                    encoded_chunks.append(resp.read_stdout())
+                if resp.peek_stderr():
+                    stderr_chunks.append(resp.read_stderr())
+        finally:
+            resp.close()
 
-        fo = BytesIO()
-        while resp.is_open():
-            print("Updating stream")
-            resp.update(timeout=10)
-            if resp.peek_stdout():
-                fo.write(resp.read_stdout().encode())
-        print("")
-        fo.seek(0)
-        print("Closing connection")
-        resp.close()
-
-        with tarfile.open(fileobj=fo) as tar:
-            print("Extracting")
+        _check_tar_stderr(name, src_path, "".join(stderr_chunks))
+        encoded = "".join(encoded_chunks)
+        if not encoded.strip():
+            raise RuntimeError(f"download of {name}:{src_path} produced an empty archive")
+        try:
+            payload = base64.b64decode(encoded, validate=True)
+        except ValueError as error:
+            raise RuntimeError(f"download of {name}:{src_path} returned invalid base64") from error
+        with tarfile.open(fileobj=BytesIO(payload)) as tar:
             tar.extractall(dst_path)
 
-        # Wait for required files to appear in dst_path
-        import glob
-        import time
-        start_time = time.time()
-        timeout = 120  # 2 minutes
-        found = False
-        waited = False
-        while True:
-            tumble_log = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.log"))
-            tumble_schedule = os.path.exists(os.path.join(dst_path, "logs/TUMBLE.schedule*"))
-            j_logs = glob.glob(os.path.join(dst_path, "logs/J*.log"))
-            yifen = os.path.exists(os.path.join(dst_path, "logs/yigen-statement.csv"))
-
-            cond1 = tumble_log and tumble_schedule and len(j_logs) > 0
-            cond2 = len(j_logs) > 0 and yifen
-
-            print(f"Debug: tumble_log={tumble_log}, tumble_schedule={tumble_schedule}, j_logs={j_logs}, yigen={yifen}")
-
-            if cond1 or cond2:
-                print(f"All required log files found in {dst_path} after {time.time() - start_time} seconds")
-                print("Waiting for file transfer to complete...")
-                time.sleep(10)
-                if found:
-                    print("All required log files still found in {} after {} seconds".format(dst_path, time.time() - start_time))
-                    time.sleep(1)
-                    break
-                found = True
-
-            if time.time() - start_time > timeout:
-                print("Timeout waiting for required log files in {}".format(dst_path))
-                break
-
-            if not waited:
-                print("Waiting for required log files to appear in {}...".format(dst_path))
-                waited = True
-            time.sleep(2)
-
-        # sleep(60)
-
     def peek(self, name, path):
-        exec_command = ["cat", path]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
-
+        self._require_exec_ready(name)
+        resp = self._exec_stream(name, ["cat", path], f"read {path}")
         output = ""
         while resp.is_open():
             resp.update(timeout=1)
@@ -394,6 +367,32 @@ class KubernetesDriver(Driver):
         resp.close()
         return output
 
+    def _require_exec_ready(self, name):
+        pod = self.client.read_namespaced_pod_status(name=name, namespace=self.namespace)
+        if not pod.spec.node_name:
+            raise RuntimeError(f"pod {name} is not scheduled onto a node")
+        if pod.status.phase != "Running":
+            raise RuntimeError(f"pod {name} is in phase {pod.status.phase}; exec requires Running")
+
+    def _exec_stream(self, name, exec_command, action):
+        # stream() swaps ApiClient.request only until the connection is opened;
+        # the lock serialises that swap on the exec-only client.
+        with self._exec_lock:
+            try:
+                return stream(
+                    self._exec_client.connect_get_namespaced_pod_exec,
+                    name,
+                    self.namespace,
+                    command=exec_command,
+                    stderr=True,
+                    stdin=True,
+                    stdout=True,
+                    tty=False,
+                    _preload_content=False,
+                )
+            except ApiException as error:
+                raise RuntimeError(f"could not {action} on pod {name}: {error}") from error
+
     def get_pod_resource_usage(self, name):
         """
         Get memory usage of a pod by reading /proc/self/status.
@@ -401,18 +400,7 @@ class KubernetesDriver(Driver):
         """
         try:
             # Read process memory info from /proc
-            exec_command = ["cat", "/proc/self/status"]
-            resp = stream(
-                self.client.connect_get_namespaced_pod_exec,
-                name,
-                self.namespace,
-                command=exec_command,
-                stderr=True,
-                stdin=True,
-                stdout=True,
-                tty=False,
-                _preload_content=False,
-            )
+            resp = self._exec_stream(name, ["cat", "/proc/self/status"], "read /proc/self/status")
 
             output = ""
             while resp.is_open():
@@ -456,17 +444,7 @@ class KubernetesDriver(Driver):
         commands = [buf.getvalue()]
 
         exec_command = ["tar", "xf", "-", "-C", "/"]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            name,
-            self.namespace,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
+        resp = self._exec_stream(name, exec_command, f"upload to {dst_path}")
 
         while resp.is_open():
             resp.update(timeout=1)
