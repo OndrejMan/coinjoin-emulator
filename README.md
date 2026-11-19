@@ -65,6 +65,7 @@ The fields are as follows:
   - `wasabi` is an optional object with Wasabi-specific wallet settings:
     - `anon_score_target` is the target anon score of the wallet.
     - `redcoin_isolation` is a boolean value indicating whether the wallet should use redcoin isolation.
+    - `postmix_spends` is a list of spends of mixed coins to an address outside the mix (the funding wallet of the node). Each entry sets exactly one of `value` (spend at least this many satoshis) and `all: true` (spend every mixed coin), and optionally `delay_blocks`, `delay_rounds` (when the spend becomes due) and `min_anon_score` (coins at or above count as mixed; default: above 1). The wallet stops mixing, pays the selected coins out in one transaction with the fee subtracted (no change), and resumes mixing if its schedule allows. A failed spend is retried every 30 seconds. The outcome of every spend is stored in `data/postmix_spends.json`. Wasabi only.
 
 ## Engine
 You can run the simulation with different CoinJoin protocols. Currently, Wasabi and Joinmarket are supported. 
