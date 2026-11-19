@@ -4,18 +4,24 @@ RUN apt update && apt install -y patch
 
 RUN mkdir -p /wasabi-src
 WORKDIR /wasabi-src
-RUN git clone https://github.com/zkSNACKs/WalletWasabi.git .
-RUN git checkout v2.6.0
+RUN git clone --depth 1 --branch v2.6.0 https://github.com/WalletWasabi/WalletWasabi.git .
 
 COPY logger.patch /wasabi-src/logger.patch
 RUN patch --binary -p1 < logger.patch
 
 WORKDIR /wasabi-src/WalletWasabi.Backend
-RUN dotnet build -c Release
+# NuGet Audit flags NU1903 for a transitive dependency pinned by this
+# release and warnings are errors here, so an unchanged rebuild fails.
+RUN dotnet build -c Release -p:NuGetAudit=false
 
 # FROM mcr.microsoft.com/dotnet/runtime:8.0 # Missing ASP.NET Core
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
+# The default host builder watches appsettings.json through inotify, and every
+# container running as UID 1000 shares that user's instance limit (128 by
+# default) with the host. When it is spent, Build() fails before the logger is
+# set up and the service exits 0 without a line of output. Nothing reloads it.
+ENV DOTNET_hostBuilder__reloadConfigOnChange=false
 RUN apt update && apt install -y curl
 
 # Needs to be numeric for kubernetes security context
