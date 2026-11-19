@@ -1,6 +1,6 @@
 import json
 import random
-from time import sleep, time
+from time import monotonic, sleep, time
 
 import requests
 
@@ -77,11 +77,18 @@ class WasabiClientBase:
         res = self._rpc(request)["address"]
         return res
 
-    def get_balance(self, timeout=None, wallet_name=None):
+    def get_wallet_info(self, timeout=None, wallet_name=None):
         request = {
             "method": "getwalletinfo",
         }
-        return self._rpc(request, timeout=timeout, wallet_name=wallet_name)["balance"]
+        return self._rpc(request, timeout=timeout, wallet_name=wallet_name)
+
+    def get_balance(self, timeout=None, wallet_name=None):
+        return self.get_wallet_info(timeout=timeout, wallet_name=wallet_name)["balance"]
+
+    def wallet_started(self, timeout=None) -> bool:
+        info = self.get_wallet_info(timeout=timeout)
+        return "balance" in info and info.get("state", "Started") == "Started"
 
     def wait_wallet(self, timeout=None):
         start = time()
@@ -92,8 +99,8 @@ class WasabiClientBase:
                 pass
 
             try:
-                self.get_balance(timeout=5)
-                return True
+                if self.wallet_started(timeout=5):
+                    return True
             except Exception:
                 pass
 
@@ -164,11 +171,13 @@ class WasabiClientBase:
         }
         return self._rpc(request, timeout=10, repeat=3)
 
-    def wait_ready(self):
-        while True:
+    def wait_ready(self, timeout=120):
+        deadline = monotonic() + timeout
+        while monotonic() < deadline:
             try:
                 self.get_status()
-                break
+                return
             except Exception:
                 pass
             sleep(0.1)
+        raise TimeoutError(f"{self.__class__.__name__} at {self.host}:{self.port} was not ready after {timeout}s")
