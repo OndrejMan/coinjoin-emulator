@@ -6,6 +6,7 @@ import random
 import re
 import sys
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 from time import sleep, time
 from traceback import print_exception
@@ -29,6 +30,13 @@ SUCCESSFUL_BROADCAST_RE = re.compile(
     r"successfully\s+broadcast(?:ed)?\s+(?:the\s+)?coinjoin(?:\s+transaction)?:\s*([0-9a-f]{64})",
     re.IGNORECASE,
 )
+WASABI_COORDINATOR_LOG_PATH = "/home/wasabi/.walletwasabi/coordinator/Logs.txt"
+WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT = 3
+
+
+def successful_broadcast_txids(log_texts: Iterable[str]) -> set[str]:
+    """Extract unique normalized transaction ids from Wasabi broadcast records."""
+    return {match.group(1).lower() for log_text in log_texts for match in SUCCESSFUL_BROADCAST_RE.finditer(log_text)}
 
 
 class WasabiEngine(EngineBase):
@@ -48,7 +56,7 @@ class WasabiEngine(EngineBase):
             wallets=[
                 WalletConfig(funds=[200000, 50000], wasabi=WasabiConfig(anon_score_target=7)),
                 WalletConfig(funds=[3000000], wasabi=WasabiConfig(redcoin_isolation=True)),
-                WalletConfig(funds=[1000000, 500000], wasabi=WasabiConfig(skip_rounds=[0, 1, 2])),
+                WalletConfig(funds=[1000000, 500000], delay_rounds=3),
                 WalletConfig(funds=[3000000, 15000]),
                 WalletConfig(funds=[1000000, 500000]),
                 WalletConfig(funds=[3000000, 600000]),
@@ -244,6 +252,17 @@ class WasabiEngine(EngineBase):
                 f"Redcoin isolation is ignored for wallet {idx} as it is curently supported only for version 2.0.3 and newer"
             )
 
+        # Only the patched 2.0.3-2.0.5 clients read these variables; 2.6.0 runs
+        # Wasabi unmodified, so its wallets keep the default privacy profile.
+        if (anon_score_target is not None or redcoin_isolation is not None) and version >= "2.6.0":
+            anon_score_target = None
+            redcoin_isolation = None
+            print(
+                f"WARNING: Anon Score Target and redcoin isolation are ignored for wallet {idx}: the {version} client "
+                "keeps Wasabi's default profile (anon score target 10, red coin isolation on, so at most one "
+                "fresh coin per round)"
+            )
+
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         if self.backend is None:
@@ -257,7 +276,7 @@ class WasabiEngine(EngineBase):
             "ADDR_BTC_NODE": self.args.btc_node_ip or self.node.internal_ip,
             "ADDR_WASABI_BACKEND": self.args.wasabi_backend_ip or backend_address,
             "WASABI_ANON_SCORE_TARGET": (str(anon_score_target) if anon_score_target else None),
-            "WASABI_REDCOIN_ISOLATION": (str(redcoin_isolation) if redcoin_isolation else None),
+            "WASABI_REDCOIN_ISOLATION": (str(redcoin_isolation) if redcoin_isolation is not None else None),
         }
 
         if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
@@ -346,13 +365,9 @@ class WasabiEngine(EngineBase):
         log_paths: list[str] = sorted(
             str(path) for path in Path(label_root).rglob("Logs.txt") if path.is_file()
         )
-        successful_txids: set[str] = {
-            match.group(1).lower()
-            for path in log_paths
-            for match in SUCCESSFUL_BROADCAST_RE.finditer(
-                Path(path).read_text(encoding="utf-8", errors="replace")
-            )
-        }
+        successful_txids = successful_broadcast_txids(
+            Path(path).read_text(encoding="utf-8", errors="replace") for path in log_paths
+        )
         return {
             "engine": "wasabi",
             "complete": bool(log_paths),
@@ -370,8 +385,18 @@ class WasabiEngine(EngineBase):
         sleep(random.random() / 10)
         client.stop_coinjoin()
 
+    def _run_limit_reached(self) -> bool:
+        """Return whether the refreshed round or block count reached its scenario limit."""
+        return (
+            self.scenario.rounds > 0 and self.current_round >= self.scenario.rounds
+        ) or (
+            self.scenario.blocks > 0 and self.current_block >= self.scenario.blocks
+        )
+
     def update_coinjoins(self):
         def start_condition(client):
+            if self._run_limit_reached():
+                return False
             if client.stop[0] > 0 and self.current_block >= client.stop[0]:
                 return False
             if client.stop[1] > 0 and self.current_round >= client.stop[1]:
@@ -400,24 +425,26 @@ class WasabiEngine(EngineBase):
         if self.node is None:
             raise RuntimeError("Bitcoin node is not initialized")
         initial_block = self.node.get_block_count()
-        while (self.scenario.rounds == 0 or self.current_round <= self.scenario.rounds) and (
-            self.scenario.blocks == 0 or self.current_block < self.scenario.blocks
-        ):
-            for _ in range(3):
+        while not self._run_limit_reached():
+            for attempt in range(3):
                 try:
                     self.current_round = self._get_current_round()
                     break
                 except Exception as e:
                     print("- could not get rounds".ljust(60), end="\r")
                     print(f"Round exception: {e}", file=sys.stderr)
+                    if attempt == 2:
+                        raise RuntimeError("Could not refresh Wasabi round count after 3 attempts") from e
 
-            for _ in range(3):
+            for attempt in range(3):
                 try:
                     self.current_block = self.node.get_block_count() - initial_block  # type: ignore
                     break
                 except Exception as e:
                     print("- could not get blocks".ljust(60), end="\r")
                     print(f"Block exception: {e}", file=sys.stderr)
+                    if attempt == 2:
+                        raise RuntimeError("Could not refresh Wasabi block count after 3 attempts") from e
 
             self.update_invoice_payments()
             self.update_coinjoins()
@@ -428,16 +455,23 @@ class WasabiEngine(EngineBase):
             sleep(1)
         print()
         print("- limit reached")
+        self.mine_settlement_blocks()
+
+    def mine_settlement_blocks(self):
+        """Mine the confirmations the last broadcast needs before artifacts are captured."""
+        if self.node is None:
+            raise RuntimeError("Bitcoin node is not initialized")
+        print(f"- mining {WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT} settlement blocks")
+        if not self.node.mine_block(WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT):
+            raise RuntimeError(
+                f"Bitcoin node did not mine {WASABI_SETTLEMENT_BLOCKS_AFTER_LIMIT} settlement blocks"
+            )
 
     def _get_current_round(self) -> int:
-        if self.backend_architecture == BackendArchitecture.SPLIT and self.coordinator is not None:
-            resp = self.coordinator._get_status()
-            if resp is not None:
-                for round_state in resp["RoundStates"]:
-                    if round_state["Phase"] == "TransactionSigning":
-                        self.round_ids.add(round_state["RoundId"])
-                return len(self.round_ids)
-            return 0
+        if self.backend_architecture == BackendArchitecture.SPLIT:
+            return len(
+                successful_broadcast_txids([self.driver.peek("wasabi-coordinator", WASABI_COORDINATOR_LOG_PATH)])
+            )
 
         else:
             # In legacy versions, rounds are tracked by the backend

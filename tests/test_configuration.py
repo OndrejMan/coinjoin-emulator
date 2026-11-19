@@ -30,7 +30,7 @@ def test_nested_wasabi_config_round_trips(tmp_path: Path) -> None:
         base_scenario(
             {
                 "funds": [1000],
-                "wasabi": {"anon_score_target": 42, "redcoin_isolation": True, "skip_rounds": [0, 2]},
+                "wasabi": {"anon_score_target": 42, "redcoin_isolation": True},
             }
         ),
     )
@@ -39,7 +39,7 @@ def test_nested_wasabi_config_round_trips(tmp_path: Path) -> None:
 
     assert reloaded.wallets[0].wasabi == config.wallets[0].wasabi
 
-@pytest.mark.parametrize("field", ["anon_score_target", "redcoin_isolation", "skip_rounds"])
+@pytest.mark.parametrize("field", ["anon_score_target", "redcoin_isolation"])
 def test_flat_wasabi_settings_are_rejected(tmp_path: Path, field: str) -> None:
     with pytest.raises(ValueError, match="flat Wasabi wallet settings"):
         load_scenario(tmp_path, base_scenario({"funds": [1000], field: "legacy"}))
