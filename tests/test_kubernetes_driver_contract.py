@@ -5,6 +5,7 @@ import io
 import subprocess
 import tarfile
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from threading import Event, RLock
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -12,6 +13,7 @@ from unittest.mock import Mock, patch
 import pytest
 from kubernetes.client.exceptions import ApiException
 
+from manager.driver import RESERVED_PORT_RANGE, RESERVED_PORTS_SYSCTL
 from manager.driver.kubernetes import (
     MANAGED_BY_LABEL,
     MANAGED_BY_VALUE,
@@ -462,3 +464,55 @@ def test_the_image_pull_policy_defaults_to_always() -> None:
     manifest = driver().build_pod_manifest("btc-node", "btc-node:latest", {}, {}, 1.0, 512)
 
     assert manifest["spec"]["containers"][0]["imagePullPolicy"] == "Always"
+
+
+def test_the_wasabi_service_ports_are_reserved_for_the_pod() -> None:
+    manifest = driver().build_pod_manifest("wasabi-backend", "backend:latest", {}, {}, 1.0, 512)
+
+    assert manifest["spec"]["securityContext"]["sysctls"] == [
+        {"name": RESERVED_PORTS_SYSCTL, "value": RESERVED_PORT_RANGE}
+    ]
+
+
+def test_an_api_server_that_forbids_the_sysctl_gets_a_pod_without_it() -> None:
+    instance = driver(in_cluster=True)
+    rejection = ApiException(status=403)
+    rejection.body = "forbidden sysctl: net.ipv4.ip_local_reserved_ports"
+    created_manifests = []
+
+    def reject_then_record(*, body, namespace):
+        assert namespace == "coinjoin"
+        created_manifests.append(deepcopy(body))
+        if len(created_manifests) == 1:
+            raise rejection
+
+    instance.client.create_namespaced_pod.side_effect = reject_then_record
+    instance._wait_for_pod_ip = Mock(return_value="10.0.0.7")  # pylint: disable=protected-access
+
+    endpoint = instance.run("wasabi-backend", "backend:latest", {}, {}, 1.0, 512)
+
+    assert endpoint == ("wasabi-backend.coinjoin.svc.cluster.local", {}, None)
+    assert len(created_manifests) == 2
+    assert "securityContext" in created_manifests[0]["spec"]
+    assert "securityContext" not in created_manifests[1]["spec"]
+
+
+def test_kubelet_sysctl_rejection_recreates_the_pod_without_it() -> None:
+    instance = driver(in_cluster=True)
+    created_manifests = []
+
+    def record_manifest(*, body, namespace):
+        assert namespace == "coinjoin"
+        created_manifests.append(deepcopy(body))
+
+    instance.client.create_namespaced_pod.side_effect = record_manifest
+    instance._wait_for_pod_ip = Mock(  # pylint: disable=protected-access
+        side_effect=[StartupError("Pod wasabi-backend: SysctlForbidden"), "10.0.0.7"]
+    )
+
+    endpoint = instance.run("wasabi-backend", "backend:latest", {}, {}, 1.0, 512)
+
+    assert endpoint == ("wasabi-backend.coinjoin.svc.cluster.local", {}, None)
+    assert len(created_manifests) == 2
+    assert "securityContext" in created_manifests[0]["spec"]
+    assert "securityContext" not in created_manifests[1]["spec"]
