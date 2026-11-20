@@ -1,5 +1,6 @@
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
+from dataclasses import field as dataclass_field
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -87,7 +88,12 @@ class WalletConfig:
 
 @dataclass
 class ScenarioConfig:
-    """Main scenario configuration; description and category are display-only metadata."""
+    """Main scenario configuration; description and category are display-only metadata.
+
+    ``extra_fields`` holds the top-level keys the emulator does not read, such as the
+    report's ``liquidity_groups`` or a generator's arguments, so that the scenario stored
+    with the run still carries them.
+    """
     name: str
     
     rounds: int  # 0 for unlimited
@@ -103,12 +109,14 @@ class ScenarioConfig:
     default_anon_score_target: int | None = None
     default_redcoin_isolation: bool | None = None
     backend: dict[str, Any] | None = None
+    extra_fields: dict[str, Any] = dataclass_field(default_factory=dict)
 
     @classmethod
     def from_json_config(cls, filepath: str | Path) -> "ScenarioConfig":
         """Load scenario configuration from JSON file."""
         with open(filepath) as f:
             data = json.load(f)
+        known = {item.name for item in fields(cls)} - {"extra_fields"}
 
         description = data.get("description")
         if description is not None and not isinstance(description, str):
@@ -134,7 +142,8 @@ class ScenarioConfig:
             distributor_version=data.get("distributor_version"),
             default_anon_score_target=data.get("default_anon_score_target"),
             default_redcoin_isolation=data.get("default_redcoin_isolation"),
-            backend=data.get("backend")
+            backend=data.get("backend"),
+            extra_fields={key: value for key, value in data.items() if key not in known},
         )
     
     def validate_for_engine(self, engine: str) -> None:
@@ -304,7 +313,9 @@ class ScenarioConfig:
             # Enums are not JSON serializable; store the value the scenario file uses.
             return {key: value.value if isinstance(value, Enum) else value for key, value in items}
 
-        return asdict(self, dict_factory=unwrap)
+        stored = asdict(self, dict_factory=unwrap)
+        extra = stored.pop("extra_fields")
+        return {**stored, **extra}
 
 
 # Type aliases for convenience

@@ -54,6 +54,19 @@ def test_optional_description_is_metadata_and_does_not_change_engine_validation(
     config.validate_for_engine("wasabi")
 
 
+def test_unread_top_level_keys_are_stored_with_the_run(tmp_path: Path) -> None:
+    scenario = base_scenario({"funds": [1000]})
+    scenario["liquidity_groups"] = {"split-whale": [0]}
+    scenario["generator"] = {"program": "genscen_joinmarket.py", "arguments": {"seed": 7}}
+
+    stored = load_scenario(tmp_path, scenario).to_dict()
+
+    assert stored["liquidity_groups"] == scenario["liquidity_groups"]
+    assert stored["generator"] == scenario["generator"]
+    assert "extra_fields" not in stored
+    assert "extra_fields" not in load_scenario(tmp_path, base_scenario({"funds": [1000]})).to_dict()
+
+
 def test_description_must_be_a_string_when_present(tmp_path: Path) -> None:
     scenario = base_scenario({"funds": [1000]})
     scenario["description"] = 42
