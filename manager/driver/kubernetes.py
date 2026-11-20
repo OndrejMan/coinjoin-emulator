@@ -87,6 +87,11 @@ class _Base64Spool:
 MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 MANAGED_BY_VALUE = "coinjoin-emulator"
 RUN_ID_LABEL = "coinjoin.run-id"
+# Who launched the run; the S3 emulation Job passes it as COINJOIN_RUN_OWNER, so a
+# namespace shared by several people shows whose pods these are.
+OWNER_LABEL = "coinjoin.owner"
+OWNER_ENV = "COINJOIN_RUN_OWNER"
+LABEL_VALUE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?")
 MAX_RESOURCE_NAME_LENGTH = 63
 RUN_SUFFIX_LENGTH = 16
 
@@ -245,6 +250,11 @@ class KubernetesDriver(Driver):
         labels = {"app": name, MANAGED_BY_LABEL: MANAGED_BY_VALUE}
         if self.run_id:
             labels[RUN_ID_LABEL] = self.run_id
+        owner = os.environ.get(OWNER_ENV, "").strip()
+        if owner:
+            if not LABEL_VALUE.fullmatch(owner):
+                raise ValueError(f"{OWNER_ENV} must be a Kubernetes label value, got {owner!r}")
+            labels[OWNER_LABEL] = owner
         return labels
 
     def owner_reference(self):

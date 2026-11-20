@@ -40,7 +40,8 @@ def driver(**overrides: object) -> KubernetesDriver:
     return instance
 
 
-def test_pods_and_services_are_labelled_with_the_run() -> None:
+def test_pods_and_services_are_labelled_with_the_run(monkeypatch) -> None:
+    monkeypatch.delenv("COINJOIN_RUN_OWNER", raising=False)
     manifest = driver(run_id="run-42").build_pod_manifest(
         "btc-node", "btc-node:latest", {}, {18443: 18443}, 1.0, 512
     )
@@ -51,6 +52,18 @@ def test_pods_and_services_are_labelled_with_the_run() -> None:
         "coinjoin.run-id": "run-42",
     }
     assert "ownerReferences" not in manifest["metadata"]
+
+
+def test_the_run_owner_labels_pods_and_services(monkeypatch) -> None:
+    monkeypatch.setenv("COINJOIN_RUN_OWNER", "alice")
+    manifest = driver(run_id="run-42").build_pod_manifest(
+        "btc-node", "btc-node:latest", {}, {18443: 18443}, 1.0, 512
+    )
+    assert manifest["metadata"]["labels"]["coinjoin.owner"] == "alice"
+
+    monkeypatch.setenv("COINJOIN_RUN_OWNER", "alice@META")
+    with pytest.raises(ValueError, match="COINJOIN_RUN_OWNER must be a Kubernetes label value"):
+        driver(run_id="run-42").resource_labels("btc-node")
 
 
 def test_in_cluster_controller_pod_owns_created_pods_and_services(monkeypatch) -> None:
